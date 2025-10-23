@@ -1,15 +1,13 @@
 [project]
 name = "eq1_pulse"
 dynamic = ["version"]
-authors = [
-    { name = "Peter Hanos", email = "peter.hanos@equal1.com" },
-]
+authors = [{ name = "Peter Hanos", email = "peter.hanos@equal1.com" }]
 description = "Equal1 Pulse Description Library"
 readme = "README.md"
 requires-python = ">=3.12"
 classifiers = [
     "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: Apache Software License 2.0",
+    # "License :: OSI Approved :: Apache Software License 2.0",
     "Operating System :: OS Independent",
 ]
 
@@ -17,7 +15,7 @@ license = "Apache-2.0"
 
 dependencies = [
     "numpy>=1.20",
-    "pydantic>=2.11",       # core dependency
+    "pydantic>=2.11", # core dependency
 ]
 
 [project.urls]
@@ -34,7 +32,7 @@ pyright = ["pyright", "eq1_pulse[typing]"]
 
 typing = [
     "pandas-stubs",
-    "pytest",         # <-- to check the tests folder
+    "pytest",       # <-- to check the tests folder
 ]
 
 pytest = [
@@ -69,16 +67,13 @@ doc = [
     # "sphinx-autodoc-typehints",
 ]
 
-graphviz = [
-    "pydot",
-    "graphviz"
-]
+graphviz = ["pydot", "graphviz"]
 
 # [project.gui-scripts]
 #
 
 [build-system]
-requires = ["setuptools>=61.0", "setuptools-git-versioning"]
+requires = ["setuptools>=77.0.0", "setuptools-git-versioning"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]

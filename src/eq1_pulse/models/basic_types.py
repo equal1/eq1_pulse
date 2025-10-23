@@ -126,7 +126,11 @@ class ArithmeticFrozenWrappedValueModel[ScalarType](FrozenWrappedValueModel):
 
 
 class Angle(WrappedValueOrZeroModel, ArithmeticFrozenWrappedValueModel[int | float]):
-    """A model representing an angle in either degrees, radians or turns (aka. cycles/revolutions)."""
+    r"""A model representing an angle in either degrees, radians, turns or half-turns.
+
+    Turns are also known as revolutions or cycles, also :math:`\tau=2\pi` radians or 360°.
+    Half-turns are also known as half-cycles, also :math:`\pi` radians or 180°.
+    """  # noqa: E501
 
     @overload
     def __init__(self, _: Literal[0], /): ...
@@ -144,33 +148,41 @@ class Angle(WrappedValueOrZeroModel, ArithmeticFrozenWrappedValueModel[int | flo
     def __init__(self, /, *, half_turns: int | float): ...
 
     def __init__(self, /, *args, **data):
+        """"""  # noqa: D419
         super().__init__(**self._apply_default_zero_args_to_init_data("rad", args, data))
 
     value: Degrees | Radians | Turns | HalfTurns
+    """The underlying angle value in one of the supported units."""
 
     @property
     def deg(self) -> int | float:
+        """Value in degrees."""
         return self.value.deg
 
     @property
     def rad(self) -> float:
+        """Value in radians."""
         return self.value.rad
 
     @property
     def turns(self) -> float:
+        """Value in turns."""
         return self.value.turns
 
     @property
     def half_turns(self) -> float:
+        """Value in half-turns."""
         return self.value.half_turns
 
     def __eq__(self, other) -> bool:
+        """Equality comparison with another Angle instance."""  # noqa: D401
         if not isinstance(other, Angle):
             return NotImplemented
         return self.value == other.value or self.value.turns == other.value.turns
 
     @property
     def complex_rotation(self) -> complex:
+        r"""The complex rotation :math:`e^{i \theta}` represented by this angle."""
         match self.deg % 360:
             case 0:
                 return 1
@@ -214,21 +226,26 @@ class Time(WrappedValueOrZeroModel, ArithmeticFrozenWrappedValueModel[int | floa
     """
 
     value: Seconds | Milliseconds | Microseconds | Nanoseconds
+    """The underlying time value in one of the supported units."""
 
     @property
     def s(self) -> float:
+        """Value in seconds."""
         return self.value.s
 
     @property
     def ms(self) -> float:
+        """Value in milliseconds."""
         return self.value.ms
 
     @property
     def us(self) -> float:
+        """Value in microseconds."""
         return self.value.us
 
     @property
     def ns(self) -> int:
+        """Value in nanoseconds."""
         return self.value.ns
 
     @overload
@@ -247,14 +264,17 @@ class Time(WrappedValueOrZeroModel, ArithmeticFrozenWrappedValueModel[int | floa
     def __init__(self, /, *, ns: int): ...
 
     def __init__(self, /, *args, **data):
+        """"""  # noqa: D419
         super().__init__(**self._apply_default_zero_args_to_init_data("s", args, data))
 
     def __eq__(self, other) -> bool:
+        """Equality comparison with another Time instance."""  # noqa: D401
         if not isinstance(other, Time):
             return NotImplemented
         return self.value == other.value or self.value.s == other.value.s
 
     def __bool__(self) -> bool:
+        """Return True if the time value is non-zero."""
         return bool(self.value._raw)
 
 

@@ -18,7 +18,7 @@ from _autodoc_type_aliases import *
 from _html_options import *
 from _intersphinx_options import *
 from _latex_options import *
-from _util import git_version as _git_version  # noqa: F401
+from _util import git_version as _git_version
 from _util import to_bool as _to_bool
 
 del sys.path[0]
@@ -34,8 +34,8 @@ copyright = "2025, Equal1"
 author = "Equal1"
 release = "0.0.1"
 
-# version = _git_version()
-# release = _git_version()
+version = _git_version()
+release = _git_version()
 
 html_title = f"{project}"
 

@@ -26,17 +26,21 @@ class Degrees(FrozenModel, SupportUnitArithmeticOperations[int | float]):
     """Degrees as a unit of angle."""
 
     deg: int | float
+    """The angle in degrees. This is the value stored."""
 
     @property
     def rad(self) -> float:
+        """The angle in radians. Computed on the fly."""
         return self.deg * cmath.pi / 180
 
     @property
     def turns(self) -> int | float:
+        """The angle in turns. Computed on the fly."""
         return collapse_float(self.deg / 360)
 
     @property
     def half_turns(self) -> int | float:
+        """The angle in half turns. Computed on the fly."""
         return collapse_float(self.deg / 180)
 
 
@@ -45,17 +49,21 @@ class Radians(FrozenModel, SupportUnitArithmeticOperations[int | float]):
     """Radians as a unit of angle."""
 
     rad: float
+    """The angle in radians. This is the value stored."""
 
     @property
     def deg(self) -> int | float:
+        """The angle in degrees. Computed on the fly."""
         return 180 * collapse_float(self.rad / cmath.pi)
 
     @property
     def turns(self) -> int | float:
+        """The angle in turns. Computed on the fly."""
         return collapse_float(self.rad / cmath.tau)
 
     @property
     def half_turns(self) -> int | float:
+        """The angle in half turns. Computed on the fly."""
         return collapse_float(self.rad / cmath.pi)
 
 
@@ -67,17 +75,21 @@ class Turns(FrozenModel, SupportUnitArithmeticOperations[int | float]):
     """
 
     turns: int | float
+    """The angle in turns. This is the value stored."""
 
     @property
     def deg(self) -> int | float:
+        """The angle in degrees. Computed on the fly."""
         return 360 * self.turns
 
     @property
     def rad(self) -> float:
+        """The angle in radians. Computed on the fly."""
         return self.turns * cmath.tau  # 2π = τ
 
     @property
     def half_turns(self) -> int | float:
+        """The angle in half turns. Computed on the fly."""
         return 2 * self.turns
 
 
@@ -89,101 +101,133 @@ class HalfTurns(FrozenModel, SupportUnitArithmeticOperations[int | float]):
     """
 
     half_turns: int | float
+    """The angle in half turns. This is the value stored."""
 
     @property
     def deg(self) -> int | float:
+        """The angle in degrees. Computed on the fly."""
         return collapse_float(180 * self.half_turns)
 
     @property
     def rad(self) -> float:
+        """The angle in radians. Computed on the fly."""
         return self.half_turns * cmath.pi
 
     @property
     def turns(self) -> int | float:
+        """The angle in turns. Computed on the fly."""
         return collapse_float(self.half_turns / 2)
 
 
 @register_unit_value_field("s")
 class Seconds(FrozenModel, SupportUnitArithmeticOperations[int | float]):
+    """Seconds as a unit of time."""
+
     s: float
+    """The time in seconds. This is the value stored."""
 
     @property
     def ms(self) -> float:
+        """The time in milliseconds. Computed on the fly."""
         return self.s * 1000
 
     @property
     def us(self) -> int | float:
+        """The time in microseconds. Computed on the fly."""
         return collapse_float(self.s * 1e6)
 
     @property
     def ns(self) -> int:
+        """The time in nanoseconds. Computed on the fly."""
         return round(self.s * 1.0e9)
 
     @property
     def _raw(self):
+        """The raw stored value."""
         return self.s
 
 
 @register_unit_value_field("ms")
 class Milliseconds(FrozenModel, SupportUnitArithmeticOperations[int | float]):
+    """Milliseconds as a unit of time."""
+
     ms: int | float
+    """The time in milliseconds. This is the value stored."""
 
     @property
     def s(self) -> float:
+        """The time in seconds. Computed on the fly."""
         return self.ms / 1000
 
     @property
     def us(self) -> int | float:
+        """The time in microseconds. Computed on the fly."""
         return collapse_float(self.ms * 1e3)
 
     @property
     def ns(self) -> int:
+        """The time in nanoseconds. Computed on the fly."""
         return round(self.ms * 1e6)
 
     @property
     def _raw(self):
+        """The raw stored value."""
         return self.ms
 
 
 @register_unit_value_field("us")
 class Microseconds(FrozenModel, SupportUnitArithmeticOperations[int | float]):
+    """Microseconds as a unit of time."""
+
     us: int | float
+    """The time in microseconds. This is the value stored."""
 
     @property
     def s(self) -> float:
+        """The time in seconds. Computed on the fly."""
         return self.us / 1e6
 
     @property
     def ms(self) -> int | float:
+        """The time in milliseconds. Computed on the fly."""
         return collapse_float(self.us / 1000)
 
     @property
     def ns(self) -> int:
+        """The time in nanoseconds. Computed on the fly."""
         return round(self.us * 1000)
 
     @property
     def _raw(self):
+        """The raw stored value."""
         return self.us
 
 
 @register_unit_value_field("ns")
 class Nanoseconds(FrozenModel, SupportUnitArithmeticOperations[int | float]):
+    """Nanoseconds as a unit of time."""
+
     ns: int
+    """The time in nanoseconds. This is the value stored."""
 
     @property
     def s(self) -> float:
+        """The time in seconds. Computed on the fly."""
         return self.ns / 1e9
 
     @property
     def ms(self) -> int | float:
+        """The time in milliseconds. Computed on the fly."""
         return collapse_float(self.ns / 1e6)
 
     @property
     def us(self) -> int | float:
+        """The time in microseconds. Computed on the fly."""
         return collapse_float(self.ns / 1000)
 
     @property
     def _raw(self):
+        """The raw stored value."""
         return self.ns
 
 
@@ -197,13 +241,16 @@ class Volts(FrozenModel, SupportUnitArithmeticOperations[int | float]):
     """Volts as a unit of voltage (real)."""
 
     V: int | float
+    """The voltage in volts. This is the value stored."""
 
     @property
     def mV(self) -> int | float:
+        """The voltage in millivolts. Computed on the fly."""
         return collapse_float(self.V * 1000)
 
     @property
     def _raw(self) -> int | float:
+        """The raw stored value."""
         return self.V
 
 
@@ -212,13 +259,16 @@ class Millivolts(FrozenModel, SupportUnitArithmeticOperations[int | float]):
     """Millivolts as a unit of voltage (real)."""
 
     mV: int | float
+    """The voltage in millivolts. This is the value stored."""
 
     @property
     def V(self) -> int | float:
+        """The voltage in volts. Computed on the fly."""
         return collapse_float(self.mV / 1000)
 
     @property
     def _raw(self) -> int | float:
+        """The raw stored value."""
         return self.mV
 
 
@@ -227,21 +277,26 @@ class ComplexVolts(FrozenModel, SupportUnitArithmeticOperations[int | float | co
     """Volts as a unit of voltage (real + imaginary)."""
 
     V: int | float | complex
+    """The voltage in volts. This is the value stored."""
 
     @property
     def mV(self) -> int | float | complex:
+        """The voltage in millivolts. Computed on the fly."""
         return collapse_scalar(self.V * 1000)
 
     @property
     def _raw(self) -> int | float | complex:
+        """The raw stored value."""
         return self.V
 
     @property
     def real(self) -> Volts:
+        """The real part of the voltage as Volts."""
         return Volts(V=self.V.real)
 
     @property
     def imag(self) -> Volts:
+        """The imaginary part of the voltage as Volts."""
         return Volts(V=self.V.imag)
 
 
@@ -250,21 +305,26 @@ class ComplexMillivolts(FrozenModel, SupportUnitArithmeticOperations[int | float
     """Millivolts as a unit of voltage (real + imaginary)."""
 
     mV: int | float | complex
+    """The voltage in millivolts. This is the value stored."""
 
     @property
     def V(self) -> float | complex:
+        """The voltage in volts. Computed on the fly."""
         return collapse_scalar(self.mV / 1000)
 
     @property
     def _raw(self) -> int | float | complex:
+        """The raw stored value."""
         return self.mV
 
     @property
     def real(self) -> Millivolts:
+        """The real part of the voltage as Millivolts."""
         return Millivolts(mV=self.mV.real)
 
     @property
     def imag(self) -> Millivolts:
+        """The imaginary part of the voltage as Millivolts."""
         return Millivolts(mV=self.mV.imag)
 
 
@@ -275,83 +335,111 @@ class ComplexMillivolts(FrozenModel, SupportUnitArithmeticOperations[int | float
 
 @register_unit_value_field("Hz")
 class Hertz(FrozenModel, SupportUnitArithmeticOperations[int | float]):
+    """Hertz as a unit of frequency."""
+
     Hz: int | float
+    """The frequency in hertz. This is the value stored."""
 
     @property
     def kHz(self) -> int | float:
+        """The frequency in kilohertz. Computed on the fly."""
         return collapse_float(self.Hz / 1000)
 
     @property
     def MHz(self) -> int | float:
+        """The frequency in megahertz. Computed on the fly."""
         return collapse_float(self.Hz / 1e6)
 
     @property
     def GHz(self) -> int | float:
+        """The frequency in gigahertz. Computed on the fly."""
         return collapse_float(self.Hz / 1e9)
 
     @property
     def _raw(self) -> int | float:
+        """The raw stored value."""
         return self.Hz
 
 
 @register_unit_value_field("kHz")
 class Kilohertz(FrozenModel, SupportUnitArithmeticOperations[int | float]):
+    """Kilohertz as a unit of frequency."""
+
     kHz: int | float
+    """The frequency in kilohertz. This is the value stored."""
 
     @property
     def Hz(self) -> int | float:
+        """The frequency in hertz. Computed on the fly."""
         return collapse_float(self.kHz * 1000)
 
     @property
     def MHz(self) -> int | float:
+        """The frequency in megahertz. Computed on the fly."""
         return collapse_float(self.kHz / 1000)
 
     @property
     def GHz(self) -> int | float:
+        """The frequency in gigahertz. Computed on the fly."""
         return collapse_float(self.kHz / 1e6)
 
     @property
     def _raw(self) -> int | float:
+        """The raw stored value."""
         return self.kHz
 
 
 @register_unit_value_field("MHz")
 class Megahertz(FrozenModel, SupportUnitArithmeticOperations[int | float]):
+    """Megahertz as a unit of frequency."""
+
     MHz: int | float
+    """The frequency in megahertz. This is the value stored."""
 
     @property
     def Hz(self) -> int | float:
+        """The frequency in hertz. Computed on the fly."""
         return collapse_float(self.MHz * 1e6)
 
     @property
     def kHz(self) -> int | float:
+        """The frequency in kilohertz. Computed on the fly."""
         return collapse_float(self.MHz * 1000)
 
     @property
     def GHz(self) -> int | float:
+        """The frequency in gigahertz. Computed on the fly."""
         return collapse_float(self.MHz / 1000)
 
     @property
     def _raw(self) -> int | float:
+        """The raw stored value."""
         return self.MHz
 
 
 @register_unit_value_field("GHz", (int, float))
 class Gigahertz(FrozenModel, SupportUnitArithmeticOperations[int | float]):
+    """Gigahertz as a unit of frequency."""
+
     GHz: int | float
+    """The frequency in gigahertz. This is the value stored."""
 
     @property
     def Hz(self) -> int | float:
+        """The frequency in hertz. Computed on the fly."""
         return collapse_float(self.GHz * 1e9)
 
     @property
     def kHz(self) -> int | float:
+        """The frequency in kilohertz. Computed on the fly."""
         return collapse_float(self.GHz * 1e6)
 
     @property
     def MHz(self) -> int | float:
+        """The frequency in megahertz. Computed on the fly."""
         return collapse_float(self.GHz * 1000)
 
     @property
     def _raw(self) -> int | float:
+        """The raw stored value."""
         return self.GHz

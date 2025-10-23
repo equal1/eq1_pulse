@@ -1,6 +1,6 @@
 # docs
 ## Description
-Directory for documentation related to the eq1_pulse subproject.
+Directory for documentation related to the `eq1_pulse` project.
 
 ---
 

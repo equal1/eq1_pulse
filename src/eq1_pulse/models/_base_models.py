@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 
 class NoExtrasModel(BaseModel):
-    """A BaseModel that disallows extra fields in the input data."""
+    """A :obj:`pydantic.BaseModel` that disallows extra fields in the input data."""
 
     if TYPE_CHECKING:
 
@@ -31,7 +31,7 @@ class NoExtrasModel(BaseModel):
 
 
 class FrozenModel(NoExtrasModel):
-    """A NoExtrasModel that is immutable (frozen) after creation."""
+    """A :class:`NoExtrasModel` that is immutable (frozen) after creation."""
 
     if TYPE_CHECKING:
 
@@ -41,7 +41,7 @@ class FrozenModel(NoExtrasModel):
 
 
 class WrappedValueModel(NoExtrasModel):
-    """A NoExtrasModel that wraps a single value in a field named 'value'."""
+    """A :class:`NoExtrasModel` that wraps a single value in a field named 'value'."""
 
     value: Any
 
@@ -144,7 +144,7 @@ class WrappedValueModel(NoExtrasModel):
 
 
 class LeanModel(NoExtrasModel):
-    """A Model which doesn't serialize the default values, except the first literal field.
+    """A :class:`NoExtrasModel` which doesn't serialize the default values, except the first literal field.
 
     The first literal field should only have one possible value (to be considered the discriminator).
     """
@@ -186,7 +186,7 @@ class LeanModel(NoExtrasModel):
 
 
 class FrozenWrappedValueModel(WrappedValueModel, FrozenModel):
-    """A wrapped value model that is also frozen."""
+    """A :class:`WrappedValueModel` that is also frozen."""
 
     pass
 
