@@ -1,0 +1,164 @@
+[project]
+name = "eq1_pulse"
+dynamic = ["version"]
+authors = [
+    { name = "Peter Hanos", email = "peter.hanos@equal1.com" },
+]
+description = "Equal1 Pulse Description Library"
+readme = "README.md"
+requires-python = ">=3.12"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: Apache Software License 2.0",
+    "Operating System :: OS Independent",
+]
+
+license = "Apache-2.0"
+
+dependencies = [
+    "numpy>=1.20",
+    "pydantic>=2.11",       # core dependency
+]
+
+[project.urls]
+"Homepage" = "https://github.com/equal1/eq1_pulse"
+
+[project.optional-dependencies]
+dev = ["pre-commit", "eq1_pulse[typing, mypy, pyright, ruff, pytest, doc]"]
+
+qblox = ["spirack", "qblox_instruments>=0.11", "dataclasses_json>=0.5.2"]
+
+mypy = ["mypy>=1.16.0", "eq1_pulse[typing]"]
+
+pyright = ["pyright", "eq1_pulse[typing]"]
+
+typing = [
+    "pandas-stubs",
+    "pytest",         # <-- to check the tests folder
+]
+
+pytest = [
+    "pytest",
+    "pytest-cov",
+    "coverage>=7.7.0",
+    # "pytest-asyncio",
+    "pytest-mock",
+    # "pytest-xdist",
+    #  "pytest-timeout",
+    # "pytest-rerunfailures",
+    # "pytest-ordering",
+    # "pytest-html",
+]
+
+ruff = ["ruff"]
+
+doc = [
+    "sphinx>=7.2.6",
+    "myst-parser",
+    "nbsphinx",            # for notebooks
+    "pydata-sphinx-theme",
+    "furo",
+    "sphinx-autoapi",
+    "sphinx-rtd-theme",
+    "sphinx-tabs",
+    "graphviz",
+    # "sphinxcontrib-bibtex",
+    # "sphinxcontrib-jquery",
+    # "sphinxcontrib-mermaid",
+    # "sphinxcontrib-ansi",
+    # "sphinx-autodoc-typehints",
+]
+
+graphviz = [
+    "pydot",
+    "graphviz"
+]
+
+# [project.gui-scripts]
+#
+
+[build-system]
+requires = ["setuptools>=61.0", "setuptools-git-versioning"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+#packages = ['eq1_pulse']
+
+[tool.setuptools.package-dir]
+eq1_pulse = "src/eq1_pulse"
+
+[tool.setuptools-git-versioning]
+enabled = true
+
+[tool.setuptools.package-data]
+eq1_pulse = ["py.typed"]
+
+[tool.ruff]
+line-length = 120
+# Ignore notebooks during formatting
+exclude = ["*.ipynb"]
+
+[tool.ruff.lint]
+select = [
+    # pycodestyle
+    "E",
+    # Pyflakes
+    "F",
+    # pyupgrade
+    "UP",
+    # flake8-bugbear
+    "B",
+    # flake8-simplify
+    "SIM",
+    # isort
+    "I",
+    # pydocstyle
+    "D",
+    # ruff-specific rules
+    "RUF",
+    # pydoclint
+    # "DOC",
+]
+ignore = ["D203", "D213", "D401"]
+pydocstyle.convention = "pep257"
+
+[tool.ruff.lint.per-file-ignores]
+"{tests,sandbox,feature_workspace}/*.{py,ipynb}" = ["D100", "D101", "D103", "D107", "F403", "F405", "D102"]
+"*.debug.py" = ["E501", "F405", "F401", "F403", "UP034"]
+[tool.pytest.ini_options]
+pythonpath = "src"
+addopts = "--cov=src"
+testpaths = ["tests"]
+log_cli = false
+log_cli_level = "DEBUG"
+log_cli_format = "%(asctime)s [%(levelname)8s] %(message)s (%(filename)s:%(lineno)s)"
+log_cli_date_format = "%Y-%m-%d %H:%M:%S %z"
+
+[tool.mypy]
+# Some mypy configurations
+mypy_path = "$MYPY_CONFIG_FILE_DIR/src"
+modules = ["eq1_pulse"]
+exclude = ["^docs/source/"]
+check_untyped_defs = true
+disallow_any_generics = true
+ignore_missing_imports = true
+no_implicit_optional = true
+show_error_codes = true
+strict_equality = true
+warn_redundant_casts = true
+warn_return_any = true
+warn_unreachable = true
+warn_unused_configs = true
+no_implicit_reexport = true
+explicit_package_bases = true
+plugins = ['pydantic.mypy']
+#incremental = false
+sqlite_cache = true
+
+[tool.pyright]
+pythonVersion = "3.12"
+
+reportWildcardImportFromLibrary = "information"
+
+[tool.uv]
+#prerelease = "allow" # not recommended

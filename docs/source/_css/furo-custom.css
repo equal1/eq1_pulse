@@ -1,0 +1,8 @@
+.sidebar-container,
+.sidebar-drawer {
+    width: 23em !important;
+}
+
+.toc-drawer {
+    width: 30em !important;
+}

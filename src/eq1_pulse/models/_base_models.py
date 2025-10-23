@@ -1,0 +1,162 @@
+"""Base Pydantic models used throughout the package.
+
+These models provide a foundation for creating more complex data structures
+and ensure consistency in validation and serialization.
+
+Inheriting from these models ensures consistent behavior across the codebase.
+"""
+
+# ruff: noqa: D100 D101 D102 D105 D107 RUF100
+from __future__ import annotations
+
+from functools import cache
+from typing import TYPE_CHECKING, Any, Literal, get_args
+
+from pydantic import BaseModel, ConfigDict, model_serializer, model_validator
+from pydantic_core import PydanticUndefinedType
+
+if TYPE_CHECKING:
+    from pydantic.fields import FieldInfo
+
+
+class NoExtrasModel(BaseModel):
+    """A BaseModel that disallows extra fields in the input data."""
+
+    if TYPE_CHECKING:
+
+        def __init__(self, *args, **kwargs): ...
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class FrozenModel(NoExtrasModel):
+    """A NoExtrasModel that is immutable (frozen) after creation."""
+
+    if TYPE_CHECKING:
+
+        def __init__(self, *args, **kwargs): ...
+
+    model_config = ConfigDict(frozen=True)
+
+
+class WrappedValueModel(NoExtrasModel):
+    """A NoExtrasModel that wraps a single value in a field named 'value'."""
+
+    value: Any
+
+    @model_validator(mode="before")
+    @classmethod
+    def _wrap_validator(cls, data: Any) -> Any:
+        return {"value": data}
+
+    @model_serializer
+    def _wrap_serializer(self) -> Any:
+        return self.value
+
+    def __repr__(self):
+        return f"{self.__class__.__name__}({', '.join(k + '=' + repr(v) for k, v in self.model_dump().items())})"
+
+    def _apply_default_args_to_init_data(
+        self, default_name: str, args: tuple[Any, ...], data: dict[str, Any]
+    ) -> dict[str, Any]:
+        match len(args):
+            case 0:
+                return data
+            case 1:
+                if default_name in data:
+                    raise TypeError(f"duplicate parameter {default_name!r}")
+                if "value" in data:
+                    raise TypeError(f"duplicate parameter {'value'}")
+                return data | {default_name: args[0]}
+            case n:
+                raise TypeError(f"expected at most 1 positional arguments after self, got {n}")
+
+    def _apply_default_zero_args_to_init_data(
+        self, default_name: str, args: tuple[Any, ...], data: dict[str, Any], *, zero=0
+    ) -> dict[str, Any]:
+        """
+        Process positional arguments during initialization and apply default zero value if needed.
+
+        This method handles the case where a single positional argument with value zero
+        may be provided during initialization. If provided, it adds this value to the
+        initialization data dictionary under the specified default name.
+
+        :param default_name: The parameter name to use when adding the zero value to the data dictionary
+        :param args: Positional arguments passed to the initialization method
+        :param data: Dictionary of initialization data (typically from keyword arguments)
+        :param zero: The expected value of the positional argument, defaults to 0
+
+        :return: The updated initialization data dictionary
+
+        :raises TypeError:
+            If default_name or 'value' already exists in data, or if more than 1 positional argument
+            is provided
+        :raises ValueError: If the positional argument's value is not equal to the expected zero value
+        """
+        match len(args):
+            case 0:
+                return data
+            case 1:
+                if default_name in data:
+                    raise TypeError(f"duplicate parameter {default_name!r}")
+                if "value" in data:
+                    raise TypeError(f"duplicate parameter {'value'}")
+                if args[0] != zero:
+                    raise ValueError(f"positional argument must be {zero}")
+                return data | {default_name: zero}
+            case n:
+                raise TypeError(f"expected at most 1 positional arguments after self, got {n}")
+
+
+class LeanModel(NoExtrasModel):
+    """A Model which doesn't serialize the default values, except the first literal field.
+
+    The first literal field should only have one possible value (to be considered the discriminator).
+    """
+
+    @model_serializer(mode="wrap")
+    def _wrap_serializer(self, wrapped) -> Any:
+        from numpy import array_equal, ndarray
+
+        def is_eq(attribute_value, default_value):
+            match default_value:
+                case PydanticUndefinedType():
+                    return False
+                case None:
+                    return attribute_value is None
+                case ndarray():
+                    return array_equal(attribute_value, default_value)
+                case _:
+                    return attribute_value == default_value
+
+        return {k: v for k, v in wrapped(self).items() if not is_eq(getattr(self, k), self._default_value_of(k))}
+
+    @classmethod
+    @cache
+    def _non_discriminator_fields(cls) -> dict[str, FieldInfo]:
+        fields = cls.model_fields
+        discriminator_name, first_field = next(iter(fields.items()))
+        lit: Any = first_field.annotation
+        if isinstance(lit, type(Literal[Any])):  # noqa: SIM102
+            if len(_args := get_args(lit)) == 1:
+                fields = dict(fields)
+                del fields[discriminator_name]
+        return fields
+
+    @classmethod
+    @cache
+    def _default_value_of(cls, field_name: str) -> Any:
+        fields = cls._non_discriminator_fields()
+        return fields[field_name].get_default(call_default_factory=True) if field_name in fields else None
+
+
+class FrozenWrappedValueModel(WrappedValueModel, FrozenModel):
+    """A wrapped value model that is also frozen."""
+
+    pass
+
+
+class FrozenLeanModel(LeanModel, FrozenModel):
+    """A frozen model that is also a lean model."""
+
+    pass
