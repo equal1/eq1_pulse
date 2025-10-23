@@ -24,6 +24,7 @@ from ._base_models import (
     FrozenModel,
     FrozenWrappedValueModel,
     LeanModel,
+    WrappedValueOrZeroModel,
 )
 from ._units import (
     ComplexMillivolts,
@@ -124,7 +125,7 @@ class ArithmeticFrozenWrappedValueModel[ScalarType](FrozenWrappedValueModel):
         return type(self).model_construct(value=self.value / other)  # type: ignore[return-value]
 
 
-class Angle(ArithmeticFrozenWrappedValueModel[int | float]):
+class Angle(WrappedValueOrZeroModel, ArithmeticFrozenWrappedValueModel[int | float]):
     """A model representing an angle in either degrees, radians or turns (aka. cycles/revolutions)."""
 
     @overload
@@ -202,7 +203,7 @@ class Phase(Angle):
         def __init__(self, /, *args, **data): ...
 
 
-class Time(ArithmeticFrozenWrappedValueModel[int | float]):
+class Time(WrappedValueOrZeroModel, ArithmeticFrozenWrappedValueModel[int | float]):
     """A model representing time (instant or difference).
 
     The model can represent time in seconds, milliseconds, microseconds, or nanoseconds,
@@ -288,7 +289,7 @@ class Duration(Time):
         return data
 
 
-class Voltage(ArithmeticFrozenWrappedValueModel[int | float]):
+class Voltage(WrappedValueOrZeroModel, ArithmeticFrozenWrappedValueModel[int | float]):
     """A model representing a real voltage in volts or millivolts."""
 
     value: Volts | Millivolts
@@ -333,7 +334,7 @@ class Voltage(ArithmeticFrozenWrappedValueModel[int | float]):
                 raise TypeError(f"expected Volts or Millivolts, got {type(value)}")  # pragma: no cover
 
 
-class ComplexVoltage(ArithmeticFrozenWrappedValueModel[int | float | complex]):
+class ComplexVoltage(WrappedValueOrZeroModel, ArithmeticFrozenWrappedValueModel[int | float | complex]):
     """A model representing a complex voltage in volts or millivolts.
 
     Complex voltages are used to represent both amplitude and phase information,
@@ -399,7 +400,7 @@ class ComplexVoltage(ArithmeticFrozenWrappedValueModel[int | float | complex]):
         return Voltage.from_value(self.value.imag)
 
 
-class Frequency(ArithmeticFrozenWrappedValueModel[int | float]):
+class Frequency(WrappedValueOrZeroModel, ArithmeticFrozenWrappedValueModel[int | float]):
     """A model representing a frequency in Hertz, Kilohertz, Megahertz, or Gigahertz."""
 
     value: Hertz | Kilohertz | Megahertz | Gigahertz
@@ -640,69 +641,135 @@ class Range(_StartStopInterval):
 
 
 class AngleDict(TypedDict, total=False):
+    """Dictionary representation of the arguments of Angle constructor.
+
+    The fields are mutually exclusive; only one should be provided.
+    """
+
     deg: int | float
+    """degrees"""
     rad: float
+    """radians"""
     turns: int | float
+    """turns"""
     half_turns: int | float
+    """half_turns"""
 
 
 type AngleLike = Angle | Literal[0] | AngleDict
+"""Type alias for Angle initialization arguments."""
+
+
 type PhaseLike = Phase | Literal[0] | AngleDict
+"""Type alias for Phase initialization arguments."""
 
 
 class TimeDict(TypedDict, total=False):
+    """Dictionary representation of the arguments of Time constructor.
+
+    The fields are mutually exclusive; only one should be provided.
+    """
+
     s: int | float
+    """seconds"""
     ms: int | float
+    """milliseconds"""
     us: int | float
+    """microseconds"""
     ns: int
 
 
 type TimeLike = Time | Literal[0] | TimeDict
+"""Type alias for Time initialization arguments."""
+
 type DurationLike = Duration | Literal[0] | TimeDict
+"""Type alias for Duration initialization arguments."""
 
 
 class VoltageDict(TypedDict, total=False):
+    """Dictionary representation of the arguments of Voltage constructor.
+
+    The fields are mutually exclusive; only one should be provided.
+    """
+
     V: int | float
+    """volts"""
     mV: int | float
 
 
 type VoltageLike = Voltage | Literal[0] | VoltageDict
+"""Type alias for Voltage initialization arguments."""
 type AmplitudeLike = Amplitude | Literal[0] | VoltageDict
+"""Type alias for Amplitude initialization arguments."""
 type ThresholdLike = Threshold | Literal[0] | VoltageDict
+"""Type alias for Threshold initialization arguments."""
 type MagnitudeLike = Magnitude | Literal[0] | VoltageDict
+"""Type alias for Magnitude initialization arguments."""
 
 
 class ComplexVoltageDict(TypedDict, total=False):
+    """Dictionary representation of the arguments of ComplexVoltage constructor.
+
+    The fields are mutually exclusive; only one should be provided.
+    """
+
     V: int | float | complex
+    """volts"""
     mV: int | float | complex
+    """millivolts"""
 
 
 type ComplexVoltageLike = ComplexVoltage | Literal[0] | ComplexVoltageDict
+"""Type alias for ComplexVoltage initialization arguments.
+
+The fields are mutually exclusive; only one should be provided.
+"""
 
 
 class FrequencyDict(TypedDict, total=False):
+    """Dictionary representation of the arguments of Frequency constructor.
+
+    The fields are mutually exclusive; only one should be provided.
+    """
+
     Hz: int | float
+    """hertz"""
     kHz: int | float
+    """kilohertz"""
     MHz: int | float
+    """megahertz"""
     GHz: int | float
 
 
 type FrequencyLike = Frequency | Literal[0] | FrequencyDict
+"""Type alias for Frequency initialization arguments."""
 
 
 class LinSpaceDict(TypedDict, total=True):
+    """Dictionary representation of the arguments of LinSpace constructor.
+
+    The fields are all required.
+    """
+
     start: int | float | complex
     stop: int | float | complex
     num: int
 
 
 type LinSpaceLike = LinSpace | LinSpaceDict
+"""The type alias for LinSpace initialization arguments."""
 
 
 class RangeDict(TypedDict, total=True):
+    """Dictionary representation of the arguments of Range constructor.
+
+    The fields are all required.
+    """
+
     start: int | float | complex
     stop: int | float | complex
     step: int | float | complex
 
 
 type RangeLike = Range | RangeDict
+"""The type alias for Range initialization arguments."""

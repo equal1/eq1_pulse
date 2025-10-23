@@ -9,6 +9,19 @@ from pydantic import ValidationError
 from eq1_pulse.models.basic_types import Amplitude, Angle, Duration, Frequency, Threshold, Time
 
 
+def test_threshold_schema():
+    """Test the JSON schema of Threshold."""
+    expected_schema = {
+        "anyOf": [
+            {"const": 0, "type": "integer"},
+            {"$ref": "#/$defs/Volts"},
+            {"$ref": "#/$defs/Millivolts"},
+        ],
+        "title": "Threshold",
+    }
+    assert Threshold.model_json_schema() == expected_schema
+
+
 def test_threshold_zero_init():
     """Test zero initialization of Threshold."""
     t = Threshold(0)
@@ -62,9 +75,31 @@ def test_threshold_invalid_init():
         Threshold.model_validate(None)  # Missing arguments
 
 
+def test_angle_schema():
+    """Test the JSON schema of Angle."""
+    expected_schema = {
+        "anyOf": [
+            {"const": 0, "type": "integer"},
+            {"$ref": "#/$defs/Degrees"},
+            {"$ref": "#/$defs/Radians"},
+            {"$ref": "#/$defs/Turns"},
+            {"$ref": "#/$defs/HalfTurns"},
+        ],
+        "title": "Angle",
+    }
+    assert Angle.model_json_schema() == expected_schema
+
+
 def test_angle_zero_init():
     """Test zero initialization of Angle."""
     a = Angle(0)
+    assert a.deg == 0
+    assert a.rad == 0
+
+
+def test_angle_zero_validate():
+    """Test zero validation of Angle."""
+    a = Angle.model_validate(0)
     assert a.deg == 0
     assert a.rad == 0
 
@@ -714,7 +749,10 @@ def test_time_model_validation():
 def test_frequency_model_validation():
     """Test JSON model validation for Frequency."""
     # Test each frequency unit
-    freq = Frequency.model_validate_json('{"Hz": 1000000.0}')
+    freq = Frequency.model_validate_json(" 0 ")
+    assert freq.Hz == 0
+
+    freq = Frequency.model_validate_json(' {"Hz": 1000000.0} ')
     assert freq.Hz == 1e6
 
     freq = Frequency.model_validate_json('{"kHz": 1000.0}')
@@ -732,3 +770,30 @@ def test_frequency_model_validation():
 
     with pytest.raises(ValidationError):
         Frequency.model_validate_json('{"Hz": 1e6, "MHz": 1.0}')
+
+
+def test_frequency_model_string_data_validation_for_zero():
+    """Test string data JSON model validation for Frequency."""
+    freq = Frequency.model_validate_strings(" 0 ")
+    assert freq.Hz == 0
+
+
+def test_frequency_model_string_data_validation():
+    freq = Frequency.model_validate_strings({"Hz": " 1000000.0"})
+    assert freq.Hz == 1e6
+
+    freq = Frequency.model_validate_strings({"kHz": " 1000.0"})
+    assert freq.kHz == 1000.0
+
+    freq = Frequency.model_validate_strings({"MHz": " 1.0"})
+    assert freq.MHz == 1.0
+
+    freq = Frequency.model_validate_strings({"GHz": " 1.0"})
+    assert freq.GHz == 1.0
+
+    # Test validation failures
+    with pytest.raises(ValidationError):
+        Frequency.model_validate_strings({"Hz": "invalid"})
+
+    with pytest.raises(ValidationError):
+        Frequency.model_validate_strings({"Hz": "1e6", "MHz": " 1.0"})

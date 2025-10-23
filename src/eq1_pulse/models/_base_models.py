@@ -9,13 +9,14 @@ Inheriting from these models ensures consistent behavior across the codebase.
 from __future__ import annotations
 
 from functools import cache
-from typing import TYPE_CHECKING, Any, Literal, cast, get_args
+from typing import TYPE_CHECKING, Any, Final, Literal, Self, cast, get_args
 
-from pydantic import BaseModel, ConfigDict, model_serializer, model_validator
+from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError, model_serializer, model_validator
 from pydantic.json_schema import DEFAULT_REF_TEMPLATE, GenerateJsonSchema, JsonSchemaMode
 from pydantic_core import PydanticUndefinedType
 
 if TYPE_CHECKING:
+    from pydantic.config import ExtraValues
     from pydantic.fields import FieldInfo
 
 
@@ -194,3 +195,134 @@ class FrozenLeanModel(LeanModel, FrozenModel):
     """A frozen model that is also a lean model."""
 
     pass
+
+
+_LiteralZeroTypeAdapter: Final[TypeAdapter[Literal[0]]] = TypeAdapter(Literal[0])
+
+
+class WrappedValueOrZeroModel(WrappedValueModel):
+    """A WrappedValueModel that also accepts the literal integer 0 as valid input.
+
+    This is a mixin class and will not treat 0 in the __init__ method specially.
+    It is the responsibility of the derived class to handle that.
+    """
+
+    @classmethod
+    def model_json_schema(
+        cls,
+        by_alias: bool = True,
+        ref_template: str = DEFAULT_REF_TEMPLATE,
+        schema_generator: type[GenerateJsonSchema] = GenerateJsonSchema,
+        mode: JsonSchemaMode = "validation",
+        *,
+        union_format: Literal["any_of"] | Literal["primitive_type_array"] = "any_of",
+    ) -> dict[str, Any]:
+        base_schema = super().model_json_schema(
+            by_alias, ref_template, schema_generator, mode, union_format=union_format
+        )
+
+        if "anyOf" in base_schema:
+            any_of = base_schema["anyOf"]
+            if isinstance(any_of, list):
+                zero_schema = _LiteralZeroTypeAdapter.json_schema(
+                    by_alias=by_alias,
+                    ref_template=ref_template,
+                    schema_generator=schema_generator,
+                    mode=mode,
+                    union_format=union_format,
+                )
+                any_of.insert(0, zero_schema)
+
+        return base_schema
+
+    @classmethod
+    def model_validate(
+        cls,
+        obj: Any,
+        *,
+        strict: bool | None = None,
+        extra: ExtraValues | None = None,
+        from_attributes: bool | None = None,
+        context: Any | None = None,
+        by_alias: bool | None = None,
+        by_name: bool | None = None,
+    ) -> Self:
+        if obj == 0:
+            return cls(0)  # type: ignore
+        return super().model_validate(
+            obj,
+            strict=strict,
+            extra=extra,
+            from_attributes=from_attributes,
+            context=context,
+            by_alias=by_alias,
+            by_name=by_name,
+        )
+
+    @classmethod
+    def model_validate_json(
+        cls,
+        json_data: str | bytes | bytearray,
+        *,
+        strict: bool | None = None,
+        extra: ExtraValues | None = None,
+        context: Any | None = None,
+        by_alias: bool | None = None,
+        by_name: bool | None = None,
+    ) -> Self:
+        try:
+            return super().model_validate_json(
+                json_data,
+                strict=strict,
+                extra=extra,
+                context=context,
+                by_alias=by_alias,
+                by_name=by_name,
+            )
+        except ValidationError as e:
+            try:
+                _LiteralZeroTypeAdapter.validate_json(
+                    json_data,
+                    strict=strict,
+                    extra=extra,
+                    context=context,
+                    by_alias=by_alias,
+                    by_name=by_name,
+                )
+            except ValidationError:
+                raise e from None
+            else:
+                return cls(0)  # type: ignore
+
+    @classmethod
+    def model_validate_strings(
+        cls,
+        obj: Any,
+        *,
+        strict: bool | None = None,
+        extra: ExtraValues | None = None,
+        context: Any | None = None,
+        by_alias: bool | None = None,
+        by_name: bool | None = None,
+    ) -> Self:
+        try:
+            return super().model_validate_strings(
+                obj, strict=strict, extra=extra, context=context, by_alias=by_alias, by_name=by_name
+            )
+        except ValidationError as e:
+            try:
+                value = TypeAdapter(int).validate_strings(
+                    obj,
+                    strict=strict,
+                    extra=extra,
+                    context=context,
+                    by_alias=by_alias,
+                    by_name=by_name,
+                )
+            except ValidationError:
+                pass
+            else:
+                if value == 0:
+                    return cls(0)  # type: ignore
+                e.add_note(f"parsed integer value {value} does not equal zero")
+            raise e

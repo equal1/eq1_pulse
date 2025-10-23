@@ -21,5 +21,5 @@ jobs:
             cd docs
             make html
             GIT_VERSION=$(git describe --tags --abbrev=6 --always)
-            rsync --archive --delete --recursive --stats build/html/ /local/work/phanos/eq1lab-docs/$GIT_VERSION/
+            rsync --archive --delete --recursive --stats build/html/ /local/work/phanos/eq1_pulse-docs/$GIT_VERSION/
           '''

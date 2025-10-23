@@ -103,11 +103,6 @@ class HalfTurns(FrozenModel, SupportUnitArithmeticOperations[int | float]):
         return collapse_float(self.half_turns / 2)
 
 
-#
-#  Time units
-#
-
-
 @register_unit_value_field("s")
 class Seconds(FrozenModel, SupportUnitArithmeticOperations[int | float]):
     s: float
