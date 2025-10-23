@@ -1,4 +1,4 @@
-# ruff: noqa: D100 D101 D102 D105, D107
+# ruff: noqa: D100, D101, D107
 from __future__ import annotations
 
 from enum import StrEnum

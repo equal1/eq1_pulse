@@ -79,9 +79,16 @@ class Play(ChannelOpBase):
     """Play a pulse on a channel."""
 
     op_type: Literal["play"] = "play"
+    """The operation type discriminator, always set to "play"."""
+
     pulse: PulseType | PulseRef
+    """The pulse to be played on the channel."""
+
     scale_amp: float | complex | VariableRef | None = None
+    """Optional amplitude scaling factor for the pulse."""
+
     cond: VariableRef | None = None
+    """Optional condition variable to control whether the pulse is played."""
 
     def __init__(self, channel: ChannelRefLike, pulse: PulseType | PulseRefLike, **data):  # noqa: D107
         super().__init__(channel=channel, pulse=pulse, **data)
@@ -91,8 +98,10 @@ class ChannelsOpBase(OpBase):
     """Base class for operations involving multiple channels."""
 
     channels: list[ChannelRef]
+    """The channels involved in the operation."""
 
     def __init__(self, *channels: ChannelRefLike, **data):
+        """Initialize with channels."""
         if not channels:
             super().__init__(**data)
         else:
@@ -122,6 +131,7 @@ class Wait(ChannelsOpBase):
     """Add wait of duration on channel(s).
 
     The wait operations are scheduled to start as soon as possible on each channel.
+
     The relative timing between channels is not guaranteed.
     """
 
@@ -143,6 +153,8 @@ class SetFrequency(ChannelOpBase):
     """Set the frequency of a channel."""
 
     op_type: Literal["set_frequency"] = "set_frequency"
+    """The operation type discriminator, always set to "set_frequency"."""
+
     frequency: Frequency | VariableRef
 
     def __init__(self, channel: ChannelRefLike, frequency: FrequencyLike | VariableRefLike, **data):  # noqa: D107
@@ -153,6 +165,7 @@ class ShiftFrequency(ChannelOpBase):
     """Add a frequency shift to the channel frequency."""
 
     op_type: Literal["shift_frequency"] = "shift_frequency"
+    """The operation type discriminator, always set to "shift_frequency"."""
     frequency: Frequency | VariableRef
 
     def __init__(self, /, channel: ChannelRefLike, frequency: FrequencyLike | VariableRefLike, **data):  # noqa: D107

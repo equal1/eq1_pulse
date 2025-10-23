@@ -1,6 +1,5 @@
 """Helper classes to support arithmetic operations on unit classes."""
 
-# ruff: noqa: D100 D101 D102 D105 D107 RUF100
 from __future__ import annotations
 
 from collections.abc import Callable, MutableMapping
@@ -10,6 +9,7 @@ from weakref import WeakKeyDictionary
 type _SupportedScalarTypes = int | float | complex
 
 _VALUE_FIELDS: MutableMapping[type, tuple[str, tuple[type, ...]]] = WeakKeyDictionary()
+"""Dictionary mapping unit classes to their value field names and types."""
 
 
 def register_unit_value_field[T: type](name: str, dtype: tuple[type, ...] = (int, float)) -> Callable[[T], T]:
@@ -81,6 +81,11 @@ class SupportScalarMulDiv[ScalarType: _SupportedScalarTypes]:
     def __truediv__(self, other: Self) -> ScalarType: ...
 
     def __truediv__(self, other: Self | ScalarType) -> Self | ScalarType:
+        """True division operation.
+
+        Division by scalar returns a new instance of the unit class.
+        Division by another instance of the same unit class returns a scalar.
+        """
         field, dtype = get_unit_value_field_name_and_type(type(self))
         if isinstance(other, dtype):
             value = collapse_scalar(getattr(self, field) / other)
@@ -94,7 +99,12 @@ class SupportScalarMulDiv[ScalarType: _SupportedScalarTypes]:
 
 
 class SupportAdditiveOperations:
-    """A mixin to add support for addition and subtraction with same unit classes."""
+    """A mixin to add support for addition and subtraction with same unit classes.
+
+    This mixin also adds support for unary plus and minus operations.
+
+    Both operands will be converted to the *1st* operand's type before performing the operation.
+    """
 
     def __neg__(self) -> Self:
         field, _ = get_unit_value_field_name_and_type(type(self))
@@ -118,7 +128,12 @@ class SupportAdditiveOperations:
 
 
 class SupportDivModOperation[ScalarType: _SupportedScalarTypes]:
-    """A mixin to add support for modulus operation with same unit classes."""
+    """A mixin to add support for floor division and modulus operation with same unit classes.
+
+    Both operands must be of the same unit class.
+    Division returns an integer, the 1st operand converted to the *2nd* operand's type first.
+    Modulus returns a new instance of the type of the *2nd* operand.
+    """
 
     def __floordiv__(self, other: Self) -> int:
         try:

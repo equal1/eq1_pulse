@@ -1,4 +1,4 @@
-# ruff: noqa: F403, D100 D104
+# ruff: noqa: F403, D104
 # pyright: reportUnsupportedDunderAll = false
 # -----
 from . import basic_types as _basic_types

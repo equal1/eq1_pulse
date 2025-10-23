@@ -1,0 +1,25 @@
+name: Publish Documentation
+
+"on":
+  push:
+    branches:
+      - main
+      - docs-*
+    tags:
+      - "v*"
+
+jobs:
+  publish-docs:
+    name: Generate Documentation
+    uses: ./.github/workflows/common-setup-workflow.yml
+    with:
+        conda-env-file: setup/conda_envs/conda_env.yaml
+        environment-name: eq1_pulse-dev
+        run-command: |
+          sh -ex -c '''
+            git fetch --unshallow --filter=tree:0  # Fetch hiistory without the blobs
+            cd docs
+            make html
+            GIT_VERSION=$(git describe --tags --abbrev=6 --always)
+            rsync --archive --delete --recursive --stats build/html/ /local/work/phanos/eq1lab-docs/$GIT_VERSION/
+          '''

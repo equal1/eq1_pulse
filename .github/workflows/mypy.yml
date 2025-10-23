@@ -1,0 +1,10 @@
+name: Mypy
+"on": [push]
+jobs:
+  run-mypy:
+    name: Mypy
+    uses: ./.github/workflows/common-setup-workflow.yml
+    with:
+      conda-env-file: setup/conda_envs/conda_env.yaml
+      environment-name: eq1_pulse-dev
+      run-command: mypy src tests

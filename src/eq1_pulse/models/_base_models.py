@@ -6,13 +6,13 @@ and ensure consistency in validation and serialization.
 Inheriting from these models ensures consistent behavior across the codebase.
 """
 
-# ruff: noqa: D100 D101 D102 D105 D107 RUF100
 from __future__ import annotations
 
 from functools import cache
-from typing import TYPE_CHECKING, Any, Literal, get_args
+from typing import TYPE_CHECKING, Any, Literal, cast, get_args
 
 from pydantic import BaseModel, ConfigDict, model_serializer, model_validator
+from pydantic.json_schema import DEFAULT_REF_TEMPLATE, GenerateJsonSchema, JsonSchemaMode
 from pydantic_core import PydanticUndefinedType
 
 if TYPE_CHECKING:
@@ -106,6 +106,40 @@ class WrappedValueModel(NoExtrasModel):
                 return data | {default_name: zero}
             case n:
                 raise TypeError(f"expected at most 1 positional arguments after self, got {n}")
+
+    @classmethod
+    def model_json_schema(
+        cls,
+        by_alias: bool = True,
+        ref_template: str = DEFAULT_REF_TEMPLATE,
+        schema_generator: type[GenerateJsonSchema] = GenerateJsonSchema,
+        mode: JsonSchemaMode = "validation",
+        *,
+        union_format: Literal["any_of", "primitive_type_array"] = "any_of",
+    ) -> dict[str, Any]:
+        """Generate the JSON schema for the model, adjusting for wrapped value representation.
+
+        :see: :obj:`pydantic.BaseModel.model_json_schema` for more details.
+        """
+        base_schema = super().model_json_schema(
+            by_alias=by_alias,
+            ref_template=ref_template,
+            schema_generator=schema_generator,
+            mode=mode,
+            union_format=union_format,
+        )
+
+        if (properties := base_schema.get("properties")) is not None and (
+            len(properties) == 1
+            and (value_schema := properties.get("value")) is not None
+            and isinstance(value_schema, dict)
+        ):
+            return cast(
+                dict[str, Any],
+                value_schema | {"title": title} if (title := base_schema.get("title")) is not None else value_schema,
+            )
+
+        return base_schema
 
 
 class LeanModel(NoExtrasModel):

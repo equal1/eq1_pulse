@@ -1,0 +1,10 @@
+name: Pyright
+"on": [push]
+jobs:
+  run-pyright:
+    name: Pyright
+    uses: ./.github/workflows/common-setup-workflow.yml
+    with:
+      conda-env-file: setup/conda_envs/conda_env.yaml
+      environment-name: eq1_pulse-dev
+      run-command: pyright src tests

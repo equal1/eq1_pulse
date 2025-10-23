@@ -1,0 +1,96 @@
+#  This is a reusable workflow that sets up a Conda environment and runs a command.
+
+name: Common Setup Workflow
+
+"on":
+  workflow_call:
+    inputs:
+      conda-env-file:
+        description: "Conda environment YAML file"
+        required: true
+        type: string
+      environment-name:
+        description: "Name of the Conda environment"
+        required: true
+        type: string
+      run-command:
+        description: "Command to run after setup"
+        required: true
+        type: string
+
+jobs:
+  common-setup-workflow:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set LC_ALL and HOME
+        shell: bash
+        run: |
+          echo HOME=$HOME >> $GITHUB_ENV
+          echo LC_ALL=C.utf8 >> $GITHUB_ENV
+
+      - name: Setup Conda
+        uses: conda-incubator/setup-miniconda@v3.1.1
+        with:
+          activate-environment: ""
+          # auto-update-conda: false
+          # auto-activate-base: false
+          conda-solver: libmamba
+          # run-post: false
+
+      - name: Debug info
+        shell: bash # -el {0}
+        run: |
+          which conda || true
+          conda info --envs || true
+          conda run --live-stream -n ${{ inputs.environment-name }} which python || true
+          echo HOME=$HOME
+
+      - name: Set environment variables (2)
+        shell: bash # -el {0}
+        run: |
+          CONDA_ROOT=$(conda info --base)
+          CONDA_ENV_PATH="$CONDA_ROOT/envs/${{ inputs.environment-name }}"
+
+          echo "CONDA_ENV_PATH=$CONDA_ENV_PATH" >> $GITHUB_ENV
+
+      - name: Try to restore Conda Environment
+        uses: equal1/local-cache/restore@v5.2
+        id: conda-cache-restore
+        with:
+          path: ${{ env.CONDA_ENV_PATH }}
+          clean-key: ${{ runner.name }}-${{ inputs.environment-name }}-
+          key: ${{ runner.name }}-${{ inputs.environment-name }}-${{ hashFiles(inputs.conda-env-file) }}
+          base: /local/scratch/phanos/conda-env-cache
+          rsync: true
+
+      - name: Create environment
+        if: steps.conda-cache-restore.outputs.cache-hit != 'true'
+        run: |
+          conda env remove -n ${{ inputs.environment-name }} -y || true
+          conda env create -n ${{ inputs.environment-name }} -f ${{ inputs.conda-env-file }}
+
+      - name: Save Conda Environment
+        uses: equal1/local-cache/save@v5.2
+        id: conda-cache-save
+        if: steps.conda-cache-restore.outputs.cache-hit != 'true'
+        with:
+           path: ${{ steps.conda-cache-restore.outputs.cache-path }}
+           key: ${{ steps.conda-cache-restore.outputs.cache-key }}
+           base: ${{ steps.conda-cache-restore.outputs.cache-base }}
+           rsync: true
+
+      - name: Clean up Conda
+        if: steps.conda-cache-restore.outputs.cache-hit != 'true'
+        run: |
+          conda clean -a -y
+
+      - name: Install eq1_pulse package
+        run: |
+          cd setup/unix
+          conda run --live-stream -n ${{ inputs.environment-name }} ./install_eq1_pulse.sh dev
+
+
+      - name: Run Command
+        run: conda run --live-stream -n ${{ inputs.environment-name }} ${{ inputs.run-command }}

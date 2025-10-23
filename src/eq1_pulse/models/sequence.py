@@ -9,7 +9,7 @@ The same channel can not execute two Play/Record/Barrier operations at the same 
 exception being a Play and its corresponding Record (constituting a Measurement operation).
 """
 
-# ruff: noqa: D100 D101 D102 D105, D107
+# ruff: noqa: D107
 from __future__ import annotations
 
 from collections.abc import Iterable
