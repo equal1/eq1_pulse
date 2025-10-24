@@ -18,12 +18,14 @@ if TYPE_CHECKING:
 
 
 def nd_array_validate(value: list[Any] | nd_array_type) -> nd_array_type:
+    """Validate and convert input to a NumPy array."""
     if isinstance(value, list):
         return np.array(value)
     return value
 
 
 def nd_array_serialize(value: nd_array_type) -> list[Any]:
+    """Serialize a NumPy array to a list."""
     return value.tolist()  # type: ignore[no-any-return, return-value]
 
 
@@ -33,12 +35,14 @@ type NumpyArray = Annotated[
     PlainSerializer(nd_array_serialize, return_type=list),
     WithJsonSchema({"type": "array", "items": {"type": "any"}}),
 ]
+"""Generic NumPy array type with serialization to/from list."""
 
 NumpyArrayConfig = ConfigDict(arbitrary_types_allowed=True)
 NumpyArrayAdapter: TypeAdapter[nd_array_type] = TypeAdapter(NumpyArray, config=NumpyArrayConfig)
 
 
 def np_complex_1d_array_validate(value: object) -> np.ndarray:
+    """Validate and convert input to a 1D complex NumPy array."""
     value = np.asanyarray(value)
     if value.ndim == 1:
         if issubclass(value.dtype.type, complex):
@@ -58,6 +62,7 @@ def np_complex_1d_array_validate(value: object) -> np.ndarray:
 
 
 def np_complex_1d_array_serialize(value: np.ndarray) -> list[tuple[float, float]]:
+    """Serialize a 1D complex NumPy array to a list of tuples."""
     return [(c.real, c.imag) for c in value.tolist()]
 
 
@@ -69,9 +74,11 @@ type NumpyComplexArray1D = Annotated[
         {"type": "array", "items": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2}}
     ),
 ]
+"""1D complex NumPy array type with serialization to/from list of (real, imag) tuples."""
 
 
 def np_float_1d_array_validate(value: object) -> np.ndarray:
+    """Validate and convert input to a 1D float NumPy array."""
     value = np.asanyarray(value)
     if np.iscomplexobj(value):
         raise ValueError("Array must be of float type, not complex")
@@ -84,6 +91,7 @@ def np_float_1d_array_validate(value: object) -> np.ndarray:
 
 
 def np_float_1d_array_serialize(value: np.ndarray) -> list[float]:
+    """Serialize a 1D float NumPy array to a list."""
     return value.tolist()  # type: ignore[no-any-return, return-value]
 
 
@@ -93,9 +101,11 @@ type NumpyFloatArray1D = Annotated[
     PlainSerializer(np_float_1d_array_serialize, return_type=list[float]),
     WithJsonSchema({"type": "array", "items": {"type": "number"}}),
 ]
+"""1D float NumPy array type with serialization to/from list."""
 
 
 def np_int_1d_array_validate(value: object) -> np.ndarray:
+    """Validate and convert input to a 1D integer NumPy array."""
     value = np.asanyarray(value)
     if np.iscomplexobj(value):
         raise ValueError("Array must be of integer type, not complex")
@@ -110,6 +120,7 @@ def np_int_1d_array_validate(value: object) -> np.ndarray:
 
 
 def np_int_1d_array_serialize(value: np.ndarray) -> list[int]:
+    """Serialize a 1D integer NumPy array to a list."""
     return value.tolist()  # type: ignore[no-any-return, return-value]
 
 
@@ -119,9 +130,15 @@ type NumpyIntArray1D = Annotated[
     PlainSerializer(np_int_1d_array_serialize, return_type=list[int]),
     WithJsonSchema({"type": "array", "items": {"type": "integer"}}),
 ]
+"""1D integer NumPy array type with serialization to/from list."""
 
 
 def _detect_optimal_float_to_complex_type(array: np.ndarray[Any, np.dtype[np.floating[Any]]]) -> tuple[type, type]:
+    """Detect the optimal float and complex types for a given float ndarray.
+
+    :param array: A NumPy array with a floating-point dtype.
+    :return: A tuple containing the float type and the corresponding complex type.
+    """
     float_type: type
     complex_type: type
     match array.dtype.type:

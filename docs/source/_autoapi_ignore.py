@@ -15,20 +15,11 @@ autoapi_ignore: list[str] = [
 ]
 
 
-_autoapi_skip: dict[str, dict[str, Any]] = {
-    "data": {
-        # "eq1x.framework.sweep.typedefs.ConfigValue",
-        # "eq1x.framework.sweep.typedefs.Parameter_Config",
-        # "eq1x.framework.sweep.typedefs.Multi_Parameter_Config",
-        # "eq1x.framework.sweep.typedefs.Scalar",
-        # "eq1x.eq1_magnet_control_driver._dirs.EXPERIMENTS_DIR",
-    },
-    "function": {
-        # "eq1x.yaml.get_config_item",
-    },
-    "class": {
-        # "eq1x.framework.sweep.typedefs.MultiIndex",
-    },
+_autoapi_skip: dict[str, set[str] | dict[str, Any]] = {
+    "data": {},
+    "function": {},
+    "class": {},
+    "package": {"eq1_pulse.models"},
 }
 
 autoapi_skip_file = open("./.autoapi-skip-member.log", mode="w", buffering=1)  # noqa: SIM115
@@ -37,7 +28,14 @@ if TYPE_CHECKING:
     import sphinx.application
 
 
-def autoapi_skip_member(app: sphinx.application.Sphinx, what, name: str, obj, skip: bool, options: list[str]) -> bool:
+def autoapi_skip_member(
+    app: sphinx.application.Sphinx,
+    what,
+    name: str,
+    obj,
+    skip: bool,
+    options: list[str],
+) -> bool | None:
     # print(f"{app=!r}, {what=!r} {name=!r} {obj=!r} {skip=!r}", file=autoapi_skip_file)
     print(f"{what=!r} {name=!r} {obj=!r} {skip=!r}", file=autoapi_skip_file)
     if not skip:
@@ -58,4 +56,4 @@ def autoapi_skip_member(app: sphinx.application.Sphinx, what, name: str, obj, sk
             print(f">>>> :meta private: {what} {name}", file=autoapi_skip_file)
             return (skip := ("private-members" in options))
 
-    return skip
+    return None

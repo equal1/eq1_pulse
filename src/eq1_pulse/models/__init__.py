@@ -1,3 +1,5 @@
+"""Equal 1 Pulse Models"""  # noqa: D400
+
 # ruff: noqa: F403, D104
 # pyright: reportUnsupportedDunderAll = false
 # -----
@@ -38,4 +40,3 @@ __all__ = (
     + _units.__all__
     + _nd_array.__all__
 )
-""":meta private:"""

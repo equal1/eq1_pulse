@@ -37,7 +37,7 @@ class NoExtrasModel(BaseModel):
     if TYPE_CHECKING:
 
         def __init__(self, *args, **kwargs):
-            """:meta private:"""  # noqa: D400
+            """"""  # noqa: D419
 
     model_config = ConfigDict(extra="forbid")
 
@@ -48,7 +48,7 @@ class FrozenModel(NoExtrasModel):
     if TYPE_CHECKING:
 
         def __init__(self, *args, **kwargs):
-            """:meta private:"""  # noqa: D400
+            """"""  # noqa: D419
 
     model_config = ConfigDict(frozen=True)
 
