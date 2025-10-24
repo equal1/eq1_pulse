@@ -1,16 +1,20 @@
 """Tests for sequence models."""
 
+import numpy as np
 import pytest
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
-from eq1_pulse.models.basic_types import Range
-from eq1_pulse.models.channel_ops import Play
-from eq1_pulse.models.pulse_types import SquarePulse
-from eq1_pulse.models.sequence import (
+from eq1_pulse.models import (
     Conditional,
     Iteration,
+    LinSpace,
     OpSequence,
+    OpSequenceItem,
+    Play,
+    Range,
     Repetition,
+    SquarePulse,
+    VariableRef,
 )
 
 
@@ -58,7 +62,7 @@ def test_iteration():
     body = OpSequence([play])
     range_obj = Range(start=0, stop=5, step=1)
     it = Iteration(var="i", items=range_obj, body=body)
-    assert it.var.var == "i"
+    assert it.var == "i"
     assert it.items == range_obj
     assert it.body == body
 
@@ -110,3 +114,106 @@ def test_sequence_validation():
 def test_repetition_validation():
     with pytest.raises(ValidationError):
         Repetition(count=-1, body=OpSequence([]))
+
+
+def test_iteration_multiple_variables_validation_errors():
+    with pytest.raises(ValidationError):
+        Iteration(var="i", items=[Range(start=0, stop=5, step=1)], body=OpSequence([]))
+
+    with pytest.raises(ValidationError):
+        Iteration(var=["i"], items=Range(start=0, stop=5, step=1), body=OpSequence([]))
+
+    with pytest.raises(ValidationError):
+        Iteration(var=["s"], items=["str"], body=OpSequence([]))
+
+    with pytest.raises(ValidationError):
+        Iteration(var="s", items=[["str"]], body=OpSequence([]))
+
+    with pytest.raises(ValidationError):
+        Iteration(var=["i", "j"], items=[Range(start=0, stop=5, step=1)], body=OpSequence([]))
+
+    with pytest.raises(ValidationError):
+        Iteration(var=["i", "j"], items=[Range(start=0, stop=5, step=1), [1, 2]], body=OpSequence([]))
+
+
+def test_iteration_multiple_variables_construction():
+    iter_obj = Iteration(
+        var=["i", "j", "k", "s"],
+        items=[[0, 1, 2], Range(start=3, stop=5, step=1), LinSpace(start=10, stop=20, num=3), ["a", "b", "c"]],
+        body=OpSequence([]),
+    )
+    assert isinstance(iter_obj, Iteration)
+    assert iter_obj.var == [VariableRef("i"), VariableRef("j"), VariableRef("k"), VariableRef("s")]
+    assert isinstance(iter_obj.items, list)
+    assert len(iter_obj.items) == 4
+    assert isinstance(iter_obj.items[0], np.ndarray)
+    assert isinstance(iter_obj.items[1], Range)
+    assert isinstance(iter_obj.items[2], LinSpace)
+    assert isinstance(iter_obj.items[3], list)
+
+
+def test_iteration_multiple_variables_validation():
+    iter_obj: OpSequenceItem = TypeAdapter(OpSequenceItem).validate_python(
+        {
+            "op_type": "for",
+            "var": ["i", "j", "k", "s"],
+            "items": [
+                [0, 1, 2],
+                {"start": 3, "stop": 5, "step": 1},
+                {"start": 10, "stop": 20, "num": 3},
+                ["a", "b", "c"],
+            ],
+            "body": [],
+        }
+    )
+    assert isinstance(iter_obj, Iteration)
+    assert iter_obj.var == [VariableRef("i"), VariableRef("j"), VariableRef("k"), VariableRef("s")]
+    assert isinstance(iter_obj.items, list)
+    assert len(iter_obj.items) == 4
+    assert isinstance(iter_obj.items[0], np.ndarray)
+    assert isinstance(iter_obj.items[1], Range)
+    assert isinstance(iter_obj.items[2], LinSpace)
+    assert isinstance(iter_obj.items[3], list)
+
+
+def test_iteration_multiple_variables_validate_json():
+    iter_obj: OpSequenceItem = TypeAdapter(OpSequenceItem).validate_json(
+        r"""{
+            "op_type": "for",
+            "var": ["i", "j", "k", "s"],
+            "items": [
+                [0, 1, 2],
+                {"start": 3, "stop": 5, "step": 1},
+                {"start": 10, "stop": 20, "num": 3},
+                ["a", "b", "c"]
+            ],
+            "body": []
+        }"""
+    )
+    assert isinstance(iter_obj, Iteration)
+    assert iter_obj.var == [VariableRef("i"), VariableRef("j"), VariableRef("k"), VariableRef("s")]
+    assert isinstance(iter_obj.items, list)
+    assert len(iter_obj.items) == 4
+    assert isinstance(iter_obj.items[0], np.ndarray)
+    assert issubclass(iter_obj.items[0].dtype.type, np.integer)
+    assert isinstance(iter_obj.items[1], Range)
+    assert isinstance(iter_obj.items[2], LinSpace)
+    assert isinstance(iter_obj.items[3], list)
+
+
+def test_iteration_multiple_variables_serialize_json():
+    iter_obj = Iteration(
+        var=["i", "j", "k", "s"],
+        items=[[0, 1, 2], Range(start=3, stop=5, step=1), LinSpace(start=10, stop=20, num=3), ["a", "b", "c"]],
+        body=OpSequence([]),
+    )
+    serialized = iter_obj.model_dump_json()
+    assert serialized == (
+        '{"op_type":"for",'
+        + '"var":["i","j","k","s"],'
+        + '"items":['
+        + '[0,1,2],{"start":3,"stop":5,"step":1},'
+        + '{"start":10,"stop":20,"num":3},'
+        + '["a","b","c"]'
+        + '],"body":[]}'
+    )

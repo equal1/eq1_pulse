@@ -26,6 +26,7 @@ from .base_models import (
     LeanModel,
     WrappedValueOrZeroModel,
 )
+from .complex import complex_from_tuple
 from .units import (
     ComplexMillivolts,
     ComplexVolts,
@@ -602,6 +603,10 @@ class LinSpace(_StartStopInterval):
 
         return self
 
+    def __len__(self) -> int:
+        """Return the number of points in the linear space."""
+        return self.num
+
 
 class Range(_StartStopInterval):
     """Represents a range of values with a start, stop, and step.
@@ -619,12 +624,12 @@ class Range(_StartStopInterval):
     :ivar step: Step size (can be real or complex)
     """
 
-    step: int | float | complex
+    step: int | float | complex_from_tuple
 
     _fields_to_scale_ = ("start", "stop", "step")
 
     @cached_property
-    def num(self):
+    def num(self) -> int:
         """Number of steps in the range, including both endpoints."""
         return abs(self._ndivs) + 1
 
@@ -642,7 +647,7 @@ class Range(_StartStopInterval):
         return self
 
     @cached_property
-    def _ndivs(self):
+    def _ndivs(self) -> int:
         """Number of divisions between start and stop (excluding endpoints).
 
         It can be negative if step is in the opposite direction of start to stop.
@@ -653,6 +658,10 @@ class Range(_StartStopInterval):
     def directional_step(self) -> int | float | complex:
         """Step value adjusted to ensure the stop value is reached from start."""
         return self.step if self._ndivs >= 0 else -self.step
+
+    def __len__(self) -> int:
+        """Return the number of points in the range."""
+        return self.num
 
 
 #

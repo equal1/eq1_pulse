@@ -1,7 +1,7 @@
 """Base models for control flow operations."""
 
 from collections.abc import Iterable, Mapping
-from typing import TYPE_CHECKING, Any, Literal, overload
+from typing import TYPE_CHECKING, Any, Literal, Self, overload
 
 from pydantic import (
     ConfigDict,
@@ -12,7 +12,7 @@ from pydantic import (
 
 from .base_models import NoExtrasModel
 from .basic_types import LinSpace, OpBase, Range
-from .nd_array import NumpyArray
+from .nd_array import NumpyComplexArray1D, NumpyFloatArray1D, NumpyIntArray1D
 from .reference_types import VariableRef
 
 __all__ = "ConditionalBase", "IterationBase", "RepetitionBase"
@@ -113,6 +113,10 @@ class RepetitionBase[BodyT](OpBase):
     body: BodyT
 
 
+type NumpyIterableArray = NumpyIntArray1D | NumpyFloatArray1D | NumpyComplexArray1D
+type IterableSequence = LinSpace | Range | list[str] | NumpyIterableArray
+
+
 class IterationBase[BodyT](OpBase):
     """Base class for iteration over a sequence of operations.
 
@@ -123,13 +127,40 @@ class IterationBase[BodyT](OpBase):
     """
 
     op_type: Literal["for"] = "for"
-    var: VariableRef
-    items: LinSpace | Range | NumpyArray
-    body: BodyT
+    """The discriminator field for the operation type. Always "for"."""
+    var: list[VariableRef] | VariableRef
+    """The variable reference(s) for the iterated value(s).
 
-    # We need to allow arbitrary typese because of the NumpyArray.
-    # Also need to inherit the config from before
-    model_config = OpBase.model_config | ConfigDict(arbitrary_types_allowed=True)
+    It can be a single variable reference or a list of variable references
+    when iterating over multiple variables simultaneously.
+    """
+    items: list[IterableSequence] | IterableSequence
+    """The linear space, range, array or list of arrays over which to iterate.
+
+    It can be a single iterable or a list of iterables when iterating
+    over multiple variables simultaneously.
+    """
+
+    body: BodyT
+    """The sequence of operations to execute in each iteration."""
+
+    # We need to allow arbitrary types because of the NumpyArray.
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    @model_validator(mode="after")
+    def _validate_vars_vs_items(self) -> Self:
+        if isinstance(self.var, list):
+            if not isinstance(self.items, list) or all(isinstance(item, str) for item in self.items):
+                raise ValueError("Both 'var' and 'items' must be lists or both must be single values.")
+            if len(self.var) != len(self.items):
+                raise ValueError("Both 'var' and 'items' must have the same length.")
+            lengths = [len(item) for item in self.items]
+            if not all(length == lengths[0] for length in lengths[1:]):
+                raise ValueError("All 'items' must have the same length.")
+        else:
+            if isinstance(self.items, list) and not all(isinstance(item, str) for item in self.items):
+                raise ValueError("Both 'var' and 'items' must be lists or both must be single values.")
+        return self
 
 
 class ConditionalBase[BodyT](OpBase):

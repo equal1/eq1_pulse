@@ -88,8 +88,12 @@ class Iteration(IterationBase[OpSequence]):
             self,
             /,
             *,
-            var: VariableRefLike,
-            items=LinSpaceLike | RangeLike | NumpyArrayLike,
+            var: VariableRefLike | list[VariableRefLike],
+            items=LinSpaceLike
+            | RangeLike
+            | NumpyArrayLike
+            | list[str]
+            | list[LinSpaceLike | RangeLike | NumpyArrayLike | list[str]],
             body: OpSequenceLike,
             **data,
         ): ...

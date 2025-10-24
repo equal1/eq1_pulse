@@ -44,7 +44,7 @@ def np_complex_1d_array_validate(value: object) -> np.ndarray:
         if issubclass(value.dtype.type, complex):
             return value
         return value.astype(complex)
-    if value.ndim != 2 and value.shape[1] != 2:
+    if value.ndim != 2 or value.shape[1] != 2:
         raise ValueError("Array must be 2-dimensional with shape (N, 2)")
 
     float_type, complex_type = _detect_optimal_float_to_complex_type(value)
@@ -95,7 +95,30 @@ type NumpyFloatArray1D = Annotated[
 ]
 
 
-__all__ = ("NumpyArray", "NumpyComplexArray1D", "NumpyFloatArray1D")
+def np_int_1d_array_validate(value: object) -> np.ndarray:
+    value = np.asanyarray(value)
+    if np.iscomplexobj(value):
+        raise ValueError("Array must be of integer type, not complex")
+    if issubclass(value.dtype.type, float | np.floating):
+        return value
+    if value.ndim != 1:
+        raise ValueError("Array must be 1-dimensional")
+    if issubclass(value.dtype.type, int):
+        return value
+    else:
+        return value.astype(int)
+
+
+def np_int_1d_array_serialize(value: np.ndarray) -> list[int]:
+    return value.tolist()  # type: ignore[no-any-return, return-value]
+
+
+type NumpyIntArray1D = Annotated[
+    np.ndarray[tuple[int], np.dtype[np.integer[Any]]],
+    BeforeValidator(np_int_1d_array_validate),
+    PlainSerializer(np_int_1d_array_serialize, return_type=list[int]),
+    WithJsonSchema({"type": "array", "items": {"type": "integer"}}),
+]
 
 
 def _detect_optimal_float_to_complex_type(array: np.ndarray[Any, np.dtype[np.floating[Any]]]) -> tuple[type, type]:
@@ -112,3 +135,6 @@ def _detect_optimal_float_to_complex_type(array: np.ndarray[Any, np.dtype[np.flo
             float_type, complex_type = float, complex
 
     return float_type, complex_type
+
+
+__all__ = ("NumpyArray", "NumpyComplexArray1D", "NumpyFloatArray1D", "NumpyIntArray1D")

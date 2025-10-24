@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
 from .arithmetic import SupportUnitArithmeticOperations, collapse_float, collapse_scalar, register_unit_value_field
 from .base_models import FrozenModel
+from .complex import complex_from_tuple
 
 #
 # Angle units
@@ -275,7 +276,7 @@ class Millivolts(FrozenModel, SupportUnitArithmeticOperations[int | float]):
 class ComplexVolts(FrozenModel, SupportUnitArithmeticOperations[int | float | complex]):
     """Volts as a unit of voltage (real + imaginary)."""
 
-    V: int | float | complex
+    V: int | float | complex_from_tuple
     """The voltage in volts. This is the value stored."""
 
     @property
@@ -303,7 +304,7 @@ class ComplexVolts(FrozenModel, SupportUnitArithmeticOperations[int | float | co
 class ComplexMillivolts(FrozenModel, SupportUnitArithmeticOperations[int | float | complex]):
     """Millivolts as a unit of voltage (real + imaginary)."""
 
-    mV: int | float | complex
+    mV: int | float | complex_from_tuple
     """The voltage in millivolts. This is the value stored."""
 
     @property

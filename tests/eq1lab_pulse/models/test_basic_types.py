@@ -660,10 +660,10 @@ def test_frequency_serialization():
 def test_amplitude_serialization():
     """Test JSON serialization of Amplitude."""
     a = Amplitude(V=1.5 + 2j)
-    assert a.model_dump_json() == '{"V":"1.5+2j"}'
+    assert a.model_dump_json() == '{"V":[1.5,2.0]}'
 
     a = Amplitude(mV=1500 + 2000j)
-    assert a.model_dump_json() == '{"mV":"1500+2000j"}'
+    assert a.model_dump_json() == '{"mV":[1500.0,2000.0]}'
 
 
 def test_threshold_serialization():
@@ -677,6 +677,10 @@ def test_threshold_serialization():
 
 def test_complex_voltage_model_validation():
     """Test JSON model validation for ComplexVoltage based classes."""
+    amp = Amplitude.model_validate_json('{"V": [1.5, 2]}')
+    assert amp.V == 1.5 + 2j
+    assert isinstance(amp, Amplitude)
+
     # Test Amplitude validation
     amp = Amplitude.model_validate_json('{"V": "1.5+2j"}')
     assert amp.V == 1.5 + 2j
