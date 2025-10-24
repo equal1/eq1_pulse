@@ -19,7 +19,7 @@ _autoapi_skip: dict[str, set[str] | dict[str, Any]] = {
     "data": {},
     "function": {},
     "class": {},
-    "package": {"eq1_pulse.models"},
+    "package": {},
 }
 
 autoapi_skip_file = open("./.autoapi-skip-member.log", mode="w", buffering=1)  # noqa: SIM115
