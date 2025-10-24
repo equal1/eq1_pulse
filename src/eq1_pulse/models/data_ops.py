@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING, Annotated, Literal
 
 from pydantic import Discriminator, PlainSerializer
 
-from ._identifier_str import IdentifierStr
 from .basic_types import OpBase, Phase, Threshold
+from .identifier_str import IdentifierStr
 from .pulse_types import PulseType
 from .reference_types import VariableRef
 
@@ -38,19 +38,44 @@ type VariableDTypeType = Literal["bool", "int", "float", "complex"]
 
 
 class VariableDecl(DataOpBase):
+    """Variable declaration operation.
+
+    Variables must be declared before they can be referred to.
+
+    Variable declarations are scoped to the surrounding context and its children.
+    """
+
     op_type: Literal["var_decl"] = "var_decl"
+    """The operation type discriminator for variable declaration operations. It is always "var_decl"."""
+
     name: IdentifierStr
+    """Name of the variable. Must be a valid identifier."""
     dtype: VariableDTypeType
+    """Data type of the variable."""
     shape: tuple[int, ...] | None = None
+    """Shape of the variable. Must be a tuple of integers."""
+    unit: str | None = None
+    """Unit of the variable. This is a string that represents the unit of measurement for the variable.
+    This must be defined and be consistent with the parameter types of the operations that use this variable.
+    """
 
     def __init__(self, name: str, **data):
         super().__init__(name=name, **data)
 
 
 class PulseDecl(DataOpBase):
+    """Pulse declaration operation.
+
+    Pulses must be declared before they can be referred to.
+    Pulse declarations are scoped to the surrounding context and its children.
+    """
+
     op_type: Literal["pulse_decl"] = "pulse_decl"
+    """The operation type discriminator for pulse declaration operations. It is always "pulse_decl"."""
     name: str
+    """Name of the pulse. Must be a valid identifier."""
     pulse: PulseType
+    """The pulse definition."""
 
     def __init__(self, name: str, **data):
         super().__init__(name=name, **data)

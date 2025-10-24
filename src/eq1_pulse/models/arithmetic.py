@@ -60,6 +60,10 @@ class SupportScalarMulDiv[ScalarType: _SupportedScalarTypes]:
     """A mixin to add support for multiplication and division with scalars to unit classes."""
 
     def __mul__(self, other: ScalarType) -> Self:
+        """Multiplication operation with a scalar.
+
+        The operation returns a new instance of the unit class.
+        """
         field, dtype = get_unit_value_field_name_and_type(type(self))
         if isinstance(other, dtype):
             value = collapse_scalar(getattr(self, field) * other)
@@ -68,6 +72,10 @@ class SupportScalarMulDiv[ScalarType: _SupportedScalarTypes]:
         return NotImplemented  # type: ignore[unreachable]
 
     def __rmul__(self, other: ScalarType) -> Self:
+        """Right multiplication operation with a scalar.
+
+        The operation returns a new instance of the unit class.
+        """
         field, dtype = get_unit_value_field_name_and_type(type(self))
         if isinstance(other, dtype):
             value = collapse_scalar(other * getattr(self, field))  # type: ignore
@@ -107,21 +115,37 @@ class SupportAdditiveOperations:
     """
 
     def __neg__(self) -> Self:
+        """Unary minus operation.
+
+        Returns a new instance of the unit class with the negated value.
+        """
         field, _ = get_unit_value_field_name_and_type(type(self))
         value = -getattr(self, field)
         return type(self)(**{field: value})
 
     def __pos__(self) -> Self:
+        """Unary plus operation.
+
+        Returns a new instance of the unit class with the same value.
+        """
         field, _ = get_unit_value_field_name_and_type(type(self))
         value = +getattr(self, field)
         return type(self)(**{field: value})
 
     def __add__(self, other: Any) -> Self:
+        """Addition operation with another instance of the same or compatible unit class.
+
+        Returns a new instance of the unit class on the left hand side with the summed value.
+        """
         field, _ = get_unit_value_field_name_and_type(type(self))
         value = getattr(self, field) + getattr(other, field)
         return type(self)(**{field: value})
 
     def __sub__(self, other: Any) -> Self:
+        """Subtraction operation with another instance of the same or compatible unit class.
+
+        Returns a new instance of the unit class on the left hand side with the subtracted value.
+        """
         field, _ = get_unit_value_field_name_and_type(type(self))
         value = getattr(self, field) - getattr(other, field)
         return type(self)(**{field: value})
@@ -136,6 +160,11 @@ class SupportDivModOperation[ScalarType: _SupportedScalarTypes]:
     """
 
     def __floordiv__(self, other: Self) -> int:
+        """Floor division operation.
+
+        Returns an integer result of the floor division.
+        The 1st operand is converted to the 2nd operand's type before performing the operation.
+        """
         try:
             field, _ = get_unit_value_field_name_and_type(type(other))
         except KeyError:
@@ -149,6 +178,10 @@ class SupportDivModOperation[ScalarType: _SupportedScalarTypes]:
             return ensure_int(value)  # type: ignore[return-value]
 
     def __mod__(self, other: Self) -> Self:
+        """Modulus operation.
+
+        Returns a new instance of the type of the 2nd operand with the modulus result.
+        """
         try:
             field, _ = get_unit_value_field_name_and_type(type(other))
         except KeyError:

@@ -25,7 +25,8 @@ class NoExtrasModel(BaseModel):
 
     if TYPE_CHECKING:
 
-        def __init__(self, *args, **kwargs): ...
+        def __init__(self, *args, **kwargs):
+            """:meta private:"""  # noqa: D400
 
     model_config = ConfigDict(extra="forbid")
 
@@ -35,7 +36,8 @@ class FrozenModel(NoExtrasModel):
 
     if TYPE_CHECKING:
 
-        def __init__(self, *args, **kwargs): ...
+        def __init__(self, *args, **kwargs):
+            """:meta private:"""  # noqa: D400
 
     model_config = ConfigDict(frozen=True)
 
@@ -54,7 +56,7 @@ class WrappedValueModel(NoExtrasModel):
     def _wrap_serializer(self) -> Any:
         return self.value
 
-    def __repr__(self):
+    def __repr__(self):  # noqa: D105
         return f"{self.__class__.__name__}({', '.join(k + '=' + repr(v) for k, v in self.model_dump().items())})"
 
     def _apply_default_args_to_init_data(
@@ -203,7 +205,7 @@ _LiteralZeroTypeAdapter: Final[TypeAdapter[Literal[0]]] = TypeAdapter(Literal[0]
 class WrappedValueOrZeroModel(WrappedValueModel):
     """A WrappedValueModel that also accepts the literal integer 0 as valid input.
 
-    This is a mixin class and will not treat 0 in the __init__ method specially.
+    This is a mixin class and will not treat 0 in the ``__init__`` method specially.
     It is the responsibility of the derived class to handle that.
     """
 
@@ -217,6 +219,11 @@ class WrappedValueOrZeroModel(WrappedValueModel):
         *,
         union_format: Literal["any_of"] | Literal["primitive_type_array"] = "any_of",
     ) -> dict[str, Any]:
+        """Generate the JSON schema for the model, adjusting for wrapped value or zero representation.
+
+        :see: :obj:`pydantic.BaseModel.model_json_schema` for more details.
+        :see: :obj:`WrappedValueModel.model_json_schema` for details on wrapped value handling.
+        """
         base_schema = super().model_json_schema(
             by_alias, ref_template, schema_generator, mode, union_format=union_format
         )
@@ -247,6 +254,14 @@ class WrappedValueOrZeroModel(WrappedValueModel):
         by_alias: bool | None = None,
         by_name: bool | None = None,
     ) -> Self:
+        """Validate the input object, accepting literal 0 as valid input.
+
+        The literal integer 0 is treated as a valid input and results in an instance
+        of the class constructed with value 0. It's up to the derived class to handle
+        this appropriately in its ``__init__`` method.
+
+        :see: :obj:`pydantic.BaseModel.model_validate` for more details.
+        """
         if obj == 0:
             return cls(0)  # type: ignore
         return super().model_validate(
@@ -270,6 +285,12 @@ class WrappedValueOrZeroModel(WrappedValueModel):
         by_alias: bool | None = None,
         by_name: bool | None = None,
     ) -> Self:
+        """Validate the input JSON data, accepting literal 0 as valid input.
+
+        The literal integer 0 is treated as a valid input and results in an instance
+        of the class constructed with value 0. It's up to the derived class to handle
+        this appropriately in its ``__init__`` method.
+        """
         try:
             return super().model_validate_json(
                 json_data,
@@ -305,6 +326,12 @@ class WrappedValueOrZeroModel(WrappedValueModel):
         by_alias: bool | None = None,
         by_name: bool | None = None,
     ) -> Self:
+        """Validate the input string data, accepting literal 0 as valid input.
+
+        The literal integer 0's string representation is treated as a valid input
+        and results in an instance of the class constructed with value 0.
+        It's up to the derived class to handle this appropriately in its ``__init__`` method.
+        """
         try:
             return super().model_validate_strings(
                 obj, strict=strict, extra=extra, context=context, by_alias=by_alias, by_name=by_name

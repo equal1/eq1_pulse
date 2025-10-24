@@ -1,9 +1,10 @@
 from typing import Any
 
+import numpy as np
 from pydantic import TypeAdapter
 
 from eq1_pulse.models.basic_types import Amplitude, Duration, Frequency
-from eq1_pulse.models.pulse_types import PulseType, SinePulse, SquarePulse
+from eq1_pulse.models.pulse_types import ArbitrarySampledPulse, ExternalPulse, PulseType, SinePulse, SquarePulse
 from eq1_pulse.models.reference_types import VariableRef
 
 """Tests for pulse type models."""
@@ -260,3 +261,177 @@ def test_sine_pulse_json_validation_frequency_sweep():
     assert pulse.amplitude.V == 0.5
     assert pulse.frequency.Hz == 1e6
     assert pulse.to_frequency.Hz == 2e6
+
+
+def test_external_pulse_creation():
+    """Test creating an external pulse with basic parameters."""
+    pulse = ExternalPulse(
+        function="gaussian",
+        duration=Duration(s=2e-6),
+        amplitude=Amplitude(V=1.0),
+        params={"sigma": 0.5},
+    )
+    assert pulse.pulse_type == "external"
+    assert isinstance(pulse.duration, Duration)
+    assert isinstance(pulse.amplitude, Amplitude)
+    assert pulse.duration.s == 2e-6
+    assert pulse.amplitude.V == 1.0
+    assert pulse.function == "gaussian"
+    assert pulse.params == {"sigma": 0.5}
+
+
+def test_external_pulse_creation_dicts():
+    """Test creating an external pulse with basic parameters."""
+    pulse = ExternalPulse(
+        function="gaussian",
+        duration={"s": 2e-6},
+        amplitude={"V": 1.0},
+        params={"sigma": 0.5},
+    )
+    assert pulse.pulse_type == "external"
+    assert isinstance(pulse.duration, Duration)
+    assert isinstance(pulse.amplitude, Amplitude)
+    assert pulse.duration.s == 2e-6
+    assert pulse.amplitude.V == 1.0
+    assert pulse.function == "gaussian"
+    assert pulse.params == {"sigma": 0.5}
+
+
+def test_external_pulse_json_serialization():
+    """Test serializing an external pulse to JSON."""
+    pulse = ExternalPulse(
+        duration=Duration(s=2e-6),
+        amplitude=Amplitude(V=1.0),
+        function="gaussian",
+        params={"sigma": 0.5},
+    )
+    assert pulse.model_dump_json() == (
+        '{"pulse_type":"external",'
+        + '"duration":{"s":2e-6},'
+        + '"amplitude":{"V":1.0},'
+        + '"function":"gaussian",'
+        + '"params":{"sigma":0.5}'
+        + "}"
+    )
+
+
+def test_external_pulse_json_validation():
+    """Test deserializing an external pulse from JSON."""
+    pulse: Any = TypeAdapter(PulseType).validate_json(
+        '{"pulse_type":"external",'
+        + '"duration":{"s":2e-6},'
+        + '"amplitude":{"V":1.0},'
+        + '"function":"gaussian",'
+        + '"params":{"sigma":0.5}'
+        + "}"
+    )
+    assert isinstance(pulse, ExternalPulse)
+    assert isinstance(pulse.duration, Duration)
+    assert isinstance(pulse.amplitude, Amplitude)
+    assert pulse.duration.s == 2e-6
+    assert pulse.amplitude.V == 1.0
+    assert pulse.function == "gaussian"
+    assert pulse.params == {"sigma": 0.5}
+
+
+def test_arbitrary_sample_pulse_creation():
+    """Test creating an arbitrary sample pulse with basic parameters."""
+    pulse = ArbitrarySampledPulse(
+        duration=Duration(s=2e-6),
+        amplitude=Amplitude(V=1.0),
+        samples=[0.0, 0.5, 1.0, 0.5, 0.0],
+    )
+    assert pulse.pulse_type == "arbitrary"
+    assert isinstance(pulse.duration, Duration)
+    assert isinstance(pulse.amplitude, Amplitude)
+    assert pulse.duration.s == 2e-6
+    assert pulse.amplitude.V == 1.0
+    assert isinstance(pulse.samples, np.ndarray)
+    assert np.array_equal(pulse.samples, [0.0, 0.5, 1.0, 0.5, 0.0])
+
+
+def test_arbitrary_sample_pulse_json_serialization():
+    """Test serializing an arbitrary sample pulse to JSON."""
+    pulse = ArbitrarySampledPulse(
+        duration=Duration(s=2e-6),
+        amplitude=Amplitude(V=1.0),
+        samples=[0.0, 0.5, 1.0, 0.5, 0.0],
+    )
+    assert pulse.model_dump_json() == (
+        '{"pulse_type":"arbitrary",'
+        + '"duration":{"s":2e-6},'
+        + '"amplitude":{"V":1.0},'
+        + '"samples":[0.0,0.5,1.0,0.5,0.0]'
+        + "}"
+    )
+
+
+def test_arbitrary_sample_pulse_json_validation():
+    """Test deserializing an arbitrary sample pulse from JSON."""
+    pulse: Any = TypeAdapter(PulseType).validate_json(
+        '{"pulse_type":"arbitrary",'
+        + '"duration":{"s":2e-6},'
+        + '"amplitude":{"V":1.0},'
+        + '"samples":[0.0,0.5,1.0,0.5,0.0]'
+        + "}"
+    )
+    assert isinstance(pulse, ArbitrarySampledPulse)
+    assert isinstance(pulse.duration, Duration)
+    assert isinstance(pulse.amplitude, Amplitude)
+    assert pulse.duration.s == 2e-6
+    assert pulse.amplitude.V == 1.0
+    assert isinstance(pulse.samples, np.ndarray)
+    assert np.array_equal(pulse.samples, [0.0, 0.5, 1.0, 0.5, 0.0])
+
+
+def test_arbitrary_sample_pulse_creation_with_time_points_and_interpolation():
+    """Test creating an arbitrary sample pulse with time points and interpolation."""
+    pulse = ArbitrarySampledPulse(
+        duration=Duration(s=2e-6),
+        amplitude=Amplitude(V=1.0),
+        samples=[0.0, 0.5, 1.0, 0.5, 0.0],
+        time_points=[0.0, 0.5e-6, 1.0e-6, 1.5e-6, 2.0e-6],
+        interpolation="linear",
+    )
+    assert pulse.pulse_type == "arbitrary"
+    assert isinstance(pulse.duration, Duration)
+    assert isinstance(pulse.amplitude, Amplitude)
+    assert pulse.duration.s == 2e-6
+    assert pulse.amplitude.V == 1.0
+    assert isinstance(pulse.samples, np.ndarray)
+    assert np.array_equal(pulse.samples, [0.0, 0.5, 1.0, 0.5, 0.0])
+    assert isinstance(pulse.time_points, np.ndarray)
+    assert np.array_equal(pulse.time_points, [0.0, 0.5e-6, 1.0e-6, 1.5e-6, 2.0e-6])
+    assert pulse.interpolation == "linear"
+
+
+def test_arbitrary_sample_pulse_creation_with_complex_samples():
+    """Test creating an arbitrary sample pulse with complex samples."""
+    pulse = ArbitrarySampledPulse(
+        duration=Duration(s=2e-6),
+        amplitude=Amplitude(V=1.0),
+        samples=[0.0 + 0.0j, 0.5 + 0.5j, 1.0 + 1.0j, 0.5 + 0.5j, 0.0 + 0.0j],
+    )
+    assert pulse.pulse_type == "arbitrary"
+    assert isinstance(pulse.duration, Duration)
+    assert isinstance(pulse.amplitude, Amplitude)
+    assert pulse.duration.s == 2e-6
+    assert pulse.amplitude.V == 1.0
+    assert isinstance(pulse.samples, np.ndarray)
+    assert np.array_equal(pulse.samples, [0.0 + 0.0j, 0.5 + 0.5j, 1.0 + 1.0j, 0.5 + 0.5j, 0.0 + 0.0j])
+
+
+def test_arbitrary_sample_pulse_json_serialization_with_complex_samples():
+    """Test serializing an arbitrary sample pulse with complex samples to JSON."""
+    pulse = ArbitrarySampledPulse(
+        duration=Duration(s=2e-6),
+        amplitude=Amplitude(V=1.0),
+        samples=[0.0 + 0.0j, 0.5 + 0.5j, 1.0 + 1.0j, 0.5 + 0.5j, 0.0 + 0.0j],
+    )
+    assert pulse.model_dump_json() == (
+        '{"pulse_type":"arbitrary",'
+        + '"duration":{"s":2e-6},'
+        + '"amplitude":{"V":1.0},'
+        + '"samples":[[0.0,0.0],[0.5,0.5],[1.0,1.0],[0.5,0.5],[0.0,0.0]]'
+        + "}"
+    )

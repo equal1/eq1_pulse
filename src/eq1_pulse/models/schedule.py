@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Annotated, Literal, TypedDict, Unpack, overloa
 
 from pydantic import ConfigDict, Discriminator, PlainSerializer
 
-from ._base_models import FrozenModel
+from .base_models import FrozenModel
 from .basic_types import LeanModel, Time
 from .channel_ops import ChannelOp
 from .control_flow import ConditionalBase, IterationBase, RepetitionBase, SequenceBase

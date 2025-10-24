@@ -10,7 +10,7 @@ from pydantic import (
     model_validator,
 )
 
-from ._base_models import NoExtrasModel
+from .base_models import NoExtrasModel
 from .basic_types import LinSpace, OpBase, Range
 from .nd_array import NumpyArray
 from .reference_types import VariableRef

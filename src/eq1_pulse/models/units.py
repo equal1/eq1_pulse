@@ -1,10 +1,9 @@
-"""Models for physical units used for the basic types in the package.
+"""Models for measurement units used for the basic types in the package.
 
-Basic types may represent their values in various measurement units and
+Basic types of physical quantities may represent their values in various measurement units and
 conversion between the units should be automatic.
 """
 
-# ruff: noqa: D100 D101 D102 D105 D107 RUF100
 from __future__ import annotations
 
 import cmath
@@ -13,8 +12,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     pass
 
-from ._arithmetic import SupportUnitArithmeticOperations, collapse_float, collapse_scalar, register_unit_value_field
-from ._base_models import FrozenModel
+from .arithmetic import SupportUnitArithmeticOperations, collapse_float, collapse_scalar, register_unit_value_field
+from .base_models import FrozenModel
 
 #
 # Angle units

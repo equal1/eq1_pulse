@@ -3,8 +3,8 @@
 These types are designed to be used throughout the pulse library for consistency
 and ease of use.
 
-The types include representations for angles, time durations, voltages,
-frequencies, and ranges, with support for multiple units and automatic conversion.
+The types include representations for physical quantities such as angles, time durations, voltages,
+frequencies, and ranges, with support for multiple measurement units and automatic conversion.
 
 Subclasses of these types may be more suitable for specific use cases. e.g Phase instead of Angle,
 or Duration instead of Time.
@@ -19,14 +19,14 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self, TypedDict, overl
 
 from pydantic import Field, model_validator
 
-from ._base_models import (
+from .base_models import (
     FrozenLeanModel,
     FrozenModel,
     FrozenWrappedValueModel,
     LeanModel,
     WrappedValueOrZeroModel,
 )
-from ._units import (
+from .units import (
     ComplexMillivolts,
     ComplexVolts,
     Degrees,
