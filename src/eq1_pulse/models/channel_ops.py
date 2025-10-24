@@ -11,7 +11,8 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal, overload
 
 from pydantic import Discriminator
 
-from .basic_types import Duration, Frequency, LeanModel, Magnitude, OpBase, Phase
+from .base_models import LeanModel
+from .basic_types import Duration, Frequency, Magnitude, OpBase, Phase
 from .pulse_types import PulseType
 from .reference_types import ChannelRef, PulseRef, VariableRef
 

@@ -162,6 +162,5 @@ DataOp = Annotated[VariableDecl | PulseDecl | Discriminate | Store, Discriminato
 
 This is a closed set of data operations that can be used in a sequence of operations.
 All data operation types have a common discriminator field `op_type` (inherited from `OpBase`)
- that is used to distinguish between them.
-
+that is used to distinguish between them.
 """

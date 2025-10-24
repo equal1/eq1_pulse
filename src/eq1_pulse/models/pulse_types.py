@@ -5,7 +5,8 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 from pydantic import ConfigDict, Discriminator
 
-from .basic_types import Amplitude, Duration, Frequency, LeanModel
+from .base_models import LeanModel
+from .basic_types import Amplitude, Duration, Frequency
 from .identifier_str import FullyQualifiedIdentifier
 from .nd_array import NumpyArray, NumpyComplexArray1D, NumpyFloatArray1D
 from .reference_types import VariableRef, VarRefDict
@@ -14,7 +15,7 @@ if TYPE_CHECKING:
     from .basic_types import AmplitudeLike, DurationLike, FrequencyLike
     from .reference_types import VariableRefLike
 
-__all__ = ("PulseType", "SinePulse", "SquarePulse")
+__all__ = ("ArbitrarySampledPulse", "ExternalPulse", "PulseType", "SinePulse", "SquarePulse")
 
 
 class PulseBase(LeanModel):
