@@ -57,6 +57,7 @@ class VariableDecl(DataOpBase):
     unit: str | None = None
     """Unit of the variable. This is a string that represents the unit of measurement for the variable.
     This must be defined and be consistent with the parameter types of the operations that use this variable.
+    The unit can take dynamic values if not specified here, for instance when used with iteration operations.
     """
 
     def __init__(self, name: str, **data):

@@ -9,9 +9,9 @@ Inheriting from these models ensures consistent behavior across the codebase.
 from __future__ import annotations
 
 from functools import cache
-from typing import TYPE_CHECKING, Any, Final, Literal, Self, cast, get_args
+from typing import TYPE_CHECKING, Any, Final, Literal, cast, get_args, override
 
-from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError, model_serializer, model_validator
+from pydantic import BaseModel, ConfigDict, TypeAdapter, model_serializer, model_validator
 from pydantic.json_schema import DEFAULT_REF_TEMPLATE, GenerateJsonSchema, JsonSchemaMode
 from pydantic_core import PydanticUndefinedType
 
@@ -70,56 +70,16 @@ class WrappedValueModel(NoExtrasModel):
     def __repr__(self):  # noqa: D105
         return f"{self.__class__.__name__}({', '.join(k + '=' + repr(v) for k, v in self.model_dump().items())})"
 
-    def _apply_default_args_to_init_data(
-        self, default_name: str, args: tuple[Any, ...], data: dict[str, Any]
-    ) -> dict[str, Any]:
-        match len(args):
-            case 0:
-                return data
-            case 1:
-                if default_name in data:
-                    raise TypeError(f"duplicate parameter {default_name!r}")
-                if "value" in data:
-                    raise TypeError(f"duplicate parameter {'value'}")
-                return data | {default_name: args[0]}
-            case n:
-                raise TypeError(f"expected at most 1 positional arguments after self, got {n}")
+    def __init__(self, *args, **kwargs):
+        """Initialize the WrappedValueModel.
 
-    def _apply_default_zero_args_to_init_data(
-        self, default_name: str, args: tuple[Any, ...], data: dict[str, Any], *, zero=0
-    ) -> dict[str, Any]:
+        Accepts either a single positional argument representing the value
+        or keyword arguments corresponding to the model fields.
         """
-        Process positional arguments during initialization and apply default zero value if needed.
-
-        This method handles the case where a single positional argument with value zero
-        may be provided during initialization. If provided, it adds this value to the
-        initialization data dictionary under the specified default name.
-
-        :param default_name: The parameter name to use when adding the zero value to the data dictionary
-        :param args: Positional arguments passed to the initialization method
-        :param data: Dictionary of initialization data (typically from keyword arguments)
-        :param zero: The expected value of the positional argument, defaults to 0
-
-        :return: The updated initialization data dictionary
-
-        :raises TypeError:
-            If default_name or 'value' already exists in data, or if more than 1 positional argument
-            is provided
-        :raises ValueError: If the positional argument's value is not equal to the expected zero value
-        """
-        match len(args):
-            case 0:
-                return data
-            case 1:
-                if default_name in data:
-                    raise TypeError(f"duplicate parameter {default_name!r}")
-                if "value" in data:
-                    raise TypeError(f"duplicate parameter {'value'}")
-                if args[0] != zero:
-                    raise ValueError(f"positional argument must be {zero}")
-                return data | {default_name: zero}
-            case n:
-                raise TypeError(f"expected at most 1 positional arguments after self, got {n}")
+        if args and len(args) == 1 and not kwargs:
+            super().__init__(**{get_unit_of_zero(self.__class__): args[0]})
+        else:
+            super().__init__(*args, **kwargs)
 
     @classmethod
     def model_json_schema(
@@ -212,6 +172,48 @@ class FrozenLeanModel(LeanModel, FrozenModel):
 
 _LiteralZeroTypeAdapter: Final[TypeAdapter[Literal[0]]] = TypeAdapter(Literal[0])
 
+_unit_of_zero: dict[type, str] = {}
+
+
+def register_unit_of_zero(unit: str):
+    """Register a unit string for the zero value of a specific type.
+
+    This decorator is used to provide appropriate handling of the value 0.
+
+    :param unit: The unit string associated with the zero value of the type.
+
+    :return: A decorator function that registers the unit for the decorated class.
+
+    Example:
+
+    .. code-block:: python
+
+        @register_unit_of_zero("m")
+        class Distance(WrappedValueOrZeroModel):
+            value: Meters | Kilometers | Millimeters
+    """
+
+    def decorator(cls: type) -> type:
+        _unit_of_zero[cls] = unit
+        return cls
+
+    return decorator
+
+
+def get_unit_of_zero(type_: type) -> str:
+    """Get the registered unit string for the zero value of a specific type.
+
+    :param type_: The type for which to get the registered unit.
+    :return: The unit string if registered, otherwise None.
+    """
+    if type_ in _unit_of_zero:
+        return _unit_of_zero[type_]
+    for base_type in type_.__mro__:
+        if unit := _unit_of_zero.get(base_type):
+            _unit_of_zero[type_] = unit
+            return unit
+    raise KeyError(f"No unit registered for type {type_}")
+
 
 class WrappedValueOrZeroModel(WrappedValueModel):
     """A WrappedValueModel that also accepts the literal integer 0 as valid input.
@@ -253,80 +255,16 @@ class WrappedValueOrZeroModel(WrappedValueModel):
 
         return base_schema
 
+    @model_validator(mode="before")
     @classmethod
-    def model_validate(
-        cls,
-        obj: Any,
-        *,
-        strict: bool | None = None,
-        extra: ExtraValues | None = None,
-        from_attributes: bool | None = None,
-        context: Any | None = None,
-        by_alias: bool | None = None,
-        by_name: bool | None = None,
-    ) -> Self:
-        """Validate the input object, accepting literal 0 as valid input.
+    def _model_validate(cls, value: Any) -> Any:
+        if value == 0:
+            return {get_unit_of_zero(cls): 0}
 
-        The literal integer 0 is treated as a valid input and results in an instance
-        of the class constructed with value 0. It's up to the derived class to handle
-        this appropriately in its ``__init__`` method.
-
-        :see: :obj:`pydantic.BaseModel.model_validate` for more details.
-        """
-        if obj == 0:
-            return cls(0)  # type: ignore
-        return super().model_validate(
-            obj,
-            strict=strict,
-            extra=extra,
-            from_attributes=from_attributes,
-            context=context,
-            by_alias=by_alias,
-            by_name=by_name,
-        )
+        return value
 
     @classmethod
-    def model_validate_json(
-        cls,
-        json_data: str | bytes | bytearray,
-        *,
-        strict: bool | None = None,
-        extra: ExtraValues | None = None,
-        context: Any | None = None,
-        by_alias: bool | None = None,
-        by_name: bool | None = None,
-    ) -> Self:
-        """Validate the input JSON data, accepting literal 0 as valid input.
-
-        The literal integer 0 is treated as a valid input and results in an instance
-        of the class constructed with value 0. It's up to the derived class to handle
-        this appropriately in its ``__init__`` method.
-        """
-        try:
-            return super().model_validate_json(
-                json_data,
-                strict=strict,
-                extra=extra,
-                context=context,
-                by_alias=by_alias,
-                by_name=by_name,
-            )
-        except ValidationError as e:
-            try:
-                _LiteralZeroTypeAdapter.validate_json(
-                    json_data,
-                    strict=strict,
-                    extra=extra,
-                    context=context,
-                    by_alias=by_alias,
-                    by_name=by_name,
-                )
-            except ValidationError:
-                raise e from None
-            else:
-                return cls(0)  # type: ignore
-
-    @classmethod
+    @override
     def model_validate_strings(
         cls,
         obj: Any,
@@ -336,31 +274,15 @@ class WrappedValueOrZeroModel(WrappedValueModel):
         context: Any | None = None,
         by_alias: bool | None = None,
         by_name: bool | None = None,
-    ) -> Self:
-        """Validate the input string data, accepting literal 0 as valid input.
+    ) -> Any:
+        if isinstance(obj, str) and obj.strip() == "0":
+            obj = {get_unit_of_zero(cls): 0}
 
-        The literal integer 0's string representation is treated as a valid input
-        and results in an instance of the class constructed with value 0.
-        It's up to the derived class to handle this appropriately in its ``__init__`` method.
-        """
-        try:
-            return super().model_validate_strings(
-                obj, strict=strict, extra=extra, context=context, by_alias=by_alias, by_name=by_name
-            )
-        except ValidationError as e:
-            try:
-                value = TypeAdapter(int).validate_strings(
-                    obj,
-                    strict=strict,
-                    extra=extra,
-                    context=context,
-                    by_alias=by_alias,
-                    by_name=by_name,
-                )
-            except ValidationError:
-                pass
-            else:
-                if value == 0:
-                    return cls(0)  # type: ignore
-                e.add_note(f"parsed integer value {value} does not equal zero")
-            raise e
+        return super().model_validate_strings(
+            obj,
+            strict=strict,
+            extra=extra,
+            context=context,
+            by_alias=by_alias,
+            by_name=by_name,
+        )

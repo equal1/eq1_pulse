@@ -778,7 +778,7 @@ def test_frequency_model_validation():
 
 def test_frequency_model_string_data_validation_for_zero():
     """Test string data JSON model validation for Frequency."""
-    freq = Frequency.model_validate_strings(" 0 ")
+    freq = Frequency.model_validate_strings("  0  ")
     assert freq.Hz == 0
 
 

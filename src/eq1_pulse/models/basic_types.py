@@ -23,7 +23,9 @@ from .base_models import (
     FrozenLeanModel,
     FrozenModel,
     FrozenWrappedValueModel,
+    LeanModel,
     WrappedValueOrZeroModel,
+    register_unit_of_zero,
 )
 from .complex import complex_from_tuple
 from .units import (
@@ -106,6 +108,7 @@ class ArithmeticFrozenWrappedValueModel[ScalarType](FrozenWrappedValueModel):
         return type(self).model_construct(value=self.value / other)  # type: ignore[return-value]
 
 
+@register_unit_of_zero("deg")
 class Angle(WrappedValueOrZeroModel, ArithmeticFrozenWrappedValueModel[int | float]):
     r"""A model representing an angle in either degrees, radians, turns or half-turns.
 
@@ -113,24 +116,26 @@ class Angle(WrappedValueOrZeroModel, ArithmeticFrozenWrappedValueModel[int | flo
     Half-turns are also known as half-cycles, also :math:`\pi` radians or 180°.
     """  # noqa: E501
 
-    @overload
-    def __init__(self, _: Literal[0], /): ...
+    if TYPE_CHECKING:
 
-    @overload
-    def __init__(self, /, *, deg: int | float): ...
+        @overload
+        def __init__(self, _: Literal[0], /): ...
 
-    @overload
-    def __init__(self, /, *, rad: float): ...
+        @overload
+        def __init__(self, /, *, deg: int | float): ...
 
-    @overload
-    def __init__(self, /, *, turns: int | float): ...
+        @overload
+        def __init__(self, /, *, rad: float): ...
 
-    @overload
-    def __init__(self, /, *, half_turns: int | float): ...
+        @overload
+        def __init__(self, /, *, turns: int | float): ...
 
-    def __init__(self, /, *args, **data):
-        """"""  # noqa: D419
-        super().__init__(**self._apply_default_zero_args_to_init_data("rad", args, data))
+        @overload
+        def __init__(self, /, *, half_turns: int | float): ...
+
+        def __init__(self, /, *args, **data):
+            """"""  # noqa: D419
+            ...
 
     value: Degrees | Radians | Turns | HalfTurns
     """The underlying angle value in one of the supported units."""
@@ -193,9 +198,13 @@ class Phase(Angle):
         @overload
         def __init__(self, /, *, turns: float): ...
 
+        @overload
+        def __init__(self, /, *, half_turns: float): ...
+
         def __init__(self, /, *args, **data): ...
 
 
+@register_unit_of_zero("s")
 class Time(WrappedValueOrZeroModel, ArithmeticFrozenWrappedValueModel[int | float]):
     """A model representing time (instant or difference).
 
@@ -229,24 +238,26 @@ class Time(WrappedValueOrZeroModel, ArithmeticFrozenWrappedValueModel[int | floa
         """Value in nanoseconds."""
         return self.value.ns
 
-    @overload
-    def __init__(self, _: Literal[0], /): ...
+    if TYPE_CHECKING:
 
-    @overload
-    def __init__(self, /, *, s: float): ...
+        @overload
+        def __init__(self, _: Literal[0], /): ...
 
-    @overload
-    def __init__(self, /, *, ms: float): ...
+        @overload
+        def __init__(self, /, *, s: float): ...
 
-    @overload
-    def __init__(self, /, *, us: float): ...
+        @overload
+        def __init__(self, /, *, ms: float): ...
 
-    @overload
-    def __init__(self, /, *, ns: int): ...
+        @overload
+        def __init__(self, /, *, us: float): ...
 
-    def __init__(self, /, *args, **data):
-        """"""  # noqa: D419
-        super().__init__(**self._apply_default_zero_args_to_init_data("s", args, data))
+        @overload
+        def __init__(self, /, *, ns: int): ...
+
+        def __init__(self, /, *args, **data):
+            """"""  # noqa: D419
+            ...
 
     def __eq__(self, other) -> bool:
         """Equality comparison with another Time instance."""  # noqa: D401
@@ -290,6 +301,7 @@ class Duration(Time):
         return data
 
 
+@register_unit_of_zero("V")
 class Voltage(WrappedValueOrZeroModel, ArithmeticFrozenWrappedValueModel[int | float]):
     """A model representing a real voltage in volts or millivolts."""
 
@@ -303,17 +315,18 @@ class Voltage(WrappedValueOrZeroModel, ArithmeticFrozenWrappedValueModel[int | f
     def mV(self) -> int | float:
         return self.value.mV
 
-    @overload
-    def __init__(self, _: Literal[0], /): ...
+    if TYPE_CHECKING:
 
-    @overload
-    def __init__(self, /, *, V: int | float): ...
+        @overload
+        def __init__(self, _: Literal[0], /): ...
 
-    @overload
-    def __init__(self, /, *, mV: int | float): ...
+        @overload
+        def __init__(self, /, *, V: int | float): ...
 
-    def __init__(self, /, *args, **data):
-        super().__init__(**self._apply_default_zero_args_to_init_data("V", args, data))
+        @overload
+        def __init__(self, /, *, mV: int | float): ...
+
+        def __init__(self, /, *args, **data): ...
 
     def __eq__(self, other) -> bool:
         if not isinstance(other, Voltage | ComplexVoltage):
@@ -335,6 +348,7 @@ class Voltage(WrappedValueOrZeroModel, ArithmeticFrozenWrappedValueModel[int | f
                 raise TypeError(f"expected Volts or Millivolts, got {type(value)}")  # pragma: no cover
 
 
+@register_unit_of_zero("V")
 class ComplexVoltage(WrappedValueOrZeroModel, ArithmeticFrozenWrappedValueModel[int | float | complex]):
     """A model representing a complex voltage in volts or millivolts.
 
@@ -352,17 +366,18 @@ class ComplexVoltage(WrappedValueOrZeroModel, ArithmeticFrozenWrappedValueModel[
     def mV(self) -> complex:
         return self.value.mV
 
-    @overload
-    def __init__(self, _: Literal[0], /): ...
+    if TYPE_CHECKING:
 
-    @overload
-    def __init__(self, /, *, V: complex): ...
+        @overload
+        def __init__(self, _: Literal[0], /): ...
 
-    @overload
-    def __init__(self, /, *, mV: complex): ...
+        @overload
+        def __init__(self, /, *, V: complex): ...
 
-    def __init__(self, /, *args, **data):
-        super().__init__(**self._apply_default_zero_args_to_init_data("V", args, data))
+        @overload
+        def __init__(self, /, *, mV: complex): ...
+
+        def __init__(self, /, *args, **data): ...
 
     def __eq__(self, other) -> bool:
         if not isinstance(other, Voltage | ComplexVoltage):
@@ -401,6 +416,7 @@ class ComplexVoltage(WrappedValueOrZeroModel, ArithmeticFrozenWrappedValueModel[
         return Voltage.from_value(self.value.imag)
 
 
+@register_unit_of_zero("Hz")
 class Frequency(WrappedValueOrZeroModel, ArithmeticFrozenWrappedValueModel[int | float]):
     """A model representing a frequency in Hertz, Kilohertz, Megahertz, or Gigahertz."""
 
@@ -422,23 +438,24 @@ class Frequency(WrappedValueOrZeroModel, ArithmeticFrozenWrappedValueModel[int |
     def GHz(self) -> int | float:
         return self.value.GHz
 
-    @overload
-    def __init__(self, _: Literal[0], /): ...
+    if TYPE_CHECKING:
 
-    @overload
-    def __init__(self, /, Hz: float): ...
+        @overload
+        def __init__(self, _: Literal[0], /): ...
 
-    @overload
-    def __init__(self, /, *, kHz: float): ...
+        @overload
+        def __init__(self, /, Hz: float): ...
 
-    @overload
-    def __init__(self, /, *, MHz: float): ...
+        @overload
+        def __init__(self, /, *, kHz: float): ...
 
-    @overload
-    def __init__(self, /, *, GHz: float): ...
+        @overload
+        def __init__(self, /, *, MHz: float): ...
 
-    def __init__(self, /, *args, **data):
-        super().__init__(**self._apply_default_zero_args_to_init_data("Hz", args, data))
+        @overload
+        def __init__(self, /, *, GHz: float): ...
+
+        def __init__(self, /, *args, **data): ...
 
     def __eq__(self, other) -> bool:
         if not isinstance(other, Frequency):
@@ -565,12 +582,15 @@ class _StartStopInterval(FrozenModel):
         return self.model_copy(update={field: other - getattr(self, field) for field in self._fields_to_offset_})  # type: ignore[return-value]
 
 
-class LinSpace(_StartStopInterval):
+class LinSpace(LeanModel, _StartStopInterval):
     """Represents a linear space between two values.
 
     :ivar start: Starting value (can be real or complex)
     :ivar stop: Ending value (can be real or complex)
     :ivar num: Number of points in the space, including endpoints.
+
+    .. note::
+        Units should be specified in the variable declaration, not in the LinSpace itself.
     """
 
     num: int = Field(ge=1)
@@ -588,7 +608,7 @@ class LinSpace(_StartStopInterval):
         return self.num
 
 
-class Range(_StartStopInterval):
+class Range(LeanModel, _StartStopInterval):
     """Represents a range of values with a start, stop, and step.
 
     The step can only be zero if the start and stop values are equal. Otherwise,
@@ -602,6 +622,9 @@ class Range(_StartStopInterval):
     :ivar start: Starting value (can be real or complex)
     :ivar stop: Ending value (can be real or complex) included in the range
     :ivar step: Step size (can be real or complex)
+
+    .. note::
+        Units should be specified in the variable declaration, not in the Range itself.
     """
 
     step: int | float | complex_from_tuple
@@ -665,11 +688,11 @@ class AngleDict(TypedDict, total=False):
     """half_turns"""
 
 
-type AngleLike = Angle | Literal[0] | AngleDict
+type AngleLike = Angle | Literal[0] | AngleDict | str
 """Type alias for Angle initialization arguments."""
 
 
-type PhaseLike = Phase | Literal[0] | AngleDict
+type PhaseLike = Phase | Literal[0] | AngleDict | str
 """Type alias for Phase initialization arguments."""
 
 
@@ -688,10 +711,10 @@ class TimeDict(TypedDict, total=False):
     ns: int
 
 
-type TimeLike = Time | Literal[0] | TimeDict
+type TimeLike = Time | Literal[0] | TimeDict | str
 """Type alias for Time initialization arguments."""
 
-type DurationLike = Duration | Literal[0] | TimeDict
+type DurationLike = Duration | Literal[0] | TimeDict | str
 """Type alias for Duration initialization arguments."""
 
 
@@ -706,13 +729,13 @@ class VoltageDict(TypedDict, total=False):
     mV: int | float
 
 
-type VoltageLike = Voltage | Literal[0] | VoltageDict
+type VoltageLike = Voltage | Literal[0] | VoltageDict | str
 """Type alias for Voltage initialization arguments."""
-type AmplitudeLike = Amplitude | Literal[0] | VoltageDict
+type AmplitudeLike = Amplitude | Literal[0] | VoltageDict | str
 """Type alias for Amplitude initialization arguments."""
-type ThresholdLike = Threshold | Literal[0] | VoltageDict
+type ThresholdLike = Threshold | Literal[0] | VoltageDict | str
 """Type alias for Threshold initialization arguments."""
-type MagnitudeLike = Magnitude | Literal[0] | VoltageDict
+type MagnitudeLike = Magnitude | Literal[0] | VoltageDict | str
 """Type alias for Magnitude initialization arguments."""
 
 
@@ -728,7 +751,7 @@ class ComplexVoltageDict(TypedDict, total=False):
     """millivolts"""
 
 
-type ComplexVoltageLike = ComplexVoltage | Literal[0] | ComplexVoltageDict
+type ComplexVoltageLike = ComplexVoltage | Literal[0] | ComplexVoltageDict | str
 """Type alias for ComplexVoltage initialization arguments.
 
 The fields are mutually exclusive; only one should be provided.
@@ -750,7 +773,7 @@ class FrequencyDict(TypedDict, total=False):
     GHz: int | float
 
 
-type FrequencyLike = Frequency | Literal[0] | FrequencyDict
+type FrequencyLike = Frequency | Literal[0] | FrequencyDict | str
 """Type alias for Frequency initialization arguments."""
 
 
