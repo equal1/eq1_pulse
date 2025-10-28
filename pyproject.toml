@@ -28,7 +28,7 @@ qblox = ["spirack", "qblox_instruments>=0.11", "dataclasses_json>=0.5.2"]
 
 mypy = ["mypy>=1.16.0", "eq1_pulse[typing]"]
 
-pyright = ["pyright", "eq1_pulse[typing]"]
+pyright = ["pyright!=1.1.407", "eq1_pulse[typing]"]
 
 typing = [
     "pandas-stubs",
