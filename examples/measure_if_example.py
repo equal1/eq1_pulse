@@ -34,7 +34,7 @@ def example_basic_measure_if():
             amplitude="50mV",
         ):
             # This block executes only if qubit_state is True (above threshold)
-            build.play("qubit", build.square(duration="50ns", amplitude="100mV"))
+            build.play("qubit", build.square_pulse(duration="50ns", amplitude="100mV"))
 
     print(f"Created sequence with {len(seq.items)} operations")
     print(seq.model_dump_json(indent=2))
@@ -65,7 +65,7 @@ def example_measure_if_with_rotation():
             # Correction pulse if in excited state
             build.play(
                 "qubit",
-                build.square(duration="100ns", amplitude="100mV"),
+                build.square_pulse(duration="100ns", amplitude="100mV"),
             )
 
     print(f"Created sequence with {len(seq.items)} operations")
@@ -104,7 +104,7 @@ def example_nested_measure_if():
                 # Both qubits excited - apply two-qubit gate
                 build.play(
                     "coupler",
-                    build.square(duration="200ns", amplitude="80mV"),
+                    build.square_pulse(duration="200ns", amplitude="80mV"),
                 )
 
     print(f"Created sequence with {len(seq.items)} operations")
@@ -133,7 +133,7 @@ def example_measure_and_discriminate_separate():
 
         # Manually create conditional - gives more control
         with build.if_condition("discriminated_state"):
-            build.play("qubit", build.square(duration="50ns", amplitude="100mV"))
+            build.play("qubit", build.square_pulse(duration="50ns", amplitude="100mV"))
 
         # Can also do operations outside the conditional
         build.wait("qubit", duration="100ns")
@@ -163,7 +163,7 @@ def example_active_reset():
                 amplitude="50mV",
             ):
                 # Apply pi pulse to flip back to ground state
-                build.play("qubit", build.square(duration="50ns", amplitude="100mV"))
+                build.play("qubit", build.square_pulse(duration="50ns", amplitude="100mV"))
 
             # Wait between attempts
             build.wait("qubit", duration="1us")
@@ -195,7 +195,7 @@ def example_measure_if_in_schedule():
             # Conditional operations in schedule
             build.play(
                 "qubit",
-                build.square(duration="50ns", amplitude="100mV"),
+                build.square_pulse(duration="50ns", amplitude="100mV"),
                 name="correction",
             )
 

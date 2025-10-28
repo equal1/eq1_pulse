@@ -19,25 +19,25 @@ Examples
 
     # Building a sequence
     with build.sequence() as seq:
-        build.play("ch1", build.square(duration="10us", amplitude="100mV"))
+        build.play("ch1", build.square_pulse(duration="10us", amplitude="100mV"))
         build.wait("ch1", "5us")
-        build.play("ch1", build.sine(duration="20us", amplitude="50mV", frequency="5GHz"))
+        build.play("ch1", build.sine_pulse(duration="20us", amplitude="50mV", frequency="5GHz"))
 
     # Building a schedule with relative positioning
     with build.schedule() as sched:
-        op1 = build.play("ch1", build.square(duration="10us", amplitude="100mV"))
-        op2 = build.play("ch2", build.square(duration="10us", amplitude="100mV"),
+        op1 = build.play("ch1", build.square_pulse(duration="10us", amplitude="100mV"))
+        op2 = build.play("ch2", build.square_pulse(duration="10us", amplitude="100mV"),
                         ref_op=op1, ref_pt="start", rel_time="5us")
 
     # Using control flow
     with build.sequence() as seq:
         with build.repeat(10):
-            build.play("qubit", build.square(duration="50ns", amplitude="100mV"))
-            build.measure("qubit", "readout", duration="1us")
+            build.play("qubit", build.square_pulse(duration="50ns", amplitude="100mV"))
+            build.measure("qubit", "readout", duration="1us", amplitude="50mV")
 
         with build.for_loop("i", range(0, 100, 10)):
             build.set_frequency("qubit", build.var("i"))
-            build.play("qubit", build.square(duration="100ns", amplitude="50mV"))
+            build.play("qubit", build.square_pulse(duration="100ns", amplitude="50mV"))
 """
 
 from __future__ import annotations
@@ -535,7 +535,7 @@ class Builder:
     # Pulse creation helpers
     # ============================================================================
 
-    def square(
+    def square_pulse(
         self,
         *,
         duration: DurationLike,
@@ -556,7 +556,7 @@ class Builder:
 
         .. code-block:: python
 
-            pulse = build.square(duration="10us", amplitude="100mV")
+            pulse = build.square_pulse(duration="10us", amplitude="100mV")
         """
         return SquarePulse(
             duration=duration,
@@ -565,7 +565,7 @@ class Builder:
             fall_time=fall_time,
         )
 
-    def sine(
+    def sine_pulse(
         self,
         *,
         duration: DurationLike,
@@ -586,7 +586,15 @@ class Builder:
 
         .. code-block:: python
 
-            pulse = build.sine(duration="20us", amplitude="50mV", frequency="5GHz")
+            pulse = build.sine_pulse(duration="20us", amplitude="50mV", frequency="5GHz")
+
+            # Chirped sine pulse
+            chirp = build.sine_pulse(
+                duration="50us",
+                amplitude="30mV",
+                frequency="4.5GHz",
+                to_frequency="5.5GHz"
+            )
         """
         return SinePulse(
             duration=duration,
@@ -605,10 +613,14 @@ class Builder:
     ) -> ExternalPulse:
         """Create an external pulse reference.
 
-        :param function: Fully qualified function name
+        References a pulse shape defined in an external function. The function
+        should accept duration, amplitude, and any additional params, and return
+        normalized waveform samples.
+
+        :param function: Fully qualified function name (e.g., "my_lib.gaussian")
         :param duration: Pulse duration
-        :param amplitude: Pulse amplitude
-        :param params: Additional parameters for the pulse function
+        :param amplitude: Pulse amplitude (scale factor)
+        :param params: Additional parameters passed to the pulse function
 
         :return: External pulse definition
 
@@ -616,7 +628,21 @@ class Builder:
 
         .. code-block:: python
 
-            pulse = build.external_pulse("my_lib.gaussian", duration="10us", amplitude="100mV")
+            # Reference a Gaussian pulse from an external library
+            pulse = build.external_pulse(
+                "pulses.gaussian",
+                duration="100ns",
+                amplitude="80mV",
+                params={"sigma": "20ns"}
+            )
+
+            # DRAG pulse with parameters
+            drag = build.external_pulse(
+                "pulses.drag",
+                duration="50ns",
+                amplitude="100mV",
+                params={"beta": 0.5, "sigma": "10ns"}
+            )
         """
         return ExternalPulse(
             function=function,
@@ -634,13 +660,16 @@ class Builder:
         interpolation: str | None = None,
         time_points: list[float] | None = None,
     ) -> ArbitrarySampledPulse:
-        """Create an arbitrary sampled pulse.
+        """Create an arbitrary sampled pulse from explicit samples.
 
-        :param samples: Normalized waveform samples
-        :param duration: Pulse duration
-        :param amplitude: Pulse amplitude
-        :param interpolation: Interpolation method
-        :param time_points: Time points for samples
+        Defines a pulse shape using explicitly provided sample points. Samples
+        should be normalized (peak value of 1.0), and will be scaled by amplitude.
+
+        :param samples: Normalized waveform samples (real or complex)
+        :param duration: Total pulse duration
+        :param amplitude: Pulse amplitude (scale factor for samples)
+        :param interpolation: Interpolation method (e.g., "linear", "cubic")
+        :param time_points: Optional time points for samples (normalized 0-1)
 
         :return: Arbitrary pulse definition
 
@@ -648,7 +677,22 @@ class Builder:
 
         .. code-block:: python
 
-            pulse = build.arbitrary_pulse([0, 1, 1, 0], duration="10us", amplitude="100mV")
+            # Simple triangle pulse
+            triangle = build.arbitrary_pulse(
+                samples=[0.0, 0.5, 1.0, 0.5, 0.0],
+                duration="100ns",
+                amplitude="50mV"
+            )
+
+            # Complex IQ pulse with explicit time points
+            iq_samples = [0.0+0.0j, 0.5+0.3j, 1.0+0.0j, 0.5-0.3j, 0.0+0.0j]
+            iq_pulse = build.arbitrary_pulse(
+                samples=iq_samples,
+                duration="80ns",
+                amplitude="75mV",
+                time_points=[0.0, 0.25, 0.5, 0.75, 1.0],
+                interpolation="cubic"
+            )
         """
         return ArbitrarySampledPulse(
             samples=samples,
@@ -1109,7 +1153,7 @@ class Builder:
                          duration="1us", amplitude="50mV", integration="demod")
         """
         # Create measurement pulse
-        meas_pulse = self.square(duration=duration, amplitude=amplitude)
+        meas_pulse = self.square_pulse(duration=duration, amplitude=amplitude)
 
         context = self._current_context()
 

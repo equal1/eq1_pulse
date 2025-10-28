@@ -51,7 +51,7 @@ def example_basic_t2star():
             # First π/2 pulse (superposition)
             build.play(
                 "qubit",
-                build.square(
+                build.square_pulse(
                     duration="25ns",  # π/2 pulse duration
                     amplitude="80mV",  # Calibrated amplitude
                 ),
@@ -63,7 +63,7 @@ def example_basic_t2star():
             # Second π/2 pulse (projection)
             build.play(
                 "qubit",
-                build.square(
+                build.square_pulse(
                     duration="25ns",
                     amplitude="80mV",
                 ),
@@ -125,7 +125,7 @@ def example_t2star_with_detuning():
             # π/2 pulse
             build.play(
                 "qubit",
-                build.square(duration="25ns", amplitude="80mV"),
+                build.square_pulse(duration="25ns", amplitude="80mV"),
             )
 
             # Free evolution
@@ -134,7 +134,7 @@ def example_t2star_with_detuning():
             # π/2 pulse
             build.play(
                 "qubit",
-                build.square(duration="25ns", amplitude="80mV"),
+                build.square_pulse(duration="25ns", amplitude="80mV"),
             )
 
             # Reset frequency
@@ -189,7 +189,7 @@ def example_t2star_echo():
             # First π/2 pulse
             build.play(
                 "qubit",
-                build.square(duration="25ns", amplitude="80mV"),
+                build.square_pulse(duration="25ns", amplitude="80mV"),
             )
 
             # Wait τ/2
@@ -199,7 +199,7 @@ def example_t2star_echo():
             # π pulse (refocusing)
             build.play(
                 "qubit",
-                build.square(
+                build.square_pulse(
                     duration="50ns",  # Twice the π/2 duration
                     amplitude="80mV",
                 ),
@@ -211,7 +211,7 @@ def example_t2star_echo():
             # Final π/2 pulse
             build.play(
                 "qubit",
-                build.square(duration="25ns", amplitude="80mV"),
+                build.square_pulse(duration="25ns", amplitude="80mV"),
             )
 
             # Measure
@@ -267,7 +267,7 @@ def example_cpmg_sequence():
                 # Initial π/2 pulse
                 build.play(
                     "qubit",
-                    build.square(duration="25ns", amplitude="80mV"),
+                    build.square_pulse(duration="25ns", amplitude="80mV"),
                 )
 
                 # Apply n refocusing pulses
@@ -279,7 +279,7 @@ def example_cpmg_sequence():
                     # π pulse
                     build.play(
                         "qubit",
-                        build.square(duration="50ns", amplitude="80mV"),
+                        build.square_pulse(duration="50ns", amplitude="80mV"),
                     )
 
                     # Wait τ/(2n)
@@ -288,7 +288,7 @@ def example_cpmg_sequence():
                 # Final π/2 pulse
                 build.play(
                     "qubit",
-                    build.square(duration="25ns", amplitude="80mV"),
+                    build.square_pulse(duration="25ns", amplitude="80mV"),
                 )
 
                 # Measure
@@ -350,7 +350,7 @@ def example_t2star_vs_magnetic_field():
                 # π/2 pulse
                 build.play(
                     "qubit",
-                    build.square(duration="25ns", amplitude="80mV"),
+                    build.square_pulse(duration="25ns", amplitude="80mV"),
                 )
 
                 # Free evolution
@@ -359,7 +359,7 @@ def example_t2star_vs_magnetic_field():
                 # π/2 pulse
                 build.play(
                     "qubit",
-                    build.square(duration="25ns", amplitude="80mV"),
+                    build.square_pulse(duration="25ns", amplitude="80mV"),
                 )
 
                 # Measure
@@ -416,7 +416,7 @@ def example_phase_tomography():
                 # First π/2 pulse
                 build.play(
                     "qubit",
-                    build.square(duration="25ns", amplitude="80mV"),
+                    build.square_pulse(duration="25ns", amplitude="80mV"),
                 )
 
                 # Free evolution
@@ -428,7 +428,7 @@ def example_phase_tomography():
                 # Second π/2 pulse with phase
                 build.play(
                     "qubit",
-                    build.square(duration="25ns", amplitude="80mV"),
+                    build.square_pulse(duration="25ns", amplitude="80mV"),
                 )
 
                 # Reset phase

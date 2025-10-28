@@ -31,7 +31,7 @@ def example_basic_discriminate():
 
         # Use the discriminated result in a conditional
         with build.if_condition("qubit_state"):
-            build.play("qubit", build.square(duration="50ns", amplitude="100mV"))
+            build.play("qubit", build.square_pulse(duration="50ns", amplitude="100mV"))
 
     print(f"Created sequence with {len(seq.items)} operations")
     print(seq.model_dump_json(indent=2))
@@ -142,10 +142,10 @@ def example_multi_qubit_readout():
 
         # Conditional operations based on results
         with build.if_condition("state_q0"):
-            build.play("qubit_0", build.square(duration="50ns", amplitude="100mV"))
+            build.play("qubit_0", build.square_pulse(duration="50ns", amplitude="100mV"))
 
         with build.if_condition("state_q1"):
-            build.play("qubit_1", build.square(duration="50ns", amplitude="100mV"))
+            build.play("qubit_1", build.square_pulse(duration="50ns", amplitude="100mV"))
 
     print(f"Created sequence with {len(seq.items)} operations")
     print(seq.model_dump_json(indent=2))

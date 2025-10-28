@@ -32,13 +32,13 @@ def example_simple_sequence():
 
     with build.sequence() as seq:
         # Play a square pulse
-        build.play("drive", build.square(duration="10us", amplitude="100mV"))
+        build.play("drive", build.square_pulse(duration="10us", amplitude="100mV"))
 
         # Wait
         build.wait("drive", duration="5us")
 
         # Play a sine pulse
-        build.play("drive", build.sine(duration="20us", amplitude="50mV", frequency="5GHz"))
+        build.play("drive", build.sine_pulse(duration="20us", amplitude="50mV", frequency="5GHz"))
 
         # Barrier to synchronize channels
         build.barrier("drive", "readout")
@@ -57,12 +57,12 @@ def example_schedule_with_positioning():
 
     with build.schedule() as sched:
         # First operation starts at default time
-        op1 = build.play("qubit", build.square(duration="10us", amplitude="100mV"), name="drive_pulse")
+        op1 = build.play("qubit", build.square_pulse(duration="10us", amplitude="100mV"), name="drive_pulse")
 
         # Second operation starts 5us after the first one ends
         op2 = build.play(
             "qubit",
-            build.square(duration="10us", amplitude="50mV"),
+            build.square_pulse(duration="10us", amplitude="50mV"),
             ref_op=op1,
             ref_pt="end",
             rel_time="5us",
@@ -87,7 +87,7 @@ def example_with_repetition():
     with build.sequence() as seq:
         # Repeat a pulse sequence 10 times
         with build.repeat(10):
-            build.play("qubit", build.square(duration="50ns", amplitude="100mV"))
+            build.play("qubit", build.square_pulse(duration="50ns", amplitude="100mV"))
             build.wait("qubit", duration="50ns")
 
     print(f"Created sequence with {len(seq.items)} operation(s)")
@@ -106,7 +106,7 @@ def example_with_iteration():
         # Iterate over frequency values
         with build.for_loop("freq", range(4000, 6000, 100)):
             build.set_frequency("qubit", build.var("freq"))
-            build.play("qubit", build.square(duration="100ns", amplitude="50mV"))
+            build.play("qubit", build.square_pulse(duration="100ns", amplitude="50mV"))
             build.wait("qubit", duration="100ns")
 
     print(f"Created sequence with {len(seq.items)} operation(s)")
@@ -127,7 +127,7 @@ def example_with_conditional():
 
         # Conditionally apply correction based on result
         with build.if_condition("result"):
-            build.play("qubit", build.square(duration="50ns", amplitude="100mV"))
+            build.play("qubit", build.square_pulse(duration="50ns", amplitude="100mV"))
 
     print(f"Created sequence with {len(seq.items)} operation(s)")
     print(seq.model_dump_json(indent=2))
@@ -173,14 +173,14 @@ def example_complex_program():
             with build.for_loop("amp", range(0, 200, 10)):
                 # Apply pulse with variable amplitude
                 amp_ref = build.var("amp")
-                build.play("qubit", build.square(duration="100ns", amplitude="1mV"), scale_amp=amp_ref)
+                build.play("qubit", build.square_pulse(duration="100ns", amplitude="1mV"), scale_amp=amp_ref)
 
                 # Measure
                 build.measure("qubit", "readout", "measurement", duration="1us", amplitude="50mV")
 
                 # Reset if needed
                 with build.if_condition("measurement"):
-                    build.play("qubit", build.square(duration="1us", amplitude="200mV"))
+                    build.play("qubit", build.square_pulse(duration="1us", amplitude="200mV"))
 
                 # Wait between experiments
                 build.wait("qubit", "readout", duration="10us")

@@ -50,7 +50,7 @@ def example_amplitude_rabi():
             # Note: amp variable represents mV, use variable reference
             build.play(
                 "qubit",
-                build.square(
+                build.square_pulse(
                     duration="100ns",  # Fixed duration
                     amplitude=build.var("amp"),  # type: ignore[arg-type]  # Variable amplitude in mV
                 ),
@@ -105,7 +105,7 @@ def example_time_rabi():
             # Apply drive pulse with variable duration
             build.play(
                 "qubit",
-                build.square(
+                build.square_pulse(
                     duration=build.var("t_drive"),  # type: ignore[arg-type]  # Variable duration in ns
                     amplitude="80mV",  # Fixed amplitude
                 ),
@@ -166,7 +166,7 @@ def example_frequency_rabi():
             # Apply π/2 pulse (or saturating pulse)
             build.play(
                 "qubit",
-                build.square(
+                build.square_pulse(
                     duration="50ns",
                     amplitude="100mV",
                 ),
@@ -226,7 +226,7 @@ def example_2d_rabi():
                 # Drive pulse with both parameters varying
                 build.play(
                     "qubit",
-                    build.square(
+                    build.square_pulse(
                         duration=build.var("dur"),  # type: ignore[arg-type]  # Variable duration in ns
                         amplitude=build.var("amp"),  # type: ignore[arg-type]  # Variable amplitude in mV
                     ),
@@ -289,7 +289,7 @@ def example_rabi_with_detuning():
                 # Drive pulse
                 build.play(
                     "qubit",
-                    build.square(
+                    build.square_pulse(
                         duration=build.var("t_pulse"),  # type: ignore[arg-type]  # Variable duration in ns
                         amplitude="80mV",
                     ),
