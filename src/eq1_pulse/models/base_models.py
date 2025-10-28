@@ -8,6 +8,7 @@ Inheriting from these models ensures consistent behavior across the codebase.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from functools import cache
 from typing import TYPE_CHECKING, Any, Final, Literal, cast, get_args, override
 
@@ -175,7 +176,7 @@ _LiteralZeroTypeAdapter: Final[TypeAdapter[Literal[0]]] = TypeAdapter(Literal[0]
 _unit_of_zero: dict[type, str] = {}
 
 
-def register_unit_of_zero(unit: str):
+def register_unit_of_zero[T: type](unit: str) -> Callable[[T], T]:
     """Register a unit string for the zero value of a specific type.
 
     This decorator is used to provide appropriate handling of the value 0.
@@ -193,7 +194,7 @@ def register_unit_of_zero(unit: str):
             value: Meters | Kilometers | Millimeters
     """
 
-    def decorator(cls: type) -> type:
+    def decorator(cls: T) -> T:
         _unit_of_zero[cls] = unit
         return cls
 
