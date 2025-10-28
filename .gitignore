@@ -172,3 +172,6 @@ condaenv.*.requirements.txt
 
 # uv build temp file
 /.ok
+
+openapi.json
+openapi.yaml

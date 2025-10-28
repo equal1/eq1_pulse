@@ -22,11 +22,13 @@ dependencies = [
 "Homepage" = "https://github.com/equal1/eq1_pulse"
 
 [project.optional-dependencies]
-dev = ["pre-commit", "eq1_pulse[typing, mypy, pyright, ruff, pytest, doc]"]
+dev = ["pre-commit", "eq1_pulse[typing, mypy, pyright, ruff, pytest, doc, yaml]"]
 
 qblox = ["spirack", "qblox_instruments>=0.11", "dataclasses_json>=0.5.2"]
 
 mypy = ["mypy>=1.16.0", "eq1_pulse[typing]"]
+
+yaml = ["ruamel.yaml"]
 
 pyright = ["pyright!=1.1.407", "eq1_pulse[typing]"]
 
