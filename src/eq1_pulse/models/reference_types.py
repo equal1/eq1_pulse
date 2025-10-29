@@ -8,10 +8,13 @@ Note:
 
 from __future__ import annotations
 
+from collections.abc import Hashable
 from typing import TYPE_CHECKING, Any, Literal, TypedDict
 
-from pydantic import BaseModel, model_serializer, model_validator
+from pydantic import model_serializer, model_validator
 from pydantic.json_schema import DEFAULT_REF_TEMPLATE, GenerateJsonSchema, JsonSchemaMode
+
+from eq1_pulse.models.base_models import FrozenModel
 
 from .identifier_str import IdentifierStr
 
@@ -23,7 +26,7 @@ __all__ = (
 )
 
 
-class Reference(BaseModel):
+class Reference(FrozenModel, Hashable):
     """Base class for all symbolic references.
 
     Descendants must only define a single field (the reference name), which is serialized directly.
@@ -89,6 +92,10 @@ class Reference(BaseModel):
 
     def __req__(self, value):  # noqa: D105
         return self.__eq__(value)
+
+    def __hash__(self) -> int:  # noqa: D105
+        first_field_value = getattr(self, self._first_field_name())
+        return hash(first_field_value)
 
 
 class VariableRef(Reference):
