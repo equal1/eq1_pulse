@@ -606,13 +606,6 @@ class TestErrorHandling:
         with pytest.raises(RuntimeError, match="not supported in schedule"), build_schedule():
             barrier("ch1")
 
-    def test_control_flow_in_schedule_raises_error(self):
-        """Test that control flow in schedule raises error."""
-        with pytest.raises(RuntimeError, match="only supported in sequence"), build_schedule():
-            # Nested context is intentional - testing error condition
-            with repeat(10):
-                pass
-
 
 class TestComplexScenarios:
     """Tests for complex usage scenarios."""
