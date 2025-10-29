@@ -12,6 +12,7 @@ eq1lab documentation
 
    autoapi/eq1_pulse/models/index.rst
 
+   autoapi/eq1_pulse/utilities/index.rst
 
 .. # Indices and tables
 .. # ==================

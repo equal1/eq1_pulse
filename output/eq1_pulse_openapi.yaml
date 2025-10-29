@@ -1,0 +1,1884 @@
+openapi: 3.1.0
+info:
+  title: Equal1 Pulse Models API
+  version: 1.0.0
+  description: OpenAPI schema for Equal1 Pulse library models. This schema defines
+    all the Pydantic models used for pulse sequencing, channel operations, control
+    flow, and data operations.
+components:
+  schemas:
+    Amplitude:
+      additionalProperties: false
+      description: Model to represent the (complex) amplitude of a voltage signal.
+      properties:
+        value:
+          anyOf:
+          - $ref: '#/components/schemas/ComplexVolts'
+          - $ref: '#/components/schemas/ComplexMillivolts'
+          title: Value
+      required:
+      - value
+      title: Amplitude
+      type: object
+    Angle:
+      additionalProperties: false
+      description: "A model representing an angle in either degrees, radians, turns\
+        \ or half-turns.\n\nTurns are also known as revolutions or cycles, also :math:`\\\
+        tau=2\\pi` radians or 360\xB0.\nHalf-turns are also known as half-cycles,\
+        \ also :math:`\\pi` radians or 180\xB0."
+      properties:
+        value:
+          anyOf:
+          - $ref: '#/components/schemas/Degrees'
+          - $ref: '#/components/schemas/Radians'
+          - $ref: '#/components/schemas/Turns'
+          - $ref: '#/components/schemas/HalfTurns'
+          title: Value
+      required:
+      - value
+      title: Angle
+      type: object
+    ArbitrarySampledPulse:
+      additionalProperties: false
+      description: 'Pulse type that uses arbitrary sampled waveform data.
+
+
+        The amplitude refers to the reference amplitude of the pulse, which is usually
+        the peak amplitude.
+
+        The duration refers to the total duration of the pulse.
+
+        The samples (complex or real) are expected to be normalized between -1 and
+        1, and will be scaled by the amplitude.
+
+        The samples are uniformly distributed over the duration of the pulse, with
+        interpolation applied as needed.'
+      properties:
+        pulse_type:
+          const: arbitrary
+          default: arbitrary
+          title: Pulse Type
+          type: string
+        duration:
+          anyOf:
+          - $ref: '#/components/schemas/Duration'
+          - $ref: '#/components/schemas/VariableRef'
+          title: Duration
+        amplitude:
+          anyOf:
+          - $ref: '#/components/schemas/Amplitude'
+          - $ref: '#/components/schemas/VariableRef'
+          title: Amplitude
+        samples:
+          anyOf:
+          - $ref: '#/components/schemas/NumpyFloatArray1D'
+          - $ref: '#/components/schemas/NumpyComplexArray1D'
+          title: Samples
+        interpolation:
+          anyOf:
+          - type: string
+          - type: 'null'
+          default: null
+          title: Interpolation
+        time_points:
+          anyOf:
+          - $ref: '#/components/schemas/NumpyFloatArray1D'
+          - type: 'null'
+          default: null
+      required:
+      - duration
+      - amplitude
+      - samples
+      title: ArbitrarySampledPulse
+      type: object
+    ArithmeticFrozenWrappedValueModel:
+      additionalProperties: false
+      properties:
+        value:
+          title: Value
+      required:
+      - value
+      title: ArithmeticFrozenWrappedValueModel
+      type: object
+    ArithmeticFrozenWrappedValueModel_Union_int__float__:
+      additionalProperties: false
+      properties:
+        value:
+          title: Value
+      required:
+      - value
+      title: ArithmeticFrozenWrappedValueModel[Union[int, float]]
+      type: object
+    ArithmeticFrozenWrappedValueModel_Union_int__float__complex__:
+      additionalProperties: false
+      properties:
+        value:
+          title: Value
+      required:
+      - value
+      title: ArithmeticFrozenWrappedValueModel[Union[int, float, complex]]
+      type: object
+    Barrier:
+      additionalProperties: false
+      description: 'Synchronize channels.
+
+
+        The barrier operation causes channels to wait until all channels have reached
+        the barrier.'
+      properties:
+        op_type:
+          const: barrier
+          default: barrier
+          title: Op Type
+          type: string
+        channels:
+          items:
+            $ref: '#/components/schemas/ChannelRef'
+          title: Channels
+          type: array
+      required:
+      - channels
+      title: Barrier
+      type: object
+    ChannelOp:
+      discriminator:
+        mapping:
+          barrier: '#/components/schemas/Barrier'
+          dc_comp: '#/components/schemas/CompensateDC'
+          play: '#/components/schemas/Play'
+          record: '#/components/schemas/Record'
+          set_frequency: '#/components/schemas/SetFrequency'
+          set_phase: '#/components/schemas/SetPhase'
+          shift_frequency: '#/components/schemas/ShiftFrequency'
+          shift_phase: '#/components/schemas/ShiftPhase'
+          trace: '#/components/schemas/Trace'
+          wait: '#/components/schemas/Wait'
+        propertyName: op_type
+      oneOf:
+      - $ref: '#/components/schemas/Play'
+      - $ref: '#/components/schemas/Wait'
+      - $ref: '#/components/schemas/Barrier'
+      - $ref: '#/components/schemas/SetFrequency'
+      - $ref: '#/components/schemas/ShiftFrequency'
+      - $ref: '#/components/schemas/SetPhase'
+      - $ref: '#/components/schemas/ShiftPhase'
+      - $ref: '#/components/schemas/Record'
+      - $ref: '#/components/schemas/Trace'
+      - $ref: '#/components/schemas/CompensateDC'
+    ChannelOpBase:
+      additionalProperties: false
+      description: Base class for operations involving a single channel.
+      properties:
+        op_type:
+          title: Op Type
+        channel:
+          $ref: '#/components/schemas/ChannelRef'
+      required:
+      - op_type
+      - channel
+      title: ChannelOpBase
+      type: object
+    ChannelRef:
+      description: 'Reference to a channel.
+
+
+        Channels are defined in the target''s hardware configuration.'
+      properties:
+        channel:
+          $ref: '#/components/schemas/IdentifierStr'
+      required:
+      - channel
+      title: ChannelRef
+      type: object
+    ChannelsOpBase:
+      additionalProperties: false
+      description: Base class for operations involving multiple channels.
+      properties:
+        op_type:
+          title: Op Type
+        channels:
+          items:
+            $ref: '#/components/schemas/ChannelRef'
+          title: Channels
+          type: array
+      required:
+      - op_type
+      - channels
+      title: ChannelsOpBase
+      type: object
+    ComparisonMode:
+      enum:
+      - '>='
+      - '>'
+      - <=
+      - <
+      title: ComparisonMode
+      type: string
+    CompensateDC:
+      additionalProperties: false
+      description: 'Apply DC offset compensation to the channel.
+
+
+        A square wave of specified duration is played on the channel. The amplitude
+        of the wave is calculated to
+
+        result in a zero average value when integrated over the duration since the
+        laste reset.
+
+
+        If ``null``/:obj:`None` duration is specified, the accumulated value is reset
+        to zero, without
+
+        playing a compensation pulse.
+
+
+        If ``max_amp`` is specified, the amplitude of the compensation pulse is limited
+        to that value.
+
+        If the amplitude is calculated to be higher, the pulse area is subtracted
+        from the accumulated value,
+
+        leaving the possibility to compensate the rest in the following operations.
+
+
+        If ``rise_time`` and ``fall_time`` are specified, they define the duration
+        of linear ramps
+
+        at the beginning and end of the compensation pulse. The ramps are included
+        in the area calculation.
+
+        The rise and fall times are also included in the total duration of the compensation
+        pulse.'
+      properties:
+        op_type:
+          const: dc_comp
+          default: dc_comp
+          title: Op Type
+          type: string
+        channel:
+          $ref: '#/components/schemas/ChannelRef'
+        duration:
+          anyOf:
+          - $ref: '#/components/schemas/Duration'
+          - $ref: '#/components/schemas/VariableRef'
+          - type: 'null'
+          title: Duration
+        max_amp:
+          anyOf:
+          - $ref: '#/components/schemas/Magnitude'
+          - type: 'null'
+          default: null
+        rise_time:
+          anyOf:
+          - $ref: '#/components/schemas/Duration'
+          - $ref: '#/components/schemas/VariableRef'
+          - type: 'null'
+          default: null
+          title: Rise Time
+        fall_time:
+          anyOf:
+          - $ref: '#/components/schemas/Duration'
+          - $ref: '#/components/schemas/VariableRef'
+          - type: 'null'
+          default: null
+          title: Fall Time
+      required:
+      - channel
+      - duration
+      title: CompensateDC
+      type: object
+    ComplexMillivolts:
+      additionalProperties: false
+      description: Millivolts as a unit of voltage (real + imaginary).
+      properties:
+        mV:
+          anyOf:
+          - type: integer
+          - type: number
+          - $ref: '#/components/schemas/complex_from_tuple'
+          title: Mv
+      required:
+      - mV
+      title: ComplexMillivolts
+      type: object
+    ComplexToRealProjectionMode:
+      enum:
+      - real
+      - imag
+      - abs
+      - phase
+      title: ComplexToRealProjectionMode
+      type: string
+    ComplexVoltage:
+      additionalProperties: false
+      description: 'A model representing a complex voltage in volts or millivolts.
+
+
+        Complex voltages are used to represent both amplitude and phase information,
+
+        and are used with with mixing or demodulation operations.'
+      properties:
+        value:
+          anyOf:
+          - $ref: '#/components/schemas/ComplexVolts'
+          - $ref: '#/components/schemas/ComplexMillivolts'
+          title: Value
+      required:
+      - value
+      title: ComplexVoltage
+      type: object
+    ComplexVolts:
+      additionalProperties: false
+      description: Volts as a unit of voltage (real + imaginary).
+      properties:
+        V:
+          anyOf:
+          - type: integer
+          - type: number
+          - $ref: '#/components/schemas/complex_from_tuple'
+          title: V
+      required:
+      - V
+      title: ComplexVolts
+      type: object
+    Conditional:
+      additionalProperties: false
+      description: 'Represents a conditional sequence of operations.
+
+
+        :ivar op_type: Operation type, always "if"
+
+        :ivar var: The variable reference for the condition.
+
+        :ivar body: The sequence of operations to execute if the condition is met'
+      properties:
+        op_type:
+          const: if
+          default: if
+          title: Op Type
+          type: string
+        var:
+          $ref: '#/components/schemas/VariableRef'
+        body:
+          $ref: '#/components/schemas/OpSequence'
+      required:
+      - var
+      - body
+      title: Conditional
+      type: object
+    ConditionalBase_OpSequence_:
+      additionalProperties: false
+      properties:
+        op_type:
+          const: if
+          default: if
+          title: Op Type
+          type: string
+        var:
+          $ref: '#/components/schemas/VariableRef'
+        body:
+          $ref: '#/components/schemas/OpSequence'
+      required:
+      - var
+      - body
+      title: ConditionalBase[OpSequence]
+      type: object
+    ConditionalBase_Schedule_:
+      additionalProperties: false
+      properties:
+        op_type:
+          const: if
+          default: if
+          title: Op Type
+          type: string
+        var:
+          $ref: '#/components/schemas/VariableRef'
+        body:
+          $ref: '#/components/schemas/Schedule'
+      required:
+      - var
+      - body
+      title: ConditionalBase[Schedule]
+      type: object
+    DataOpBase:
+      additionalProperties: false
+      properties:
+        op_type:
+          title: Op Type
+      required:
+      - op_type
+      title: DataOpBase
+      type: object
+    Degrees:
+      additionalProperties: false
+      description: Degrees as a unit of angle.
+      properties:
+        deg:
+          anyOf:
+          - type: integer
+          - type: number
+          title: Deg
+      required:
+      - deg
+      title: Degrees
+      type: object
+    DemodIntegration:
+      additionalProperties: false
+      description: 'Demodulation integration of measured values.
+
+
+        The demodulation operation will multiply the measured signal with
+
+        the channels'' output signal before integration.
+
+        If scale_cos/scale_sin are specified they can be used to scale and "flip"
+        the real/imaginary parts of the result.
+
+
+        An optional phase may be applied to rotate the result.'
+      properties:
+        integration_type:
+          const: demod
+          default: demod
+          title: Integration Type
+          type: string
+        phase:
+          anyOf:
+          - $ref: '#/components/schemas/Phase'
+          - type: 'null'
+          default: null
+        scale_cos:
+          default: 1
+          title: Scale Cos
+          type: number
+        scale_sin:
+          default: 1
+          title: Scale Sin
+          type: number
+      title: DemodIntegration
+      type: object
+    DiscriminableOp:
+      discriminator:
+        mapping:
+          barrier: '#/components/schemas/ChannelOp'
+          dc_comp: '#/components/schemas/ChannelOp'
+          discriminate: '#/components/schemas/Discriminate'
+          for: '#/components/schemas/Iteration'
+          if: '#/components/schemas/Conditional'
+          play: '#/components/schemas/ChannelOp'
+          pulse_decl: '#/components/schemas/PulseDecl'
+          record: '#/components/schemas/ChannelOp'
+          repeat: '#/components/schemas/Repetition'
+          set_frequency: '#/components/schemas/ChannelOp'
+          set_phase: '#/components/schemas/ChannelOp'
+          shift_frequency: '#/components/schemas/ChannelOp'
+          shift_phase: '#/components/schemas/ChannelOp'
+          store: '#/components/schemas/Store'
+          trace: '#/components/schemas/ChannelOp'
+          var_decl: '#/components/schemas/VariableDecl'
+          wait: '#/components/schemas/ChannelOp'
+        propertyName: op_type
+      oneOf:
+      - $ref: '#/components/schemas/ChannelOp'
+      - $ref: '#/components/schemas/VariableDecl'
+      - $ref: '#/components/schemas/PulseDecl'
+      - $ref: '#/components/schemas/Discriminate'
+      - $ref: '#/components/schemas/Store'
+      - $ref: '#/components/schemas/Repetition'
+      - $ref: '#/components/schemas/Iteration'
+      - $ref: '#/components/schemas/Conditional'
+    DiscriminableSchedulableOp:
+      discriminator:
+        mapping:
+          barrier: '#/components/schemas/ChannelOp'
+          dc_comp: '#/components/schemas/ChannelOp'
+          discriminate: '#/components/schemas/Discriminate'
+          for: '#/components/schemas/SchedIteration'
+          if: '#/components/schemas/SchedConditional'
+          play: '#/components/schemas/ChannelOp'
+          pulse_decl: '#/components/schemas/PulseDecl'
+          record: '#/components/schemas/ChannelOp'
+          repeat: '#/components/schemas/SchedRepetition'
+          set_frequency: '#/components/schemas/ChannelOp'
+          set_phase: '#/components/schemas/ChannelOp'
+          shift_frequency: '#/components/schemas/ChannelOp'
+          shift_phase: '#/components/schemas/ChannelOp'
+          store: '#/components/schemas/Store'
+          trace: '#/components/schemas/ChannelOp'
+          var_decl: '#/components/schemas/VariableDecl'
+          wait: '#/components/schemas/ChannelOp'
+        propertyName: op_type
+      oneOf:
+      - $ref: '#/components/schemas/ChannelOp'
+      - $ref: '#/components/schemas/VariableDecl'
+      - $ref: '#/components/schemas/PulseDecl'
+      - $ref: '#/components/schemas/Discriminate'
+      - $ref: '#/components/schemas/Store'
+      - $ref: '#/components/schemas/SchedRepetition'
+      - $ref: '#/components/schemas/SchedIteration'
+      - $ref: '#/components/schemas/SchedConditional'
+    Discriminate:
+      additionalProperties: false
+      properties:
+        op_type:
+          const: discriminate
+          default: discriminate
+          title: Op Type
+          type: string
+        target:
+          $ref: '#/components/schemas/VariableRef'
+        source:
+          $ref: '#/components/schemas/VariableRef'
+        threshold:
+          $ref: '#/components/schemas/Threshold'
+        rotation:
+          $ref: '#/components/schemas/Phase'
+          default:
+            rad: 0.0
+        compare:
+          $ref: '#/components/schemas/ComparisonMode'
+          default: '>='
+        project:
+          $ref: '#/components/schemas/ComplexToRealProjectionMode'
+          default: real
+      required:
+      - target
+      - source
+      - threshold
+      title: Discriminate
+      type: object
+    Duration:
+      additionalProperties: false
+      description: Special case of non-negative Time representing a duration.
+      properties:
+        value:
+          anyOf:
+          - $ref: '#/components/schemas/Seconds'
+          - $ref: '#/components/schemas/Milliseconds'
+          - $ref: '#/components/schemas/Microseconds'
+          - $ref: '#/components/schemas/Nanoseconds'
+          title: Value
+      required:
+      - value
+      title: Duration
+      type: object
+    ExternalPulse:
+      additionalProperties: false
+      description: 'Pulse type that references an externally defined pulse function.
+
+
+        The amplitude refers to the reference amplitude of the pulse, which is usually
+        the peak amplitude.
+
+        The duration refers to the total duration of the pulse.
+
+
+        The pulse function is expected to be defined elsewhere, such as in a pulse
+        library or a hardware definition.'
+      properties:
+        pulse_type:
+          const: external
+          default: external
+          title: Pulse Type
+          type: string
+        duration:
+          anyOf:
+          - $ref: '#/components/schemas/Duration'
+          - $ref: '#/components/schemas/VariableRef'
+          title: Duration
+        amplitude:
+          anyOf:
+          - $ref: '#/components/schemas/Amplitude'
+          - $ref: '#/components/schemas/VariableRef'
+          title: Amplitude
+        function:
+          $ref: '#/components/schemas/FullyQualifiedIdentifier'
+        params:
+          anyOf:
+          - additionalProperties:
+              $ref: '#/components/schemas/PulseParamValue'
+            type: object
+          - type: 'null'
+          default: null
+          title: Params
+      required:
+      - duration
+      - amplitude
+      - function
+      title: ExternalPulse
+      type: object
+    Frequency:
+      additionalProperties: false
+      description: A model representing a frequency in Hertz, Kilohertz, Megahertz,
+        or Gigahertz.
+      properties:
+        value:
+          anyOf:
+          - $ref: '#/components/schemas/Hertz'
+          - $ref: '#/components/schemas/Kilohertz'
+          - $ref: '#/components/schemas/Megahertz'
+          - $ref: '#/components/schemas/Gigahertz'
+          title: Value
+      required:
+      - value
+      title: Frequency
+      type: object
+    FullIntegration:
+      additionalProperties: false
+      description: Full summation of measured values.
+      properties:
+        integration_type:
+          const: full
+          default: full
+          title: Integration Type
+          type: string
+      title: FullIntegration
+      type: object
+    FullyQualifiedIdentifier:
+      type: string
+    Gigahertz:
+      additionalProperties: false
+      description: Gigahertz as a unit of frequency.
+      properties:
+        GHz:
+          anyOf:
+          - type: integer
+          - type: number
+          title: Ghz
+      required:
+      - GHz
+      title: Gigahertz
+      type: object
+    HalfTurns:
+      additionalProperties: false
+      description: "Half turns as a unit of angle.\n\nA half turn is half a full rotation,\
+        \ i.e. 180 degrees or \u03C0 radians."
+      properties:
+        half_turns:
+          anyOf:
+          - type: integer
+          - type: number
+          title: Half Turns
+      required:
+      - half_turns
+      title: HalfTurns
+      type: object
+    Hertz:
+      additionalProperties: false
+      description: Hertz as a unit of frequency.
+      properties:
+        Hz:
+          anyOf:
+          - type: integer
+          - type: number
+          title: Hz
+      required:
+      - Hz
+      title: Hertz
+      type: object
+    IdentifierStr:
+      type: string
+    IntegrationType:
+      additionalProperties: false
+      description: Base class for different types of integration operations.
+      properties:
+        integration_type:
+          title: Integration Type
+      required:
+      - integration_type
+      title: IntegrationType
+      type: object
+    IterableSequence:
+      anyOf:
+      - $ref: '#/components/schemas/LinSpace'
+      - $ref: '#/components/schemas/Range'
+      - items:
+          type: string
+        type: array
+      - $ref: '#/components/schemas/NumpyIterableArray'
+    Iteration:
+      additionalProperties: false
+      description: 'Represents an iteration over a sequence of operations.
+
+
+        :ivar op_type: Operation type, always "for"
+
+        :ivar var: The variable reference for the iterated value.
+
+        :ivar items: The range or array over which to iterate.
+
+        :ivar body: The sequence of operations to execute in each iteration'
+      properties:
+        op_type:
+          const: for
+          default: for
+          title: Op Type
+          type: string
+        var:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/VariableRef'
+            type: array
+          - $ref: '#/components/schemas/VariableRef'
+          title: Var
+        items:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/IterableSequence'
+            type: array
+          - $ref: '#/components/schemas/IterableSequence'
+          title: Items
+        body:
+          $ref: '#/components/schemas/OpSequence'
+      required:
+      - var
+      - items
+      - body
+      title: Iteration
+      type: object
+    IterationBase_OpSequence_:
+      additionalProperties: false
+      properties:
+        op_type:
+          const: for
+          default: for
+          title: Op Type
+          type: string
+        var:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/VariableRef'
+            type: array
+          - $ref: '#/components/schemas/VariableRef'
+          title: Var
+        items:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/IterableSequence'
+            type: array
+          - $ref: '#/components/schemas/IterableSequence'
+          title: Items
+        body:
+          $ref: '#/components/schemas/OpSequence'
+      required:
+      - var
+      - items
+      - body
+      title: IterationBase[OpSequence]
+      type: object
+    IterationBase_Schedule_:
+      additionalProperties: false
+      properties:
+        op_type:
+          const: for
+          default: for
+          title: Op Type
+          type: string
+        var:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/VariableRef'
+            type: array
+          - $ref: '#/components/schemas/VariableRef'
+          title: Var
+        items:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/IterableSequence'
+            type: array
+          - $ref: '#/components/schemas/IterableSequence'
+          title: Items
+        body:
+          $ref: '#/components/schemas/Schedule'
+      required:
+      - var
+      - items
+      - body
+      title: IterationBase[Schedule]
+      type: object
+    Kilohertz:
+      additionalProperties: false
+      description: Kilohertz as a unit of frequency.
+      properties:
+        kHz:
+          anyOf:
+          - type: integer
+          - type: number
+          title: Khz
+      required:
+      - kHz
+      title: Kilohertz
+      type: object
+    LinSpace:
+      additionalProperties: false
+      description: 'Represents a linear space between two values.
+
+
+        :ivar start: Starting value (can be real or complex)
+
+        :ivar stop: Ending value (can be real or complex)
+
+        :ivar num: Number of points in the space, including endpoints.'
+      properties:
+        start:
+          anyOf:
+          - type: integer
+          - type: number
+          - type: string
+          title: Start
+        stop:
+          anyOf:
+          - type: integer
+          - type: number
+          - type: string
+          title: Stop
+        num:
+          minimum: 1
+          title: Num
+          type: integer
+      required:
+      - start
+      - stop
+      - num
+      title: LinSpace
+      type: object
+    Magnitude:
+      additionalProperties: false
+      description: Special case of non-negative real Voltage representing a maximum
+        amplitude.
+      properties:
+        value:
+          anyOf:
+          - $ref: '#/components/schemas/Volts'
+          - $ref: '#/components/schemas/Millivolts'
+          title: Value
+      required:
+      - value
+      title: Magnitude
+      type: object
+    Megahertz:
+      additionalProperties: false
+      description: Megahertz as a unit of frequency.
+      properties:
+        MHz:
+          anyOf:
+          - type: integer
+          - type: number
+          title: Mhz
+      required:
+      - MHz
+      title: Megahertz
+      type: object
+    Microseconds:
+      additionalProperties: false
+      description: Microseconds as a unit of time.
+      properties:
+        us:
+          anyOf:
+          - type: integer
+          - type: number
+          title: Us
+      required:
+      - us
+      title: Microseconds
+      type: object
+    Milliseconds:
+      additionalProperties: false
+      description: Milliseconds as a unit of time.
+      properties:
+        ms:
+          anyOf:
+          - type: integer
+          - type: number
+          title: Ms
+      required:
+      - ms
+      title: Milliseconds
+      type: object
+    Millivolts:
+      additionalProperties: false
+      description: Millivolts as a unit of voltage (real).
+      properties:
+        mV:
+          anyOf:
+          - type: integer
+          - type: number
+          title: Mv
+      required:
+      - mV
+      title: Millivolts
+      type: object
+    Nanoseconds:
+      additionalProperties: false
+      description: Nanoseconds as a unit of time.
+      properties:
+        ns:
+          title: Ns
+          type: integer
+      required:
+      - ns
+      title: Nanoseconds
+      type: object
+    NumpyComplexArray1D:
+      items:
+        items:
+          type: number
+        maxItems: 2
+        minItems: 2
+        type: array
+      type: array
+    NumpyFloatArray1D:
+      items:
+        type: number
+      type: array
+    NumpyIntArray1D:
+      items:
+        type: integer
+      type: array
+    NumpyIterableArray:
+      anyOf:
+      - $ref: '#/components/schemas/NumpyIntArray1D'
+      - $ref: '#/components/schemas/NumpyFloatArray1D'
+      - $ref: '#/components/schemas/NumpyComplexArray1D'
+    OpSequence:
+      additionalProperties: false
+      description: 'A sequence of operation items that can be serialized as a list.
+
+
+        This class represents an ordered collection of operation sequence items that
+
+        will be serialized as a list when converted to JSON or other formats.
+
+
+        :ivar items: List of operation sequence items'
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/OpSequenceItem'
+          title: Items
+          type: array
+      required:
+      - items
+      title: OpSequence
+      type: object
+    OpSequenceItem:
+      anyOf:
+      - $ref: '#/components/schemas/DiscriminableOp'
+      - $ref: '#/components/schemas/OpSequence'
+    Phase:
+      additionalProperties: false
+      description: Special case of Angle where the value represents a phase angle.
+      properties:
+        value:
+          anyOf:
+          - $ref: '#/components/schemas/Degrees'
+          - $ref: '#/components/schemas/Radians'
+          - $ref: '#/components/schemas/Turns'
+          - $ref: '#/components/schemas/HalfTurns'
+          title: Value
+      required:
+      - value
+      title: Phase
+      type: object
+    Play:
+      additionalProperties: false
+      description: Play a pulse on a channel.
+      properties:
+        op_type:
+          const: play
+          default: play
+          title: Op Type
+          type: string
+        channel:
+          $ref: '#/components/schemas/ChannelRef'
+        pulse:
+          anyOf:
+          - $ref: '#/components/schemas/PulseType'
+          - $ref: '#/components/schemas/PulseRef'
+          title: Pulse
+        scale_amp:
+          anyOf:
+          - type: number
+          - type: string
+          - $ref: '#/components/schemas/VariableRef'
+          - type: 'null'
+          default: null
+          title: Scale Amp
+        cond:
+          anyOf:
+          - $ref: '#/components/schemas/VariableRef'
+          - type: 'null'
+          default: null
+      required:
+      - channel
+      - pulse
+      title: Play
+      type: object
+    PulseDecl:
+      additionalProperties: false
+      description: 'Pulse declaration operation.
+
+
+        Pulses must be declared before they can be referred to.
+
+        Pulse declarations are scoped to the surrounding context and its children.'
+      properties:
+        op_type:
+          const: pulse_decl
+          default: pulse_decl
+          title: Op Type
+          type: string
+        name:
+          title: Name
+          type: string
+        pulse:
+          $ref: '#/components/schemas/PulseType'
+      required:
+      - name
+      - pulse
+      title: PulseDecl
+      type: object
+    PulseParamScalarValue:
+      anyOf:
+      - type: number
+      - type: integer
+      - type: string
+    PulseParamValue:
+      anyOf:
+      - $ref: '#/components/schemas/Amplitude'
+      - $ref: '#/components/schemas/Duration'
+      - $ref: '#/components/schemas/Frequency'
+      - $ref: '#/components/schemas/VariableRef'
+      - $ref: '#/components/schemas/PulseParamScalarValue'
+    PulseRef:
+      description: 'Reference to a pulse.
+
+
+        Pulses must be declared in the surrounding context or one of its parents.'
+      properties:
+        pulse_name:
+          $ref: '#/components/schemas/IdentifierStr'
+      required:
+      - pulse_name
+      title: PulseRef
+      type: object
+    PulseType:
+      discriminator:
+        mapping:
+          arbitrary: '#/components/schemas/ArbitrarySampledPulse'
+          external: '#/components/schemas/ExternalPulse'
+          sine: '#/components/schemas/SinePulse'
+          square: '#/components/schemas/SquarePulse'
+        propertyName: pulse_type
+      oneOf:
+      - $ref: '#/components/schemas/SquarePulse'
+      - $ref: '#/components/schemas/SinePulse'
+      - $ref: '#/components/schemas/ExternalPulse'
+      - $ref: '#/components/schemas/ArbitrarySampledPulse'
+    Radians:
+      additionalProperties: false
+      description: Radians as a unit of angle.
+      properties:
+        rad:
+          title: Rad
+          type: number
+      required:
+      - rad
+      title: Radians
+      type: object
+    Range:
+      additionalProperties: false
+      description: 'Represents a range of values with a start, stop, and step.
+
+
+        The step can only be zero if the start and stop values are equal. Otherwise,
+
+        the step must evenly divide the difference between the start and stop values.
+
+
+        In case of complex numbers, the the difference must be an integral multiple
+        of the step.
+
+        The sign of the step is adjusted to ensure the stop value is reached.
+
+
+        The stop point is always included in the range.
+
+
+        :ivar start: Starting value (can be real or complex)
+
+        :ivar stop: Ending value (can be real or complex) included in the range
+
+        :ivar step: Step size (can be real or complex)'
+      properties:
+        start:
+          anyOf:
+          - type: integer
+          - type: number
+          - type: string
+          title: Start
+        stop:
+          anyOf:
+          - type: integer
+          - type: number
+          - type: string
+          title: Stop
+        step:
+          anyOf:
+          - type: integer
+          - type: number
+          - $ref: '#/components/schemas/complex_from_tuple'
+          title: Step
+      required:
+      - start
+      - stop
+      - step
+      title: Range
+      type: object
+    Record:
+      additionalProperties: false
+      description: 'Acquire scalar data from the channel with integration.
+
+
+        The integration type can be either "full" or "demod".
+
+        Full integration is a simple accumulation of the signal.
+
+        Demod integration is a complex multiplication of the signal with the channel''s
+
+        frequency and phase followed by accumulation.
+
+
+        The result of the integration is saved into a scalar (complex) variable.
+
+
+        Further processing may be applied to the result, such as projection to real/imaginary
+        parts,
+
+        see :class:`Discriminate`.'
+      properties:
+        op_type:
+          const: record
+          default: record
+          title: Op Type
+          type: string
+        channel:
+          $ref: '#/components/schemas/ChannelRef'
+        var:
+          $ref: '#/components/schemas/VariableRef'
+        duration:
+          $ref: '#/components/schemas/Duration'
+        integration:
+          anyOf:
+          - $ref: '#/components/schemas/FullIntegration'
+          - $ref: '#/components/schemas/DemodIntegration'
+          title: Integration
+        time_of_flight:
+          anyOf:
+          - $ref: '#/components/schemas/Duration'
+          - type: 'null'
+          default: null
+      required:
+      - channel
+      - var
+      - duration
+      - integration
+      title: Record
+      type: object
+    RefPt:
+      description: 'An enumeration of reference points for Schedulables.
+
+
+        These represent the alignment points of the existing and the newly inserted
+        schedulable.'
+      enum:
+      - start
+      - end
+      - center
+      title: RefPt
+      type: string
+    Reference:
+      description: 'Base class for all symbolic references.
+
+
+        Descendants must only define a single field (the reference name), which is
+        serialized directly.'
+      properties: {}
+      title: Reference
+      type: object
+    RelTime:
+      additionalProperties: false
+      description: A subclass of Time representing relative time between Schedulables.
+      properties:
+        value:
+          anyOf:
+          - $ref: '#/components/schemas/Seconds'
+          - $ref: '#/components/schemas/Milliseconds'
+          - $ref: '#/components/schemas/Microseconds'
+          - $ref: '#/components/schemas/Nanoseconds'
+          title: Value
+      required:
+      - value
+      title: RelTime
+      type: object
+    Repetition:
+      additionalProperties: false
+      description: 'Represents a repeated sequence of operations.
+
+
+        :ivar op_type: Operation type, always "repeat"
+
+        :ivar count: Number of times to repeat the sequence
+
+        :ivar body: The sequence of operations to repeat'
+      properties:
+        op_type:
+          const: repeat
+          default: repeat
+          title: Op Type
+          type: string
+        count:
+          minimum: 0
+          title: Count
+          type: integer
+        body:
+          $ref: '#/components/schemas/OpSequence'
+      required:
+      - count
+      - body
+      title: Repetition
+      type: object
+    RepetitionBase_OpSequence_:
+      additionalProperties: false
+      properties:
+        op_type:
+          const: repeat
+          default: repeat
+          title: Op Type
+          type: string
+        count:
+          minimum: 0
+          title: Count
+          type: integer
+        body:
+          $ref: '#/components/schemas/OpSequence'
+      required:
+      - count
+      - body
+      title: RepetitionBase[OpSequence]
+      type: object
+    RepetitionBase_Schedule_:
+      additionalProperties: false
+      properties:
+        op_type:
+          const: repeat
+          default: repeat
+          title: Op Type
+          type: string
+        count:
+          minimum: 0
+          title: Count
+          type: integer
+        body:
+          $ref: '#/components/schemas/Schedule'
+      required:
+      - count
+      - body
+      title: RepetitionBase[Schedule]
+      type: object
+    SchedConditional:
+      additionalProperties: false
+      description: A class representing a conditional embedded in a schedule.
+      properties:
+        op_type:
+          const: if
+          default: if
+          title: Op Type
+          type: string
+        var:
+          $ref: '#/components/schemas/VariableRef'
+        body:
+          $ref: '#/components/schemas/Schedule'
+      required:
+      - var
+      - body
+      title: SchedConditional
+      type: object
+    SchedIteration:
+      additionalProperties: false
+      description: A class representing an iterated schedule in a schedule.
+      properties:
+        op_type:
+          const: for
+          default: for
+          title: Op Type
+          type: string
+        var:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/VariableRef'
+            type: array
+          - $ref: '#/components/schemas/VariableRef'
+          title: Var
+        items:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/IterableSequence'
+            type: array
+          - $ref: '#/components/schemas/IterableSequence'
+          title: Items
+        body:
+          $ref: '#/components/schemas/Schedule'
+      required:
+      - var
+      - items
+      - body
+      title: SchedIteration
+      type: object
+    SchedRepetition:
+      additionalProperties: false
+      description: A class representing repeated schedule embedded in a schedule.
+      properties:
+        op_type:
+          const: repeat
+          default: repeat
+          title: Op Type
+          type: string
+        count:
+          minimum: 0
+          title: Count
+          type: integer
+        body:
+          $ref: '#/components/schemas/Schedule'
+      required:
+      - count
+      - body
+      title: SchedRepetition
+      type: object
+    Schedulable:
+      anyOf:
+      - $ref: '#/components/schemas/DiscriminableSchedulableOp'
+      - $ref: '#/components/schemas/Schedule'
+    Schedule:
+      additionalProperties: false
+      description: A collection of scheduled operations.
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/ScheduledOperation'
+          title: Items
+          type: array
+      required:
+      - items
+      title: Schedule
+      type: object
+    ScheduledOperation:
+      additionalProperties: false
+      description: 'A class representing a scheduled operation with timing and reference
+        information.
+
+
+        :param name: Optional name for the operation
+
+        :param rel_time: Relative time from the reference point
+
+        :param ref_op: Name of the reference operation
+
+        :param ref_pt: Reference point on the reference operation
+
+        :param ref_pt_new: Reference point on the new operation
+
+        :param op: The schedulable operation'
+      properties:
+        name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          default: null
+          title: Name
+        rel_time:
+          anyOf:
+          - $ref: '#/components/schemas/RelTime'
+          - type: 'null'
+          default: null
+        ref_op:
+          anyOf:
+          - type: string
+          - type: 'null'
+          default: null
+          title: Ref Op
+        ref_pt:
+          anyOf:
+          - $ref: '#/components/schemas/RefPt'
+          - type: 'null'
+          default: null
+        ref_pt_new:
+          anyOf:
+          - $ref: '#/components/schemas/RefPt'
+          - type: 'null'
+          default: null
+        op:
+          $ref: '#/components/schemas/Schedulable'
+      required:
+      - op
+      title: ScheduledOperation
+      type: object
+    Seconds:
+      additionalProperties: false
+      description: Seconds as a unit of time.
+      properties:
+        s:
+          title: S
+          type: number
+      required:
+      - s
+      title: Seconds
+      type: object
+    SequenceBase_OpSequenceItem_:
+      additionalProperties: false
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/OpSequenceItem'
+          title: Items
+          type: array
+      required:
+      - items
+      title: SequenceBase[OpSequenceItem]
+      type: object
+    SequenceBase_ScheduledOperation_:
+      additionalProperties: false
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/ScheduledOperation'
+          title: Items
+          type: array
+      required:
+      - items
+      title: SequenceBase[ScheduledOperation]
+      type: object
+    SetFrequency:
+      additionalProperties: false
+      description: Set the frequency of a channel.
+      properties:
+        op_type:
+          const: set_frequency
+          default: set_frequency
+          title: Op Type
+          type: string
+        channel:
+          $ref: '#/components/schemas/ChannelRef'
+        frequency:
+          anyOf:
+          - $ref: '#/components/schemas/Frequency'
+          - $ref: '#/components/schemas/VariableRef'
+          title: Frequency
+      required:
+      - channel
+      - frequency
+      title: SetFrequency
+      type: object
+    SetPhase:
+      additionalProperties: false
+      description: Set the phase of a channel.
+      properties:
+        op_type:
+          const: set_phase
+          default: set_phase
+          title: Op Type
+          type: string
+        channel:
+          $ref: '#/components/schemas/ChannelRef'
+        phase:
+          anyOf:
+          - $ref: '#/components/schemas/Phase'
+          - $ref: '#/components/schemas/VariableRef'
+          title: Phase
+      required:
+      - channel
+      - phase
+      title: SetPhase
+      type: object
+    ShiftFrequency:
+      additionalProperties: false
+      description: Add a frequency shift to the channel frequency.
+      properties:
+        op_type:
+          const: shift_frequency
+          default: shift_frequency
+          title: Op Type
+          type: string
+        channel:
+          $ref: '#/components/schemas/ChannelRef'
+        frequency:
+          anyOf:
+          - $ref: '#/components/schemas/Frequency'
+          - $ref: '#/components/schemas/VariableRef'
+          title: Frequency
+      required:
+      - channel
+      - frequency
+      title: ShiftFrequency
+      type: object
+    ShiftPhase:
+      additionalProperties: false
+      description: Add a phase shift to the channel phase.
+      properties:
+        op_type:
+          const: shift_phase
+          default: shift_phase
+          title: Op Type
+          type: string
+        channel:
+          $ref: '#/components/schemas/ChannelRef'
+        phase:
+          anyOf:
+          - $ref: '#/components/schemas/Phase'
+          - $ref: '#/components/schemas/VariableRef'
+          title: Phase
+      required:
+      - channel
+      - phase
+      title: ShiftPhase
+      type: object
+    SinePulse:
+      additionalProperties: false
+      properties:
+        pulse_type:
+          const: sine
+          default: sine
+          title: Pulse Type
+          type: string
+        duration:
+          anyOf:
+          - $ref: '#/components/schemas/Duration'
+          - $ref: '#/components/schemas/VariableRef'
+          title: Duration
+        amplitude:
+          anyOf:
+          - $ref: '#/components/schemas/Amplitude'
+          - $ref: '#/components/schemas/VariableRef'
+          title: Amplitude
+        frequency:
+          anyOf:
+          - $ref: '#/components/schemas/Frequency'
+          - $ref: '#/components/schemas/VariableRef'
+          title: Frequency
+        to_frequency:
+          anyOf:
+          - $ref: '#/components/schemas/Frequency'
+          - $ref: '#/components/schemas/VariableRef'
+          - type: 'null'
+          default: null
+          title: To Frequency
+      required:
+      - duration
+      - amplitude
+      - frequency
+      title: SinePulse
+      type: object
+    SquarePulse:
+      additionalProperties: false
+      properties:
+        pulse_type:
+          const: square
+          default: square
+          title: Pulse Type
+          type: string
+        duration:
+          anyOf:
+          - $ref: '#/components/schemas/Duration'
+          - $ref: '#/components/schemas/VariableRef'
+          title: Duration
+        amplitude:
+          anyOf:
+          - $ref: '#/components/schemas/Amplitude'
+          - $ref: '#/components/schemas/VariableRef'
+          title: Amplitude
+        rise_time:
+          anyOf:
+          - $ref: '#/components/schemas/Duration'
+          - $ref: '#/components/schemas/VariableRef'
+          - type: 'null'
+          default: null
+          title: Rise Time
+        fall_time:
+          anyOf:
+          - $ref: '#/components/schemas/Duration'
+          - $ref: '#/components/schemas/VariableRef'
+          - type: 'null'
+          default: null
+          title: Fall Time
+      required:
+      - duration
+      - amplitude
+      title: SquarePulse
+      type: object
+    Store:
+      additionalProperties: false
+      properties:
+        op_type:
+          const: store
+          default: store
+          title: Op Type
+          type: string
+        key:
+          title: Key
+          type: string
+        source:
+          $ref: '#/components/schemas/VariableRef'
+        mode:
+          $ref: '#/components/schemas/StoreMode'
+      required:
+      - key
+      - source
+      - mode
+      title: Store
+      type: object
+    StoreMode:
+      enum:
+      - last
+      - average
+      - count
+      - trace
+      title: StoreMode
+      type: string
+    Threshold:
+      additionalProperties: false
+      description: Model to represent a (real) threshold voltage level.
+      properties:
+        value:
+          anyOf:
+          - $ref: '#/components/schemas/Volts'
+          - $ref: '#/components/schemas/Millivolts'
+          title: Value
+      required:
+      - value
+      title: Threshold
+      type: object
+    Time:
+      additionalProperties: false
+      description: 'A model representing time (instant or difference).
+
+
+        The model can represent time in seconds, milliseconds, microseconds, or nanoseconds,
+
+        with automatic conversion between the units.
+
+
+        The storage type for milliseconds is integer, while for other units it is
+        float.
+
+        Conversion to nanoseconds is rounded to the nearest integer.'
+      properties:
+        value:
+          anyOf:
+          - $ref: '#/components/schemas/Seconds'
+          - $ref: '#/components/schemas/Milliseconds'
+          - $ref: '#/components/schemas/Microseconds'
+          - $ref: '#/components/schemas/Nanoseconds'
+          title: Value
+      required:
+      - value
+      title: Time
+      type: object
+    Trace:
+      additionalProperties: false
+      description: 'Acquire trace data from the channel with integration.
+
+
+        Similar to :class:`Record`, but the result is saved into an array variable,
+
+        and it essentially a repeated, continuous record operation.
+
+
+        The duration is the total time of the trace, the number of records
+
+        is determined by the length of the array variable.
+
+
+        Further processing may be applied to the result, such as projection to real/imaginary
+        parts,
+
+        see :class:`Discriminate`.'
+      properties:
+        op_type:
+          const: trace
+          default: trace
+          title: Op Type
+          type: string
+        channel:
+          $ref: '#/components/schemas/ChannelRef'
+        var:
+          $ref: '#/components/schemas/VariableRef'
+        duration:
+          $ref: '#/components/schemas/Duration'
+        integration:
+          anyOf:
+          - $ref: '#/components/schemas/FullIntegration'
+          - $ref: '#/components/schemas/DemodIntegration'
+          - type: 'null'
+          default: null
+          title: Integration
+        time_of_flight:
+          anyOf:
+          - $ref: '#/components/schemas/Duration'
+          - type: 'null'
+          default: null
+      required:
+      - channel
+      - var
+      - duration
+      title: Trace
+      type: object
+    Turns:
+      additionalProperties: false
+      description: "Turns as a unit of angle.\n\nA turn is a full rotation, i.e. 360\
+        \ degrees or 2\u03C0 radians."
+      properties:
+        turns:
+          anyOf:
+          - type: integer
+          - type: number
+          title: Turns
+      required:
+      - turns
+      title: Turns
+      type: object
+    VariableDTypeType:
+      enum:
+      - bool
+      - int
+      - float
+      - complex
+      type: string
+    VariableDecl:
+      additionalProperties: false
+      description: 'Variable declaration operation.
+
+
+        Variables must be declared before they can be referred to.
+
+
+        Variable declarations are scoped to the surrounding context and its children.'
+      properties:
+        op_type:
+          const: var_decl
+          default: var_decl
+          title: Op Type
+          type: string
+        name:
+          $ref: '#/components/schemas/IdentifierStr'
+        dtype:
+          $ref: '#/components/schemas/VariableDTypeType'
+        shape:
+          anyOf:
+          - items:
+              type: integer
+            type: array
+          - type: 'null'
+          default: null
+          title: Shape
+        unit:
+          anyOf:
+          - type: string
+          - type: 'null'
+          default: null
+          title: Unit
+      required:
+      - name
+      - dtype
+      title: VariableDecl
+      type: object
+    VariableRef:
+      description: 'Reference to a variable.
+
+
+        Variables must be declared in the surrounding context or one of its parents.'
+      properties:
+        var:
+          $ref: '#/components/schemas/IdentifierStr'
+      required:
+      - var
+      title: VariableRef
+      type: object
+    Voltage:
+      additionalProperties: false
+      description: A model representing a real voltage in volts or millivolts.
+      properties:
+        value:
+          anyOf:
+          - $ref: '#/components/schemas/Volts'
+          - $ref: '#/components/schemas/Millivolts'
+          title: Value
+      required:
+      - value
+      title: Voltage
+      type: object
+    Volts:
+      additionalProperties: false
+      description: Volts as a unit of voltage (real).
+      properties:
+        V:
+          anyOf:
+          - type: integer
+          - type: number
+          title: V
+      required:
+      - V
+      title: Volts
+      type: object
+    Wait:
+      additionalProperties: false
+      description: 'Add wait of duration on channel(s).
+
+
+        The wait operations are scheduled to start as soon as possible on each channel.
+
+
+        The relative timing between channels is not guaranteed.'
+      properties:
+        op_type:
+          const: wait
+          default: wait
+          title: Op Type
+          type: string
+        channels:
+          items:
+            $ref: '#/components/schemas/ChannelRef'
+          title: Channels
+          type: array
+        duration:
+          $ref: '#/components/schemas/Duration'
+      required:
+      - channels
+      - duration
+      title: Wait
+      type: object
+    complex_from_tuple:
+      anyOf:
+      - items:
+          type: number
+        maxItems: 2
+        minItems: 2
+        type: array
+      - pattern: ^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?[+-](\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?j$
+        type: string
+tags:
+- name: basic-types
+  description: Basic types like Amplitude, Duration, Frequency, etc.
+- name: pulse-types
+  description: Pulse type definitions (Square, Sine, Arbitrary, etc.)
+- name: channel-ops
+  description: Channel operations (Play, Record, Barrier, etc.)
+- name: control-flow
+  description: Control flow operations (Repetition, Iteration, Conditional)
+- name: data-ops
+  description: Data operations (Assignment, Arithmetic, etc.)
+- name: sequences
+  description: Operation sequences and schedules
+- name: reference-types
+  description: Reference types for variables and parameters
+- name: units
+  description: Unit types (Seconds, Volts, Hertz, etc.)
