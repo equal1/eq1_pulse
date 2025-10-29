@@ -8,6 +8,7 @@ This package provides a fluent API for creating pulse programs with:
 - Token-based references for relative positioning in schedules
 - Shorthand functions for common pulse types
 - Measure function for simultaneous play + record operations
+- Sub-schedules and sub-sequences for creating modular, reusable operation blocks
 
 Examples
 
@@ -27,7 +28,7 @@ Examples
         op2 = play("ch2", square_pulse(duration="10us", amplitude="100mV"),
                         ref_op=op1, ref_pt="start", rel_time="5us")
 
-    # Using control flow
+    # Using control flow in sequences
     with build_sequence() as seq:
         with repeat(10):
             play("qubit", square_pulse(duration="50ns", amplitude="100mV"))
@@ -37,6 +38,38 @@ Examples
         with for_("i", range(0, 100, 10)):
             set_frequency("qubit", var("i"))
             play("qubit", square_pulse(duration="100ns", amplitude="50mV"))
+
+    # Using sub-sequences for modular composition in sequences
+    with build_sequence() as seq:
+        var_decl("readout", "complex", unit="mV")
+
+        # Create reusable initialization block
+        with sub_sequence():
+            play("qubit", square_pulse(duration="100ns", amplitude="200mV"))
+            wait("qubit", duration="50ns")
+
+        # Main operation
+        play("qubit", square_pulse(duration="20ns", amplitude="150mV"))
+
+        # Measurement block
+        with sub_sequence():
+            play("drive", square_pulse(duration="1us", amplitude="50mV"))
+
+    # Using sub-schedules for modular composition with timing
+    with build_schedule() as main:
+        # Create initialization block
+        with sub_schedule(name="init"):
+            play("qubit", square_pulse(duration="100ns", amplitude="200mV"))
+            wait("qubit", duration="50ns")
+
+        # Gate positioned after initialization
+        gate = play("qubit", square_pulse(duration="20ns", amplitude="150mV"),
+                   ref_op="init", ref_pt="end", rel_time="10ns")
+
+        # Measurement block positioned after gate
+        with sub_schedule(name="measure", ref_op=gate, ref_pt="end", rel_time="50ns"):
+            play("drive", square_pulse(duration="1us", amplitude="50mV"))
+            record("readout", var="result", duration="1us")
 """
 
 from .core import (
@@ -63,6 +96,8 @@ from .core import (
     sine_pulse,
     square_pulse,
     store,
+    sub_schedule,
+    sub_sequence,
     var,
     var_decl,
     wait,
@@ -96,6 +131,8 @@ __all__ = (
     "sine_pulse",
     "square_pulse",
     "store",
+    "sub_schedule",
+    "sub_sequence",
     "var",
     "var_decl",
     "wait",

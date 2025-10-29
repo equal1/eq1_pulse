@@ -101,6 +101,8 @@ __all__ = (
     "sine_pulse",
     "square_pulse",
     "store",
+    "sub_schedule",
+    "sub_sequence",
     "var",
     "var_decl",
     "wait",
@@ -207,6 +209,59 @@ def build_sequence() -> Iterator[OpSequence]:
 
 
 @contextmanager
+def sub_sequence() -> Iterator[OpSequence]:
+    """Context manager for building a nested sub-sequence.
+
+    This creates a sub-sequence that will be added to the parent sequence.
+    Only works within a sequence context (including nested control flow contexts).
+
+    :yield: The sub-sequence being built
+
+    :raises RuntimeError: If not called within a sequence context
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import *
+
+        with build_sequence() as main:
+            # Create a reusable operation block as sub-sequence
+            with sub_sequence():
+                play("qubit", square_pulse(duration="100ns", amplitude="200mV"))
+                wait("qubit", duration="50ns")
+
+            # Main sequence continues
+            play("qubit", square_pulse(duration="20ns", amplitude="150mV"))
+
+            # Another sub-sequence for measurement
+            with sub_sequence():
+                play("drive", square_pulse(duration="1us", amplitude="50mV"))
+                record("readout", var="result", duration="1us")
+    """
+    # Must be called within a sequence context
+    if not _context_stack:
+        raise RuntimeError("sub_sequence can only be used within a build_sequence() context")
+
+    context = _current_context()
+    if not isinstance(context, OpSequence | Repetition | Iteration | Conditional):
+        raise RuntimeError("sub_sequence can only be used within a sequence context (not in schedules)")
+
+    # Create the nested sequence
+    nested_seq = OpSequence(items=[])
+
+    # Add it to the parent sequence
+    _add_to_sequence(nested_seq)
+
+    # Push nested sequence as current context for operations inside it
+    _context_stack.append(nested_seq)
+    try:
+        yield nested_seq
+    finally:
+        _context_stack.pop()
+
+
+@contextmanager
 def build_schedule() -> Iterator[Schedule]:
     """Context manager for building a schedule.
 
@@ -229,6 +284,61 @@ def build_schedule() -> Iterator[Schedule]:
         yield sched
     finally:
         _context_stack.pop()
+
+
+@contextmanager
+def sub_schedule(**schedule_params: Unpack[ScheduleParams]) -> Iterator[Schedule]:
+    """Context manager for building a nested sub-schedule with timing parameters.
+
+    This creates a sub-schedule that can be positioned relative to other operations
+    in the parent schedule. Only works within a schedule context (not in sequences).
+
+    :param schedule_params: Schedule timing parameters (name, ref_op, ref_pt, ref_pt_new, rel_time)
+
+    :yield: The sub-schedule being built
+
+    :raises RuntimeError: If not called within a schedule context
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import *
+
+        with build_schedule() as main:
+            # Create initialization sub-schedule
+            with sub_schedule(name="init") as init:
+                play("qubit", square_pulse(duration="100ns", amplitude="200mV"))
+                wait("qubit", duration="50ns")
+
+            # Create gate operation positioned after init
+            gate_op = play("qubit", square_pulse(duration="20ns", amplitude="150mV"),
+                          ref_op="init", ref_pt="end", rel_time="10ns")
+
+            # Create measurement block positioned after gate
+            with sub_schedule(name="measure", ref_op=gate_op, ref_pt="end", rel_time="50ns"):
+                play("drive", square_pulse(duration="1us", amplitude="50mV"))
+                record("readout", var="result", duration="1us")
+    """
+    # Must be called within a schedule context
+    if not _context_stack or not isinstance(_current_context(), Schedule):
+        raise RuntimeError("sub_schedule can only be used within a build_schedule() context")
+
+    # Create the nested schedule
+    nested_sched = Schedule(items=[])
+
+    # Add it to the parent schedule with timing parameters
+    token = _add_to_schedule(nested_sched, **schedule_params)
+
+    # Push nested schedule as current context for operations inside it
+    _context_stack.append(nested_sched)
+    try:
+        yield nested_sched
+    finally:
+        _context_stack.pop()
+
+    # Return the token so it can be used for further references
+    return token  # type: ignore[return-value]
 
 
 @contextmanager
@@ -797,11 +907,21 @@ def wait(
 ) -> OperationToken | None:
     """Add wait operation on channel(s).
 
-    :param channels: Channels to wait on
+    In sequences, wait can be applied to multiple channels simultaneously,
+    appending the wait time to each channel independently.
+
+    In schedules, wait can only be applied to a single channel due to complex
+    semantics (multi-channel wait would be equivalent to a subschedule where
+    all channels idle, which contradicts the sequence definition).
+
+    :param channels: Channel(s) to wait on. Multiple channels allowed in sequences,
+        single channel only in schedules.
     :param duration: Wait duration
     :param schedule_params: Additional scheduling parameters (for schedules)
 
     :return: Operation token if in schedule context, :obj:`None` if in sequence context
+
+    :raises RuntimeError: If multiple channels specified in a schedule context
 
     Examples
 
@@ -809,12 +929,26 @@ def wait(
 
         from eq1_pulse.builder import wait
 
+        # Single channel (works in both sequences and schedules)
         wait("ch1", duration="5us")
-        wait("ch1", "ch2", duration="10us")
+
+        # Multiple channels (only works in sequences)
+        with build_sequence():
+            wait("ch1", "ch2", duration="10us")
     """
+    context = _current_context()
+
+    # Validate multi-channel wait in schedules
+    if isinstance(context, Schedule) and len(channels) > 1:
+        raise RuntimeError(
+            f"Wait with multiple channels ({len(channels)} channels) is not allowed "
+            "in schedule context. Multi-channel wait has complex semantics in schedules "
+            "(equivalent to a subschedule with all channels idling), which contradicts "
+            "the sequence definition. Use single-channel wait in schedules."
+        )
+
     op = Wait(*channels, duration=duration)  # type: ignore[arg-type]
 
-    context = _current_context()
     if isinstance(context, Schedule):
         return _add_to_schedule(op, **schedule_params)
     else:
