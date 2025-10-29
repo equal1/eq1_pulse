@@ -174,8 +174,6 @@ def _add_to_schedule(operation: Any, **schedule_params: Unpack[ScheduleParams]) 
     :raises RuntimeError: If current context is not a schedule
     """
     context = _current_context()
-    if not isinstance(context, Schedule):
-        raise RuntimeError(f"Cannot add scheduled operation to {type(context).__name__} context")
 
     # Resolve any operation tokens to names
     resolved_params = resolve_schedule_params(schedule_params)  # type: ignore[arg-type]
@@ -185,7 +183,15 @@ def _add_to_schedule(operation: Any, **schedule_params: Unpack[ScheduleParams]) 
         resolved_params["name"] = _generate_op_name()
 
     sched_op = ScheduledOperation(op=operation, **resolved_params)  # type: ignore[arg-type]
-    context.items.append(sched_op)
+
+    # Add to the appropriate schedule-like context
+    if isinstance(context, SchedRepetition | SchedIteration | SchedConditional):
+        context.body.items.append(sched_op)
+    elif isinstance(context, Schedule):
+        context.items.append(sched_op)
+    else:
+        raise RuntimeError(f"Cannot add scheduled operation to {type(context).__name__} context")
+
     return OperationToken(resolved_params["name"], sched_op)
 
 
@@ -400,10 +406,15 @@ def sub_schedule(**schedule_params: Unpack[ScheduleParams]) -> Iterator[Schedule
 
 
 @contextmanager
-def repeat(count: int) -> Iterator[Repetition]:
+def repeat(count: int, **schedule_params: Unpack[ScheduleParams]) -> Iterator[Repetition | SchedRepetition]:
     """Context manager for building a repetition block.
 
+    Creates a sequence repetition in sequence contexts, or a schedule repetition
+    in schedule contexts.
+
     :param count: Number of times to repeat
+    :param schedule_params:
+        Additional scheduling parameters (name, ref_op, ref_pt, etc.) - only used in schedule context
 
     :yield: The repetition being built
 
@@ -413,24 +424,26 @@ def repeat(count: int) -> Iterator[Repetition]:
 
         from eq1_pulse.builder import *
 
+        # In sequence context
         with build_sequence():
             with repeat(10):
                 play("qubit", square_pulse(duration="50ns", amplitude="100mV"))
-    """
-    body = OpSequence(items=[])
-    rep = Repetition(count=count, body=body)
 
+        # In schedule context with timing
+        with build_schedule():
+            op1 = play("qubit", square_pulse(duration="50ns", amplitude="100mV"))
+            with repeat(10, ref_op=op1, ref_pt="end"):
+                play("qubit", square_pulse(duration="50ns", amplitude="100mV"))
+    """
     # Add to parent context if it exists
     if _context_stack:
         parent = _current_context()
-        if isinstance(parent, OpSequence):
-            parent.items.append(rep)
-        elif isinstance(parent, Repetition | Iteration | Conditional):
-            parent.body.items.append(rep)
-        elif isinstance(parent, Schedule):
-            # For schedules, we need SchedRepetition not Repetition
-            sched_rep = SchedRepetition(count=count, body=Schedule(items=[]))
-            parent.items.append(ScheduledOperation(op=sched_rep))
+
+        # Schedule context - create SchedRepetition
+        if isinstance(parent, Schedule | SchedRepetition | SchedIteration | SchedConditional):
+            sched_body = Schedule(items=[])
+            sched_rep = SchedRepetition(count=count, body=sched_body)
+            _add_to_schedule(sched_rep, **schedule_params)
             _context_stack.append(sched_rep)
             try:
                 yield sched_rep  # type: ignore[misc]
@@ -438,9 +451,27 @@ def repeat(count: int) -> Iterator[Repetition]:
                 _context_stack.pop()
             return
 
+        # Sequence context - create Repetition
+        elif isinstance(parent, OpSequence | Repetition | Iteration | Conditional):
+            seq_body = OpSequence(items=[])
+            rep = Repetition(count=count, body=seq_body)
+            if isinstance(parent, OpSequence):
+                parent.items.append(rep)
+            else:
+                parent.body.items.append(rep)
+            _context_stack.append(rep)
+            try:
+                yield rep  # type: ignore[misc]
+            finally:
+                _context_stack.pop()
+            return
+
+    # No parent context - create sequence repetition by default
+    seq_body = OpSequence(items=[])
+    rep = Repetition(count=count, body=seq_body)
     _context_stack.append(rep)
     try:
-        yield rep
+        yield rep  # type: ignore[misc]
     finally:
         _context_stack.pop()
 
@@ -449,11 +480,14 @@ def repeat(count: int) -> Iterator[Repetition]:
 def for_(
     var: VariableRefLike | list[VariableRefLike],
     items: Iterable[Any] | Range | LinSpace,
+    **schedule_params: Unpack[ScheduleParams],
 ) -> Iterator[Iteration]:
     """Context manager for building an iteration (for loop).
 
     :param var: Variable reference(s) for the loop variable(s)
     :param items: Range, LinSpace, or iterable to iterate over
+    :param schedule_params:
+        Additional scheduling parameters (name, ref_op, ref_pt, etc.) - only used in schedule context
 
     :yield: The iteration being built
 
@@ -463,10 +497,17 @@ def for_(
 
         from eq1_pulse.builder import *
 
+        # In sequence context
         with build_sequence():
             var_decl("i", "int", unit="MHz")
             with for_("i", range(0, 100, 10)):
                 set_frequency("qubit", var("i"))
+
+        # In schedule context with timing
+        with build_schedule():
+            op1 = play("qubit", square_pulse(duration="50ns", amplitude="100mV"))
+            with for_("i", range(0, 5), ref_op=op1, ref_pt="end"):
+                play("qubit", square_pulse(duration="20ns", amplitude="100mV"))
     """
     body = OpSequence(items=[])
     iter_obj = Iteration(var=var, items=items, body=body)
@@ -478,10 +519,10 @@ def for_(
             parent.items.append(iter_obj)
         elif isinstance(parent, Repetition | Iteration | Conditional):
             parent.body.items.append(iter_obj)
-        elif isinstance(parent, Schedule):
+        elif isinstance(parent, Schedule | SchedRepetition | SchedIteration | SchedConditional):
             # For schedules, we need SchedIteration not Iteration
             sched_iter = SchedIteration(var=var, items=items, body=Schedule(items=[]))
-            parent.items.append(ScheduledOperation(op=sched_iter))
+            _add_to_schedule(sched_iter, **schedule_params)
             _context_stack.append(sched_iter)
             try:
                 yield sched_iter  # type: ignore[misc]
@@ -497,10 +538,12 @@ def for_(
 
 
 @contextmanager
-def if_(var: VariableRefLike) -> Iterator[Conditional]:
+def if_(var: VariableRefLike, **schedule_params: Unpack[ScheduleParams]) -> Iterator[Conditional]:
     """Context manager for building a conditional block.
 
     :param var: Variable reference for the condition
+    :param schedule_params:
+        Additional scheduling parameters (name, ref_op, ref_pt, etc.) - only used in schedule context
 
     :yield: The conditional being built
 
@@ -510,11 +553,18 @@ def if_(var: VariableRefLike) -> Iterator[Conditional]:
 
         from eq1_pulse.builder import *
 
+        # In sequence context
         with build_sequence():
             var_decl("result", "bool")
             # ... perform measurement to populate result ...
             with if_("result"):
                 play("qubit", square_pulse(duration="50ns", amplitude="100mV"))
+
+        # In schedule context with timing
+        with build_schedule():
+            op1 = play("qubit", square_pulse(duration="50ns", amplitude="100mV"))
+            with if_("result", ref_op=op1, ref_pt="end"):
+                play("qubit", square_pulse(duration="20ns", amplitude="100mV"))
     """
     body = OpSequence(items=[])
     cond = Conditional(var=var, body=body)
@@ -526,10 +576,10 @@ def if_(var: VariableRefLike) -> Iterator[Conditional]:
             parent.items.append(cond)
         elif isinstance(parent, Repetition | Iteration | Conditional):
             parent.body.items.append(cond)
-        elif isinstance(parent, Schedule):
+        elif isinstance(parent, Schedule | SchedRepetition | SchedIteration | SchedConditional):
             # For schedules, we need SchedConditional not Conditional
             sched_cond = SchedConditional(var=var, body=Schedule(items=[]))
-            parent.items.append(ScheduledOperation(op=sched_cond))
+            _add_to_schedule(sched_cond, **schedule_params)
             _context_stack.append(sched_cond)
             try:
                 yield sched_cond  # type: ignore[misc]
@@ -1168,7 +1218,7 @@ def play(
     op = Play(channel=channel, pulse=pulse, scale_amp=scale_amp, cond=cond)
 
     context = _current_context()
-    if isinstance(context, Schedule):
+    if isinstance(context, Schedule | SchedRepetition | SchedIteration | SchedConditional):
         return _add_to_schedule(op, **schedule_params)
     else:
         _add_to_sequence(op)
@@ -1214,7 +1264,7 @@ def wait(
     context = _current_context()
 
     # Validate multi-channel wait in schedules
-    if isinstance(context, Schedule) and len(channels) > 1:
+    if isinstance(context, Schedule | SchedRepetition | SchedIteration | SchedConditional) and len(channels) > 1:
         raise RuntimeError(
             f"Wait with multiple channels ({len(channels)} channels) is not allowed "
             "in schedule context. Multi-channel wait has complex semantics in schedules "
@@ -1224,7 +1274,7 @@ def wait(
 
     op = Wait(*channels, duration=duration)  # type: ignore[arg-type]
 
-    if isinstance(context, Schedule):
+    if isinstance(context, Schedule | SchedRepetition | SchedIteration | SchedConditional):
         return _add_to_schedule(op, **schedule_params)
     else:
         _add_to_sequence(op)

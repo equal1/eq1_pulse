@@ -598,7 +598,7 @@ class TestErrorHandling:
 
     def test_operation_outside_context_raises_error(self):
         """Test that operations outside context raise error."""
-        with pytest.raises(RuntimeError, match="No active sequence or schedule"):
+        with pytest.raises(RuntimeError, match="No active building context"):
             play("ch1", square_pulse(duration="10us", amplitude="100mV"))
 
     def test_barrier_in_schedule_raises_error(self):
@@ -663,8 +663,8 @@ class TestComplexScenarios:
             discriminate(target="state_q0", source="raw_q0", threshold="0.45mV")
             discriminate(target="state_q1", source="raw_q1", threshold="0.52mV")
 
-        # 4 var_decls + 2 measures (each is play+record) + 2 discriminates = 12
-        assert len(seq.items) == 12
+        # 4 var_decls + 2 measures (each is play+record) + 2 discriminates = 10
+        assert len(seq.items) == 10
 
 
 class TestSerialization:

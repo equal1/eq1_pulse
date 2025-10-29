@@ -434,7 +434,7 @@ class Hertz(BaseUnit, SupportUnitArithmeticOperations[int | float]):
 
 
 @register_unit_value_field("kHz")
-class Kilohertz(FrozenModel, SupportUnitArithmeticOperations[int | float]):
+class Kilohertz(BaseUnit, SupportUnitArithmeticOperations[int | float]):
     """Kilohertz as a unit of frequency."""
 
     kHz: int | float
@@ -462,7 +462,7 @@ class Kilohertz(FrozenModel, SupportUnitArithmeticOperations[int | float]):
 
 
 @register_unit_value_field("MHz")
-class Megahertz(FrozenModel, SupportUnitArithmeticOperations[int | float]):
+class Megahertz(BaseUnit, SupportUnitArithmeticOperations[int | float]):
     """Megahertz as a unit of frequency."""
 
     MHz: int | float
