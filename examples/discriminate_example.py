@@ -13,7 +13,7 @@ from pathlib import Path
 # Add src to path for development
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from eq1_pulse.builder import build
+from eq1_pulse.builder import *
 
 
 def example_basic_discriminate():
@@ -22,16 +22,16 @@ def example_basic_discriminate():
     print("Example 1: Basic Discriminate")
     print("=" * 70)
 
-    with build.sequence() as seq:
+    with sequence() as seq:
         # Perform measurement
-        build.measure("drive", "readout", "raw_result", duration="1us", amplitude="50mV")
+        measure("drive", "readout", "raw_result", duration="1us", amplitude="50mV")
 
         # Discriminate the result to get a binary outcome
-        build.discriminate(target="qubit_state", source="raw_result", threshold="0.5mV")
+        discriminate(target="qubit_state", source="raw_result", threshold="0.5mV")
 
         # Use the discriminated result in a conditional
-        with build.if_condition("qubit_state"):
-            build.play("qubit", build.square_pulse(duration="50ns", amplitude="100mV"))
+        with if_condition("qubit_state"):
+            play("qubit", square_pulse(duration="50ns", amplitude="100mV"))
 
     print(f"Created sequence with {len(seq.items)} operations")
     print(seq.model_dump_json(indent=2))
@@ -45,9 +45,9 @@ def example_discriminate_with_rotation():
     print("Example 2: Discriminate with Rotation and Projection")
     print("=" * 70)
 
-    with build.sequence() as seq:
+    with sequence() as seq:
         # Perform measurement
-        build.record(
+        record(
             "readout",
             "iq_data",
             duration="1us",
@@ -56,7 +56,7 @@ def example_discriminate_with_rotation():
         )
 
         # Discriminate with phase rotation for optimal separation
-        build.discriminate(
+        discriminate(
             target="state_0",
             source="iq_data",
             threshold="0.0mV",
@@ -66,7 +66,7 @@ def example_discriminate_with_rotation():
         )
 
         # Alternative: discriminate using magnitude
-        build.discriminate(
+        discriminate(
             target="state_magnitude",
             source="iq_data",
             threshold="0.3mV",
@@ -86,9 +86,9 @@ def example_discriminate_in_schedule():
     print("Example 3: Discriminate in Schedule")
     print("=" * 70)
 
-    with build.schedule() as sched:
+    with schedule() as sched:
         # Perform measurement
-        meas_op = build.measure(
+        meas_op = measure(
             "drive",
             "readout",
             "result",
@@ -98,7 +98,7 @@ def example_discriminate_in_schedule():
         )
 
         # Discriminate immediately after measurement
-        build.discriminate(
+        discriminate(
             target="bit",
             source="result",
             threshold="0.5mV",
@@ -120,20 +120,20 @@ def example_multi_qubit_readout():
     print("Example 4: Multi-Qubit Readout")
     print("=" * 70)
 
-    with build.sequence() as seq:
+    with sequence() as seq:
         # Read out multiple qubits
-        build.measure("drive_q0", "readout_q0", "raw_q0", duration="1us", amplitude="50mV")
-        build.measure("drive_q1", "readout_q1", "raw_q1", duration="1us", amplitude="50mV")
+        measure("drive_q0", "readout_q0", "raw_q0", duration="1us", amplitude="50mV")
+        measure("drive_q1", "readout_q1", "raw_q1", duration="1us", amplitude="50mV")
 
         # Discriminate each qubit with potentially different thresholds
-        build.discriminate(
+        discriminate(
             target="state_q0",
             source="raw_q0",
             threshold="0.45mV",
             rotation="0deg",
         )
 
-        build.discriminate(
+        discriminate(
             target="state_q1",
             source="raw_q1",
             threshold="0.52mV",  # Different threshold for Q1
@@ -141,11 +141,11 @@ def example_multi_qubit_readout():
         )
 
         # Conditional operations based on results
-        with build.if_condition("state_q0"):
-            build.play("qubit_0", build.square_pulse(duration="50ns", amplitude="100mV"))
+        with if_condition("state_q0"):
+            play("qubit_0", square_pulse(duration="50ns", amplitude="100mV"))
 
-        with build.if_condition("state_q1"):
-            build.play("qubit_1", build.square_pulse(duration="50ns", amplitude="100mV"))
+        with if_condition("state_q1"):
+            play("qubit_1", square_pulse(duration="50ns", amplitude="100mV"))
 
     print(f"Created sequence with {len(seq.items)} operations")
     print(seq.model_dump_json(indent=2))

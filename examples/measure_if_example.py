@@ -13,7 +13,7 @@ from pathlib import Path
 # Add src to path for development
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from eq1_pulse.builder import build
+from eq1_pulse.builder import *
 
 
 def example_basic_measure_if():
@@ -22,9 +22,9 @@ def example_basic_measure_if():
     print("Example 1: Basic Measure-If")
     print("=" * 70)
 
-    with build.sequence() as seq:
+    with sequence() as seq:
         # Measure, discriminate, and execute conditionally in one call
-        with build.measure_if(
+        with measure_if(
             "drive",
             "readout",
             "raw_data",
@@ -34,7 +34,7 @@ def example_basic_measure_if():
             amplitude="50mV",
         ):
             # This block executes only if qubit_state is True (above threshold)
-            build.play("qubit", build.square_pulse(duration="50ns", amplitude="100mV"))
+            play("qubit", square_pulse(duration="50ns", amplitude="100mV"))
 
     print(f"Created sequence with {len(seq.items)} operations")
     print(seq.model_dump_json(indent=2))
@@ -48,9 +48,9 @@ def example_measure_if_with_rotation():
     print("Example 2: Measure-If with Phase Rotation")
     print("=" * 70)
 
-    with build.sequence() as seq:
+    with sequence() as seq:
         # Use phase rotation for better state separation
-        with build.measure_if(
+        with measure_if(
             "drive",
             "readout",
             "raw_iq",
@@ -63,9 +63,9 @@ def example_measure_if_with_rotation():
             project="real",
         ):
             # Correction pulse if in excited state
-            build.play(
+            play(
                 "qubit",
-                build.square_pulse(duration="100ns", amplitude="100mV"),
+                square_pulse(duration="100ns", amplitude="100mV"),
             )
 
     print(f"Created sequence with {len(seq.items)} operations")
@@ -80,9 +80,9 @@ def example_nested_measure_if():
     print("Example 3: Nested Conditional Measurements")
     print("=" * 70)
 
-    with build.sequence() as seq:
+    with sequence() as seq:
         # First measurement
-        with build.measure_if(
+        with measure_if(
             "drive_q0",
             "readout_q0",
             "raw_q0",
@@ -92,7 +92,7 @@ def example_nested_measure_if():
             amplitude="50mV",
         ):
             # If Q0 is excited, measure Q1
-            with build.measure_if(
+            with measure_if(
                 "drive_q1",
                 "readout_q1",
                 "raw_q1",
@@ -102,9 +102,9 @@ def example_nested_measure_if():
                 amplitude="50mV",
             ):
                 # Both qubits excited - apply two-qubit gate
-                build.play(
+                play(
                     "coupler",
-                    build.square_pulse(duration="200ns", amplitude="80mV"),
+                    square_pulse(duration="200ns", amplitude="80mV"),
                 )
 
     print(f"Created sequence with {len(seq.items)} operations")
@@ -119,9 +119,9 @@ def example_measure_and_discriminate_separate():
     print("Example 4: Measure and Discriminate (Separate)")
     print("=" * 70)
 
-    with build.sequence() as seq:
+    with sequence() as seq:
         # Perform measurement and discrimination
-        build.measure_and_discriminate(
+        measure_and_discriminate(
             "drive",
             "readout",
             "raw_result",
@@ -132,11 +132,11 @@ def example_measure_and_discriminate_separate():
         )
 
         # Manually create conditional - gives more control
-        with build.if_condition("discriminated_state"):
-            build.play("qubit", build.square_pulse(duration="50ns", amplitude="100mV"))
+        with if_condition("discriminated_state"):
+            play("qubit", square_pulse(duration="50ns", amplitude="100mV"))
 
         # Can also do operations outside the conditional
-        build.wait("qubit", duration="100ns")
+        wait("qubit", duration="100ns")
 
     print(f"Created sequence with {len(seq.items)} operations")
     print(seq.model_dump_json(indent=2))
@@ -150,10 +150,10 @@ def example_active_reset():
     print("Example 5: Active Reset Protocol")
     print("=" * 70)
 
-    with build.sequence() as seq:
+    with sequence() as seq:
         # Repeat measurement and reset until ground state
-        with build.repeat(3):  # Max 3 attempts
-            with build.measure_if(
+        with repeat(3):  # Max 3 attempts
+            with measure_if(
                 "drive",
                 "readout",
                 "raw_state",
@@ -163,10 +163,10 @@ def example_active_reset():
                 amplitude="50mV",
             ):
                 # Apply pi pulse to flip back to ground state
-                build.play("qubit", build.square_pulse(duration="50ns", amplitude="100mV"))
+                play("qubit", square_pulse(duration="50ns", amplitude="100mV"))
 
             # Wait between attempts
-            build.wait("qubit", duration="1us")
+            wait("qubit", duration="1us")
 
     print(f"Created sequence with {len(seq.items)} operations")
     print(seq.model_dump_json(indent=2))
@@ -180,9 +180,9 @@ def example_measure_if_in_schedule():
     print("Example 6: Measure-If in Schedule")
     print("=" * 70)
 
-    with build.schedule() as sched:
+    with schedule() as sched:
         # In schedules, measure_if works with relative timing
-        with build.measure_if(
+        with measure_if(
             "drive",
             "readout",
             "raw",
@@ -193,9 +193,9 @@ def example_measure_if_in_schedule():
             name="conditional_measure",
         ):
             # Conditional operations in schedule
-            build.play(
+            play(
                 "qubit",
-                build.square_pulse(duration="50ns", amplitude="100mV"),
+                square_pulse(duration="50ns", amplitude="100mV"),
                 name="correction",
             )
 

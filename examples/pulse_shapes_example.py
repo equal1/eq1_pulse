@@ -24,7 +24,7 @@ from pathlib import Path
 # Add src to path for development
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from eq1_pulse.builder import build
+from eq1_pulse.builder import *
 
 
 def example_gaussian_pulse():
@@ -39,14 +39,14 @@ def example_gaussian_pulse():
     print("Use external Gaussian pulse for smooth transitions")
     print()
 
-    with build.sequence() as seq:
+    with sequence() as seq:
         # Declare amplitude variable
-        build.var_decl("amp", "float", unit="mV")
+        var_decl("amp", "float", unit="mV")
 
         # Gaussian pulse from external library
-        build.play(
+        play(
             "qubit",
-            build.external_pulse(
+            external_pulse(
                 "pulses.gaussian",
                 duration="50ns",
                 amplitude="100mV",
@@ -55,7 +55,7 @@ def example_gaussian_pulse():
         )
 
         # Measurement
-        build.measure("qubit", "readout", "result", duration="1us", amplitude="50mV")
+        measure("qubit", "readout", "result", duration="1us", amplitude="50mV")
 
     print(f"Created sequence with {len(seq.items)} operations")
     print(seq.model_dump_json(indent=2))
@@ -77,11 +77,11 @@ def example_drag_pulse():
     print("DRAG pulse with derivative compensation")
     print()
 
-    with build.sequence() as seq:
+    with sequence() as seq:
         # DRAG pulse with beta parameter
-        build.play(
+        play(
             "qubit",
-            build.external_pulse(
+            external_pulse(
                 "pulses.drag",
                 duration="50ns",
                 amplitude="120mV",
@@ -94,7 +94,7 @@ def example_drag_pulse():
         )
 
         # Measurement
-        build.measure("qubit", "readout", "result", duration="1us", amplitude="50mV")
+        measure("qubit", "readout", "result", duration="1us", amplitude="50mV")
 
     print(f"Created sequence with {len(seq.items)} operations")
     print(seq.model_dump_json(indent=2))
@@ -115,17 +115,17 @@ def example_triangle_pulse():
     print("Custom triangle waveform from samples")
     print()
 
-    with build.sequence() as seq:
+    with sequence() as seq:
         # Triangle pulse with explicit samples
-        build.play(
+        play(
             "qubit",
-            build.arbitrary_pulse(
+            arbitrary_pulse(
                 samples=[0.0, 0.25, 0.5, 0.75, 1.0, 0.75, 0.5, 0.25, 0.0], duration="100ns", amplitude="80mV"
             ),
         )
 
         # Measurement
-        build.measure("qubit", "readout", "result", duration="1us", amplitude="50mV")
+        measure("qubit", "readout", "result", duration="1us", amplitude="50mV")
 
     print(f"Created sequence with {len(seq.items)} operations")
     print(seq.model_dump_json(indent=2))
@@ -147,7 +147,7 @@ def example_iq_modulation():
     print("Complex waveform with explicit IQ components")
     print()
 
-    with build.sequence() as seq:
+    with sequence() as seq:
         # Complex samples for IQ modulation
         # This creates a rotating frame pulse
         iq_samples = [
@@ -160,13 +160,13 @@ def example_iq_modulation():
             0.0 + 0.0j,
         ]
 
-        build.play(
+        play(
             "qubit",
-            build.arbitrary_pulse(samples=iq_samples, duration="80ns", amplitude="90mV", interpolation="linear"),
+            arbitrary_pulse(samples=iq_samples, duration="80ns", amplitude="90mV", interpolation="linear"),
         )
 
         # Measurement
-        build.measure("qubit", "readout", "result", duration="1us", amplitude="50mV")
+        measure("qubit", "readout", "result", duration="1us", amplitude="50mV")
 
     print(f"Created sequence with {len(seq.items)} operations")
     print(seq.model_dump_json(indent=2))
@@ -188,18 +188,18 @@ def example_shaped_readout():
     print("Optimized readout pulse envelope")
     print()
 
-    with build.sequence() as seq:
+    with sequence() as seq:
         # π pulse
-        build.play(
+        play(
             "qubit",
-            build.external_pulse("pulses.gaussian", duration="50ns", amplitude="100mV", params={"sigma": "10ns"}),
+            external_pulse("pulses.gaussian", duration="50ns", amplitude="100mV", params={"sigma": "10ns"}),
         )
 
         # Shaped readout pulse
         # Exponential rise matched to cavity fill time
-        build.play(
+        play(
             "readout",
-            build.external_pulse(
+            external_pulse(
                 "pulses.exp_rise",
                 duration="2us",
                 amplitude="50mV",
@@ -208,7 +208,7 @@ def example_shaped_readout():
         )
 
         # Record during shaped pulse
-        build.record("readout", "iq_trace", duration="2us")
+        record("readout", "iq_trace", duration="2us")
 
     print(f"Created sequence with {len(seq.items)} operations")
     print(seq.model_dump_json(indent=2))
@@ -230,34 +230,34 @@ def example_composite_pulse():
     print("Error-robust pulse sequence")
     print()
 
-    with build.sequence() as seq:
+    with sequence() as seq:
         # BB1 composite pulse for amplitude-error robustness
         # First pulse: X(φ)
-        build.set_phase("qubit", "0deg")
-        build.play(
+        set_phase("qubit", "0deg")
+        play(
             "qubit",
-            build.external_pulse("pulses.gaussian", duration="50ns", amplitude="100mV", params={"sigma": "10ns"}),
+            external_pulse("pulses.gaussian", duration="50ns", amplitude="100mV", params={"sigma": "10ns"}),
         )
 
         # Second pulse: X(3φ) with 3x longer duration
-        build.set_phase("qubit", "180deg")
-        build.play(
+        set_phase("qubit", "180deg")
+        play(
             "qubit",
-            build.external_pulse("pulses.gaussian", duration="150ns", amplitude="100mV", params={"sigma": "30ns"}),
+            external_pulse("pulses.gaussian", duration="150ns", amplitude="100mV", params={"sigma": "30ns"}),
         )
 
         # Third pulse: X(φ)
-        build.set_phase("qubit", "0deg")
-        build.play(
+        set_phase("qubit", "0deg")
+        play(
             "qubit",
-            build.external_pulse("pulses.gaussian", duration="50ns", amplitude="100mV", params={"sigma": "10ns"}),
+            external_pulse("pulses.gaussian", duration="50ns", amplitude="100mV", params={"sigma": "10ns"}),
         )
 
         # Reset phase
-        build.set_phase("qubit", "0deg")
+        set_phase("qubit", "0deg")
 
         # Measurement
-        build.measure("qubit", "readout", "result", duration="1us", amplitude="50mV")
+        measure("qubit", "readout", "result", duration="1us", amplitude="50mV")
 
     print(f"Created sequence with {len(seq.items)} operations")
     print(seq.model_dump_json(indent=2))

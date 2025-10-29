@@ -1,0 +1,1304 @@
+"""Core builder functions for constructing pulse sequences and schedules.
+
+This module provides global functions for creating pulse programs with:
+
+- Context managers for sequences, schedules, iterations, and conditionals
+- Function calls for operations like playing pulses, recording, and barriers
+- Token-based references for relative positioning in schedules
+- Shorthand functions for common pulse types
+- Measure functions for simultaneous play + record operations
+
+Examples
+
+.. code-block:: python
+
+    from eq1_pulse.builder import *
+
+    # Building a sequence
+    with sequence() as seq:
+        play("ch1", square_pulse(duration="10us", amplitude="100mV"))
+        wait("ch1", "5us")
+        play("ch1", sine_pulse(duration="20us", amplitude="50mV", frequency="5GHz"))
+
+    # Building a schedule with relative positioning
+    with schedule() as sched:
+        op1 = play("ch1", square_pulse(duration="10us", amplitude="100mV"))
+        op2 = play("ch2", square_pulse(duration="10us", amplitude="100mV"),
+                        ref_op=op1, ref_pt="start", rel_time="5us")
+
+    # Using control flow
+    with sequence() as seq:
+        with repeat(10):
+            play("qubit", square_pulse(duration="50ns", amplitude="100mV"))
+            measure("qubit", "readout", duration="1us", amplitude="50mV")
+
+        with for_loop("i", range(0, 100, 10)):
+            set_frequency("qubit", var("i"))
+            play("qubit", square_pulse(duration="100ns", amplitude="50mV"))
+"""
+
+from __future__ import annotations
+
+from contextlib import contextmanager
+from typing import TYPE_CHECKING, Any, Literal, Unpack
+
+from ..models.basic_types import LinSpace, Range
+from ..models.channel_ops import (
+    Barrier,
+    DemodIntegration,
+    FullIntegration,
+    IntegrationType,
+    Play,
+    Record,
+    SetFrequency,
+    SetPhase,
+    ShiftFrequency,
+    ShiftPhase,
+    Wait,
+)
+from ..models.data_ops import Discriminate, Store, VariableDecl
+from ..models.pulse_types import ArbitrarySampledPulse, ExternalPulse, PulseType, SinePulse, SquarePulse
+from ..models.reference_types import ChannelRef, PulseRef, VariableRef
+from ..models.schedule import (
+    SchedConditional,
+    SchedIteration,
+    SchedRepetition,
+    Schedule,
+    ScheduledOperation,
+)
+from ..models.sequence import Conditional, Iteration, OpSequence, Repetition
+from .utils import OperationToken, ScheduleParams, resolve_schedule_params
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Iterator
+
+    from ..models.basic_types import AmplitudeLike, DurationLike, FrequencyLike, PhaseLike, ThresholdLike
+    from ..models.data_ops import ComparisonModeLike, ComplexToRealProjectionModeLike
+    from ..models.reference_types import ChannelRefLike, PulseRefLike, VariableRefLike
+
+__all__ = (
+    "arbitrary_pulse",
+    "barrier",
+    "channel",
+    "discriminate",
+    "external_pulse",
+    "for_loop",
+    "if_condition",
+    "measure",
+    "measure_and_discriminate",
+    "measure_if",
+    "play",
+    "pulse_ref",
+    "record",
+    "repeat",
+    "schedule",
+    "sequence",
+    "set_frequency",
+    "set_phase",
+    "shift_frequency",
+    "shift_phase",
+    "sine_pulse",
+    "square_pulse",
+    "store",
+    "var",
+    "var_decl",
+    "wait",
+)
+
+# Module-level state for building context
+_context_stack: list[
+    OpSequence | Schedule | Repetition | Iteration | Conditional | SchedRepetition | SchedIteration | SchedConditional
+] = []
+_op_counter = 0
+
+
+def _generate_op_name() -> str:
+    """Generate a unique operation name.
+
+    :return: Unique operation name
+    """
+    global _op_counter
+    _op_counter += 1
+    return f"op_{_op_counter}"
+
+
+def _current_context() -> Any:
+    """Get the current building context.
+
+    :return: The current sequence or schedule being built
+
+    :raises RuntimeError: If no context is active
+    """
+    if not _context_stack:
+        raise RuntimeError("No active building context. Use sequence() or schedule() context manager first.")
+    return _context_stack[-1]
+
+
+def _add_to_sequence(operation: Any) -> None:
+    """Add an operation to the current sequence context.
+
+    :param operation: The operation to add
+
+    :raises RuntimeError: If current context is not a sequence
+    """
+    context = _current_context()
+    if isinstance(context, Repetition | Iteration | Conditional):
+        context.body.items.append(operation)
+    elif isinstance(context, OpSequence):
+        context.items.append(operation)
+    else:
+        raise RuntimeError(f"Cannot add sequence operation to {type(context).__name__} context")
+
+
+def _add_to_schedule(operation: Any, **schedule_params: Unpack[ScheduleParams]) -> OperationToken:
+    """Add an operation to the current schedule context.
+
+    :param operation: The operation to add
+    :param schedule_params: Additional scheduling parameters
+
+    :return: Token for referencing this operation
+
+    :raises RuntimeError: If current context is not a schedule
+    """
+    context = _current_context()
+    if not isinstance(context, Schedule):
+        raise RuntimeError(f"Cannot add scheduled operation to {type(context).__name__} context")
+
+    # Resolve any operation tokens to names
+    resolved_params = resolve_schedule_params(schedule_params)  # type: ignore[arg-type]
+
+    # Generate operation name if not provided
+    if "name" not in resolved_params:
+        resolved_params["name"] = _generate_op_name()
+
+    sched_op = ScheduledOperation(op=operation, **resolved_params)  # type: ignore[arg-type]
+    context.items.append(sched_op)
+    return OperationToken(resolved_params["name"], sched_op)
+
+
+# ============================================================================
+# Context managers
+# ============================================================================
+
+
+@contextmanager
+def sequence() -> Iterator[OpSequence]:
+    """Context manager for building an operation sequence.
+
+    :yield: The operation sequence being built
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import *
+
+        with sequence() as seq:
+            play("ch1", square_pulse(duration="10us", amplitude="100mV"))
+            wait("ch1", "5us")
+    """
+    seq = OpSequence(items=[])
+    _context_stack.append(seq)
+    try:
+        yield seq
+    finally:
+        _context_stack.pop()
+
+
+@contextmanager
+def schedule() -> Iterator[Schedule]:
+    """Context manager for building a schedule.
+
+    :yield: The schedule being built
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import *
+
+        with schedule() as sched:
+            op1 = play("ch1", square_pulse(duration="10us", amplitude="100mV"))
+            op2 = play("ch2", square_pulse(duration="10us", amplitude="100mV"),
+                            ref_op=op1, ref_pt="start", rel_time="5us")
+    """
+    sched = Schedule(items=[])
+    _context_stack.append(sched)
+    try:
+        yield sched
+    finally:
+        _context_stack.pop()
+
+
+@contextmanager
+def repeat(count: int) -> Iterator[Repetition]:
+    """Context manager for building a repetition block.
+
+    :param count: Number of times to repeat
+
+    :yield: The repetition being built
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import *
+
+        with sequence():
+            with repeat(10):
+                play("qubit", square_pulse(duration="50ns", amplitude="100mV"))
+    """
+    body = OpSequence(items=[])
+    rep = Repetition(count=count, body=body)
+
+    # Add to parent context if it exists
+    if _context_stack:
+        parent = _current_context()
+        if isinstance(parent, OpSequence):
+            parent.items.append(rep)
+        elif isinstance(parent, Repetition | Iteration | Conditional):
+            parent.body.items.append(rep)
+        elif isinstance(parent, Schedule):
+            # For schedules, we need SchedRepetition not Repetition
+            sched_rep = SchedRepetition(count=count, body=Schedule(items=[]))
+            parent.items.append(ScheduledOperation(op=sched_rep))
+            _context_stack.append(sched_rep)
+            try:
+                yield sched_rep  # type: ignore[misc]
+            finally:
+                _context_stack.pop()
+            return
+
+    _context_stack.append(rep)
+    try:
+        yield rep
+    finally:
+        _context_stack.pop()
+
+
+@contextmanager
+def for_loop(
+    var: VariableRefLike | list[VariableRefLike],
+    items: Iterable[Any] | Range | LinSpace,
+) -> Iterator[Iteration]:
+    """Context manager for building an iteration (for loop).
+
+    :param var: Variable reference(s) for the loop variable(s)
+    :param items: Range, LinSpace, or iterable to iterate over
+
+    :yield: The iteration being built
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import *
+
+        with sequence():
+            with for_loop("i", range(0, 100, 10)):
+                set_frequency("qubit", var("i"))
+    """
+    body = OpSequence(items=[])
+    iter_obj = Iteration(var=var, items=items, body=body)
+
+    # Add to parent context if it exists
+    if _context_stack:
+        parent = _current_context()
+        if isinstance(parent, OpSequence):
+            parent.items.append(iter_obj)
+        elif isinstance(parent, Repetition | Iteration | Conditional):
+            parent.body.items.append(iter_obj)
+        elif isinstance(parent, Schedule):
+            # For schedules, we need SchedIteration not Iteration
+            sched_iter = SchedIteration(var=var, items=items, body=Schedule(items=[]))
+            parent.items.append(ScheduledOperation(op=sched_iter))
+            _context_stack.append(sched_iter)
+            try:
+                yield sched_iter  # type: ignore[misc]
+            finally:
+                _context_stack.pop()
+            return
+
+    _context_stack.append(iter_obj)
+    try:
+        yield iter_obj
+    finally:
+        _context_stack.pop()
+
+
+@contextmanager
+def if_condition(var: VariableRefLike) -> Iterator[Conditional]:
+    """Context manager for building a conditional block.
+
+    :param var: Variable reference for the condition
+
+    :yield: The conditional being built
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import *
+
+        with sequence():
+            with if_condition("result"):
+                play("qubit", square_pulse(duration="50ns", amplitude="100mV"))
+    """
+    body = OpSequence(items=[])
+    cond = Conditional(var=var, body=body)
+
+    # Add to parent context if it exists
+    if _context_stack:
+        parent = _current_context()
+        if isinstance(parent, OpSequence):
+            parent.items.append(cond)
+        elif isinstance(parent, Repetition | Iteration | Conditional):
+            parent.body.items.append(cond)
+        elif isinstance(parent, Schedule):
+            # For schedules, we need SchedConditional not Conditional
+            sched_cond = SchedConditional(var=var, body=Schedule(items=[]))
+            parent.items.append(ScheduledOperation(op=sched_cond))
+            _context_stack.append(sched_cond)
+            try:
+                yield sched_cond  # type: ignore[misc]
+            finally:
+                _context_stack.pop()
+            return
+
+    _context_stack.append(cond)
+    try:
+        yield cond
+    finally:
+        _context_stack.pop()
+
+
+@contextmanager
+def measure_if(
+    drive_channel: ChannelRefLike,
+    readout_channel: ChannelRefLike,
+    raw_var: VariableRefLike,
+    result_var: VariableRefLike,
+    *,
+    threshold: ThresholdLike,
+    duration: DurationLike,
+    amplitude: AmplitudeLike,
+    integration: IntegrationType | Literal["full", "demod"] = "full",
+    phase: PhaseLike | None = None,
+    scale_cos: float = 1.0,
+    scale_sin: float = 1.0,
+    rotation: PhaseLike = 0,
+    compare: ComparisonModeLike = ">=",
+    project: ComplexToRealProjectionModeLike = "real",
+    **schedule_params: Unpack[ScheduleParams],
+) -> Iterator[Conditional]:
+    """Measure, discriminate, and create a conditional block in one call.
+
+    This is a convenience context manager that combines :func:`measure_and_discriminate`
+    with :func:`if_condition`. It performs a measurement, discriminates the result,
+    and opens a conditional block that executes if the discrimination result is true.
+
+    :param drive_channel: Channel to play measurement pulse on
+    :param readout_channel: Channel to record from
+    :param raw_var: Variable to store the raw measurement result
+    :param result_var: Variable to store the discriminated binary result
+    :param threshold: Threshold value for discrimination
+    :param duration: Measurement duration
+    :param amplitude: Measurement pulse amplitude
+    :param integration: Integration type for recording
+    :param phase: Phase for demod integration
+    :param scale_cos: Cosine scaling for demod integration
+    :param scale_sin: Sine scaling for demod integration
+    :param rotation: Phase rotation for discrimination
+    :param compare: Comparison operator for discrimination
+    :param project: Complex-to-real projection mode for discrimination
+    :param schedule_params: Additional scheduling parameters (for schedules)
+
+    :yield: The conditional being built
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import *
+
+        with sequence():
+            # Measure, discriminate, and execute conditionally
+            with measure_if(
+                "drive", "readout", "raw", "state", "0.5mV",
+                duration="1us", amplitude="50mV"
+            ):
+                # This block executes if state is true
+                play("qubit", square_pulse(duration="50ns", amplitude="100mV"))
+    """
+    # Perform measurement and discrimination
+    measure_and_discriminate(
+        drive_channel,
+        readout_channel,
+        raw_var,
+        result_var,
+        threshold=threshold,
+        duration=duration,
+        amplitude=amplitude,
+        integration=integration,
+        phase=phase,
+        scale_cos=scale_cos,
+        scale_sin=scale_sin,
+        rotation=rotation,
+        compare=compare,
+        project=project,
+        **schedule_params,
+    )
+
+    # Open conditional block using the discriminated result
+    with if_condition(result_var) as cond:
+        yield cond
+
+
+# ============================================================================
+# Pulse creation helpers
+# ============================================================================
+
+
+def square_pulse(
+    *,
+    duration: DurationLike,
+    amplitude: AmplitudeLike,
+    rise_time: DurationLike | None = None,
+    fall_time: DurationLike | None = None,
+) -> SquarePulse:
+    """Create a square pulse.
+
+    :param duration: Pulse duration
+    :param amplitude: Pulse amplitude
+    :param rise_time: Optional rise time
+    :param fall_time: Optional fall time
+
+    :return: Square pulse definition
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import square_pulse
+
+        pulse = square_pulse(duration="10us", amplitude="100mV")
+    """
+    return SquarePulse(
+        duration=duration,
+        amplitude=amplitude,
+        rise_time=rise_time,
+        fall_time=fall_time,
+    )
+
+
+def sine_pulse(
+    *,
+    duration: DurationLike,
+    amplitude: AmplitudeLike,
+    frequency: FrequencyLike,
+    to_frequency: FrequencyLike | None = None,
+) -> SinePulse:
+    """Create a sine pulse.
+
+    :param duration: Pulse duration
+    :param amplitude: Pulse amplitude
+    :param frequency: Start frequency
+    :param to_frequency: Optional end frequency for chirp
+
+    :return: Sine pulse definition
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import sine_pulse
+
+        pulse = sine_pulse(duration="20us", amplitude="50mV", frequency="5GHz")
+
+        # Chirped sine pulse
+        chirp = sine_pulse(
+            duration="50us",
+            amplitude="30mV",
+            frequency="4.5GHz",
+            to_frequency="5.5GHz"
+        )
+    """
+    return SinePulse(
+        duration=duration,
+        amplitude=amplitude,
+        frequency=frequency,
+        to_frequency=to_frequency,
+    )
+
+
+def external_pulse(
+    function: str,
+    *,
+    duration: DurationLike,
+    amplitude: AmplitudeLike,
+    params: dict[str, Any] | None = None,
+) -> ExternalPulse:
+    """Create an external pulse reference.
+
+    References a pulse shape defined in an external function. The function
+    should accept duration, amplitude, and any additional params, and return
+    normalized waveform samples.
+
+    :param function: Fully qualified function name (e.g., "my_lib.gaussian")
+    :param duration: Pulse duration
+    :param amplitude: Pulse amplitude (scale factor)
+    :param params: Additional parameters passed to the pulse function
+
+    :return: External pulse definition
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import external_pulse
+
+        # Reference a Gaussian pulse from an external library
+        pulse = external_pulse(
+            "pulses.gaussian",
+            duration="100ns",
+            amplitude="80mV",
+            params={"sigma": "20ns"}
+        )
+
+        # DRAG pulse with parameters
+        drag = external_pulse(
+            "pulses.drag",
+            duration="50ns",
+            amplitude="100mV",
+            params={"beta": 0.5, "sigma": "10ns"}
+        )
+    """
+    return ExternalPulse(
+        function=function,
+        duration=duration,
+        amplitude=amplitude,
+        params=params,
+    )
+
+
+def arbitrary_pulse(
+    samples: list[float] | list[complex],
+    *,
+    duration: DurationLike,
+    amplitude: AmplitudeLike,
+    interpolation: str | None = None,
+    time_points: list[float] | None = None,
+) -> ArbitrarySampledPulse:
+    """Create an arbitrary sampled pulse from explicit samples.
+
+    Defines a pulse shape using explicitly provided sample points. Samples
+    should be normalized (peak value of 1.0), and will be scaled by amplitude.
+
+    :param samples: Normalized waveform samples (real or complex)
+    :param duration: Total pulse duration
+    :param amplitude: Pulse amplitude (scale factor for samples)
+    :param interpolation: Interpolation method (e.g., "linear", "cubic")
+    :param time_points: Optional time points for samples (normalized 0-1)
+
+    :return: Arbitrary pulse definition
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import arbitrary_pulse
+
+        # Simple triangle pulse
+        triangle = arbitrary_pulse(
+            samples=[0.0, 0.5, 1.0, 0.5, 0.0],
+            duration="100ns",
+            amplitude="50mV"
+        )
+
+        # Complex IQ pulse with explicit time points
+        iq_samples = [0.0+0.0j, 0.5+0.3j, 1.0+0.0j, 0.5-0.3j, 0.0+0.0j]
+        iq_pulse = arbitrary_pulse(
+            samples=iq_samples,
+            duration="80ns",
+            amplitude="75mV",
+            time_points=[0.0, 0.25, 0.5, 0.75, 1.0],
+            interpolation="cubic"
+        )
+    """
+    return ArbitrarySampledPulse(
+        samples=samples,
+        duration=duration,
+        amplitude=amplitude,
+        interpolation=interpolation,
+        time_points=time_points,
+    )
+
+
+# ============================================================================
+# Reference helpers
+# ============================================================================
+
+
+def var(name: str) -> VariableRef:
+    """Create a variable reference.
+
+    :param name: Variable name
+
+    :return: Variable reference
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import var
+
+        freq_var = var("frequency")
+    """
+    return VariableRef(var=name)
+
+
+def channel(name: str) -> ChannelRef:
+    """Create a channel reference.
+
+    :param name: Channel name
+
+    :return: Channel reference
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import channel
+
+        ch = channel("qubit_1")
+    """
+    return ChannelRef(channel=name)
+
+
+def pulse_ref(name: str) -> PulseRef:
+    """Create a pulse reference.
+
+    :param name: Pulse name
+
+    :return: Pulse reference
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import pulse_ref
+
+        p = pulse_ref("pi_pulse")
+    """
+    return PulseRef(pulse_name=name)
+
+
+# ============================================================================
+# Variable declaration
+# ============================================================================
+
+
+def var_decl(
+    name: str,
+    dtype: Literal["bool", "int", "float", "complex"],
+    *,
+    shape: tuple[int, ...] | None = None,
+    unit: str | None = None,
+) -> None:
+    """Declare a variable for use in the current context.
+
+    Variables should be declared before they are used in iterations or conditionals.
+    The declaration specifies the variable's data type, optional shape (for arrays),
+    and optional unit for dimensional consistency.
+
+    :param name: Name of the variable (must be a valid identifier)
+    :param dtype: Data type of the variable ("bool", "int", "float", or "complex")
+    :param shape: Optional shape for array variables (e.g., (10,) for 1D array)
+    :param unit: Optional unit string (e.g., "mV", "ns", "GHz") for the variable
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import *
+
+        with sequence():
+            # Declare a float variable for amplitude with unit
+            var_decl("amp", "float", unit="mV")
+
+            # Declare an integer variable for iteration
+            var_decl("count", "int")
+
+            # Declare a complex array variable
+            var_decl("iq_data", "complex", shape=(100,))
+    """
+    var_decl_obj = VariableDecl(name=name, dtype=dtype, shape=shape, unit=unit)
+    _add_to_sequence(var_decl_obj)
+
+
+# ============================================================================
+# Channel operations
+# ============================================================================
+
+
+def play(
+    channel: ChannelRefLike,
+    pulse: PulseType | PulseRefLike,
+    *,
+    scale_amp: float | complex | VariableRef | None = None,
+    cond: VariableRefLike | None = None,
+    **schedule_params: Unpack[ScheduleParams],
+) -> OperationToken | None:
+    """Play a pulse on a channel.
+
+    :param channel: Channel to play on
+    :param pulse: Pulse to play
+    :param scale_amp: Optional amplitude scaling
+    :param cond: Optional condition variable
+    :param schedule_params: Additional scheduling parameters (for schedules)
+
+    :return: Operation token if in schedule context, :obj:`None` if in sequence context
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import *
+
+        # In sequence
+        play("ch1", square_pulse(duration="10us", amplitude="100mV"))
+
+        # In schedule with positioning
+        op = play("ch1", square_pulse(duration="10us", amplitude="100mV"),
+                      ref_op=previous_op, ref_pt="end")
+    """
+    op = Play(channel=channel, pulse=pulse, scale_amp=scale_amp, cond=cond)
+
+    context = _current_context()
+    if isinstance(context, Schedule):
+        return _add_to_schedule(op, **schedule_params)
+    else:
+        _add_to_sequence(op)
+        return None
+
+
+def wait(
+    *channels: ChannelRefLike,
+    duration: DurationLike,
+    **schedule_params: Unpack[ScheduleParams],
+) -> OperationToken | None:
+    """Add wait operation on channel(s).
+
+    :param channels: Channels to wait on
+    :param duration: Wait duration
+    :param schedule_params: Additional scheduling parameters (for schedules)
+
+    :return: Operation token if in schedule context, :obj:`None` if in sequence context
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import wait
+
+        wait("ch1", duration="5us")
+        wait("ch1", "ch2", duration="10us")
+    """
+    op = Wait(*channels, duration=duration)  # type: ignore[arg-type]
+
+    context = _current_context()
+    if isinstance(context, Schedule):
+        return _add_to_schedule(op, **schedule_params)
+    else:
+        _add_to_sequence(op)
+        return None
+
+
+def barrier(
+    *channels: ChannelRefLike,
+) -> None:
+    """Add barrier (synchronization) on channel(s).
+
+    The barrier operation synchronizes multiple channels, causing them to wait
+    until all specified channels have reached the barrier point. This is only
+    meaningful in sequence contexts where relative timing between channels
+    may vary. In schedule contexts, explicit timing makes barriers unnecessary.
+
+    :param channels: Channels to synchronize
+
+    :raises RuntimeError: If called in a schedule context (barriers only work in sequences)
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import *
+
+        with sequence():
+            # Operations on different channels may have different durations
+            play("drive", square_pulse(duration="10us", amplitude="100mV"))
+            play("readout", sine_pulse(duration="5us", amplitude="50mV", frequency="5GHz"))
+
+            # Barrier ensures both channels are synchronized before continuing
+            barrier("drive", "readout")
+
+            # After barrier, both channels start together
+            play("drive", square_pulse(duration="20us", amplitude="80mV"))
+            play("readout", square_pulse(duration="20us", amplitude="40mV"))
+    """
+    op = Barrier(*channels)
+
+    context = _current_context()
+    if isinstance(context, Schedule):
+        raise RuntimeError(
+            "Barrier operations are not supported in schedule contexts. "
+            "Schedules use explicit timing, making barriers unnecessary. "
+            "Use sequence context instead."
+        )
+    else:
+        _add_to_sequence(op)
+
+
+def set_frequency(
+    channel: ChannelRefLike,
+    frequency: FrequencyLike | VariableRefLike,
+    **schedule_params: Unpack[ScheduleParams],
+) -> OperationToken | None:
+    """Set channel frequency.
+
+    :param channel: Channel to set frequency on
+    :param frequency: Frequency to set
+    :param schedule_params: Additional scheduling parameters (for schedules)
+
+    :return: Operation token if in schedule context, :obj:`None` if in sequence context
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import set_frequency
+
+        set_frequency("qubit", "5GHz")
+    """
+    op = SetFrequency(channel=channel, frequency=frequency)
+
+    context = _current_context()
+    if isinstance(context, Schedule):
+        return _add_to_schedule(op, **schedule_params)
+    else:
+        _add_to_sequence(op)
+        return None
+
+
+def shift_frequency(
+    channel: ChannelRefLike,
+    frequency: FrequencyLike | VariableRefLike,
+    **schedule_params: Unpack[ScheduleParams],
+) -> OperationToken | None:
+    """Shift channel frequency.
+
+    :param channel: Channel to shift frequency on
+    :param frequency: Frequency shift amount
+    :param schedule_params: Additional scheduling parameters (for schedules)
+
+    :return: Operation token if in schedule context, :obj:`None` if in sequence context
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import shift_frequency
+
+        shift_frequency("qubit", "100MHz")
+    """
+    op = ShiftFrequency(channel=channel, frequency=frequency)
+
+    context = _current_context()
+    if isinstance(context, Schedule):
+        return _add_to_schedule(op, **schedule_params)
+    else:
+        _add_to_sequence(op)
+        return None
+
+
+def set_phase(
+    channel: ChannelRefLike,
+    phase: PhaseLike | VariableRefLike,
+    **schedule_params: Unpack[ScheduleParams],
+) -> OperationToken | None:
+    """Set channel phase.
+
+    :param channel: Channel to set phase on
+    :param phase: Phase to set
+    :param schedule_params: Additional scheduling parameters (for schedules)
+
+    :return: Operation token if in schedule context, :obj:`None` if in sequence context
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import set_phase
+
+        set_phase("qubit", "90deg")
+    """
+    op = SetPhase(channel=channel, phase=phase)
+
+    context = _current_context()
+    if isinstance(context, Schedule):
+        return _add_to_schedule(op, **schedule_params)
+    else:
+        _add_to_sequence(op)
+        return None
+
+
+def shift_phase(
+    channel: ChannelRefLike,
+    phase: PhaseLike | VariableRefLike,
+    **schedule_params: Unpack[ScheduleParams],
+) -> OperationToken | None:
+    """Shift channel phase.
+
+    :param channel: Channel to shift phase on
+    :param phase: Phase shift amount
+    :param schedule_params: Additional scheduling parameters (for schedules)
+
+    :return: Operation token if in schedule context, :obj:`None` if in sequence context
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import shift_phase
+
+        shift_phase("qubit", "45deg")
+    """
+    op = ShiftPhase(channel=channel, phase=phase)
+
+    context = _current_context()
+    if isinstance(context, Schedule):
+        return _add_to_schedule(op, **schedule_params)
+    else:
+        _add_to_sequence(op)
+        return None
+
+
+def record(
+    channel: ChannelRefLike,
+    var: VariableRefLike,
+    *,
+    duration: DurationLike,
+    integration: IntegrationType | Literal["full", "demod"] = "full",
+    phase: PhaseLike | None = None,
+    scale_cos: float = 1.0,
+    scale_sin: float = 1.0,
+    **schedule_params: Unpack[ScheduleParams],
+) -> OperationToken | None:
+    """Record (acquire) data from a channel.
+
+    :param channel: Channel to record from
+    :param var: Variable to store the result
+    :param duration: Recording duration
+    :param integration: Integration type ("full" or "demod")
+    :param phase: Phase for demod integration
+    :param scale_cos: Cosine scaling for demod integration
+    :param scale_sin: Sine scaling for demod integration
+    :param schedule_params: Additional scheduling parameters (for schedules)
+
+    :return: Operation token if in schedule context, :obj:`None` if in sequence context
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import record
+
+        record("readout", "result", duration="1us", integration="demod")
+    """
+    # Handle integration type
+    if isinstance(integration, str):
+        if integration == "full":
+            integration_obj: IntegrationType = FullIntegration()
+        elif integration == "demod":
+            integration_obj = DemodIntegration(phase=phase, scale_cos=scale_cos, scale_sin=scale_sin)  # type: ignore[arg-type]
+        else:
+            raise ValueError(f"Invalid integration type: {integration}")
+    else:
+        integration_obj = integration
+
+    op = Record(channel=channel, var=var, duration=duration, integration=integration_obj)  # type: ignore[arg-type]
+
+    context = _current_context()
+    if isinstance(context, Schedule):
+        return _add_to_schedule(op, **schedule_params)
+    else:
+        _add_to_sequence(op)
+        return None
+
+
+def discriminate(
+    target: VariableRefLike,
+    source: VariableRefLike,
+    threshold: ThresholdLike,
+    *,
+    rotation: PhaseLike = 0,
+    compare: ComparisonModeLike = ">=",
+    project: ComplexToRealProjectionModeLike = "real",
+    **schedule_params: Unpack[ScheduleParams],
+) -> OperationToken | None:
+    """Discriminate a measurement result to a binary outcome.
+
+    This operation applies a rotation, projects complex data to real, and compares
+    against a threshold to produce a boolean result.
+
+    :param target: Variable to store the discrimination result (boolean)
+    :param source: Source variable containing the measurement data
+    :param threshold: Threshold value for comparison
+    :param rotation: Phase rotation to apply before projection (default: 0)
+    :param compare: Comparison operator (default: ">=")
+    :param project: Complex-to-real projection mode (default: "real")
+    :param schedule_params: Additional scheduling parameters (for schedules)
+
+    :return: Operation token if in schedule context, :obj:`None` if in sequence context
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import discriminate
+
+        # Simple discrimination with default parameters
+        discriminate("bit", "measurement", threshold=0.5)
+
+        # With rotation and different comparison
+        discriminate("bit", "measurement", threshold=0.5,
+                         rotation="45deg", compare=">", project="abs")
+    """
+    op = Discriminate(
+        target=target,
+        source=source,
+        threshold=threshold,
+        rotation=rotation,  # type: ignore[arg-type]
+        compare=compare,  # type: ignore[arg-type]
+        project=project,  # type: ignore[arg-type]
+    )
+
+    context = _current_context()
+    if isinstance(context, Schedule):
+        return _add_to_schedule(op, **schedule_params)
+    else:
+        _add_to_sequence(op)
+        return None
+
+
+def store(
+    key: str,
+    source: VariableRefLike,
+    *,
+    mode: Literal["last", "average", "count", "trace"] = "last",
+    **schedule_params: Unpack[ScheduleParams],
+) -> OperationToken | None:
+    """Store a variable value for later retrieval.
+
+    This operation stores the value of a variable to persistent storage
+    for analysis after the pulse program completes. Different storage modes
+    allow for averaging, counting, or trace capture.
+
+    :param key: Storage key for retrieving the data
+    :param source: Source variable to store
+    :param mode: Storage mode - how to aggregate multiple values
+    :param schedule_params: Additional scheduling parameters (for schedules)
+
+    :return: Operation token if in schedule context, :obj:`None` if in sequence context
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import *
+
+        # Store single measurement
+        store("result", "measurement", mode="last")
+
+        # Average multiple measurements
+        with for_loop("i", range(100)):
+            measure("drive", "readout", "m", duration="1us", amplitude="50mV")
+            store("avg_result", "m", mode="average")
+    """
+    op = Store(key=key, source=source, mode=mode)  # type: ignore[arg-type]
+
+    context = _current_context()
+    if isinstance(context, Schedule):
+        return _add_to_schedule(op, **schedule_params)
+    else:
+        _add_to_sequence(op)
+        return None
+
+
+def measure(
+    drive_channel: ChannelRefLike,
+    readout_channel: ChannelRefLike,
+    result_var: VariableRefLike,
+    *,
+    duration: DurationLike,
+    amplitude: AmplitudeLike,
+    integration: IntegrationType | Literal["full", "demod"] = "full",
+    phase: PhaseLike | None = None,
+    scale_cos: float = 1.0,
+    scale_sin: float = 1.0,
+    **schedule_params: Unpack[ScheduleParams],
+) -> OperationToken | None:
+    """Perform a measurement (simultaneous play + record).
+
+    This is a convenience function that creates a square pulse play operation
+    and a record operation that execute simultaneously.
+
+    :param drive_channel: Channel to play measurement pulse on
+    :param readout_channel: Channel to record from
+    :param result_var: Variable to store the measurement result
+    :param duration: Measurement duration
+    :param amplitude: Measurement pulse amplitude
+    :param integration: Integration type for recording
+    :param phase: Phase for demod integration
+    :param scale_cos: Cosine scaling for demod integration
+    :param scale_sin: Sine scaling for demod integration
+    :param schedule_params: Additional scheduling parameters (for schedules)
+
+    :return: Operation token if in schedule context, :obj:`None` if in sequence context
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import measure
+
+        measure("qubit", "readout", "result",
+                     duration="1us", amplitude="50mV", integration="demod")
+    """
+    # Create measurement pulse
+    meas_pulse = square_pulse(duration=duration, amplitude=amplitude)
+
+    context = _current_context()
+
+    if isinstance(context, Schedule):
+        # In schedule: create both operations with same timing
+        play_token = play(drive_channel, meas_pulse, **schedule_params)
+
+        # Record starts at the same time as play
+        record_params = schedule_params.copy()
+        if play_token:
+            record_params["ref_op"] = play_token.name
+            record_params["ref_pt"] = "start"
+            record_params["ref_pt_new"] = "start"
+            record_params["rel_time"] = 0
+
+        return record(
+            readout_channel,
+            result_var,
+            duration=duration,
+            integration=integration,
+            phase=phase,
+            scale_cos=scale_cos,
+            scale_sin=scale_sin,
+            **record_params,
+        )
+    else:
+        # In sequence: add operations sequentially
+        # Note: In a true measurement, play and record should be simultaneous
+        # This requires the backend to handle the timing correctly
+        play(drive_channel, meas_pulse)
+        record(
+            readout_channel,
+            result_var,
+            duration=duration,
+            integration=integration,
+            phase=phase,
+            scale_cos=scale_cos,
+            scale_sin=scale_sin,
+        )
+        return None
+
+
+def measure_and_discriminate(
+    drive_channel: ChannelRefLike,
+    readout_channel: ChannelRefLike,
+    raw_var: VariableRefLike,
+    result_var: VariableRefLike,
+    *,
+    threshold: ThresholdLike,
+    duration: DurationLike,
+    amplitude: AmplitudeLike,
+    integration: IntegrationType | Literal["full", "demod"] = "full",
+    phase: PhaseLike | None = None,
+    scale_cos: float = 1.0,
+    scale_sin: float = 1.0,
+    rotation: PhaseLike = 0,
+    compare: ComparisonModeLike = ">=",
+    project: ComplexToRealProjectionModeLike = "real",
+    **schedule_params: Unpack[ScheduleParams],
+) -> OperationToken | None:
+    """Perform measurement and discrimination in one call.
+
+    This is a convenience function that combines :func:`measure` and
+    :func:`discriminate` operations. It performs a measurement, stores
+    the raw result, discriminates it to a binary outcome, and returns
+    a token for the discrimination operation.
+
+    :param drive_channel: Channel to play measurement pulse on
+    :param readout_channel: Channel to record from
+    :param raw_var: Variable to store the raw measurement result
+    :param result_var: Variable to store the discriminated binary result
+    :param threshold: Threshold value for discrimination
+    :param duration: Measurement duration
+    :param amplitude: Measurement pulse amplitude
+    :param integration: Integration type for recording
+    :param phase: Phase for demod integration
+    :param scale_cos: Cosine scaling for demod integration
+    :param scale_sin: Sine scaling for demod integration
+    :param rotation: Phase rotation for discrimination
+    :param compare: Comparison operator for discrimination
+    :param project: Complex-to-real projection mode for discrimination
+    :param schedule_params: Additional scheduling parameters (for schedules)
+
+    :return: Operation token if in schedule context, :obj:`None` if in sequence context
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import *
+
+        # Measure and discriminate in one call
+        measure_and_discriminate(
+            "drive", "readout", "raw_data", "qubit_state", "0.5mV",
+            duration="1us", amplitude="50mV"
+        )
+
+        # Then use the result in a conditional
+        with if_condition("qubit_state"):
+            play("qubit", square_pulse(duration="50ns", amplitude="100mV"))
+    """
+    # Perform measurement
+    measure(
+        drive_channel,
+        readout_channel,
+        raw_var,
+        duration=duration,
+        amplitude=amplitude,
+        integration=integration,
+        phase=phase,
+        scale_cos=scale_cos,
+        scale_sin=scale_sin,
+        **schedule_params,
+    )
+
+    # Discriminate the result
+    return discriminate(
+        target=result_var,
+        source=raw_var,
+        threshold=threshold,
+        rotation=rotation,
+        compare=compare,
+        project=project,
+        **schedule_params,
+    )

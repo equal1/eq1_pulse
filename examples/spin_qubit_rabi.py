@@ -21,7 +21,7 @@ from pathlib import Path
 # Add src to path for development
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from eq1_pulse.builder import build
+from eq1_pulse.builder import *
 from eq1_pulse.models.basic_types import LinSpace
 
 
@@ -38,26 +38,26 @@ def example_amplitude_rabi():
     print("Sweep drive amplitude to calibrate π pulse")
     print()
 
-    with build.sequence() as seq:
+    with sequence() as seq:
         # Declare amplitude variable with unit
-        build.var_decl("amp", "float", unit="mV")
+        var_decl("amp", "float", unit="mV")
 
         # Sweep amplitude from 0 to 100 mV in 50 steps
         amplitude_sweep = LinSpace(start=0.0, stop=100.0, num=50)
 
-        with build.for_loop("amp", amplitude_sweep):
+        with for_loop("amp", amplitude_sweep):
             # Apply drive pulse with variable amplitude
             # Note: amp variable represents mV, use variable reference
-            build.play(
+            play(
                 "qubit",
-                build.square_pulse(
+                square_pulse(
                     duration="100ns",  # Fixed duration
-                    amplitude=build.var("amp"),  # type: ignore[arg-type]  # Variable amplitude in mV
+                    amplitude=var("amp"),  # type: ignore[arg-type]  # Variable amplitude in mV
                 ),
             )
 
             # Measure qubit state
-            build.measure_and_discriminate(
+            measure_and_discriminate(
                 "qubit",
                 "readout",
                 "raw_result",
@@ -68,10 +68,10 @@ def example_amplitude_rabi():
             )
 
             # Store the result
-            build.store("rabi_amp", "qubit_state", mode="average")
+            store("rabi_amp", "qubit_state", mode="average")
 
             # Wait for qubit to relax back to ground state
-            build.wait("qubit", duration="10us")
+            wait("qubit", duration="10us")
 
     print(f"Created sequence with {len(seq.items)} operations")
     print(seq.model_dump_json(indent=2))
@@ -94,25 +94,25 @@ def example_time_rabi():
     print("Sweep pulse duration to calibrate π pulse timing")
     print()
 
-    with build.sequence() as seq:
+    with sequence() as seq:
         # Declare duration variable with unit
-        build.var_decl("t_drive", "float", unit="ns")
+        var_decl("t_drive", "float", unit="ns")
 
         # Sweep duration from 0 to 200 ns in 100 steps
         duration_sweep = LinSpace(start=0.0, stop=200.0, num=100)
 
-        with build.for_loop("t_drive", duration_sweep):
+        with for_loop("t_drive", duration_sweep):
             # Apply drive pulse with variable duration
-            build.play(
+            play(
                 "qubit",
-                build.square_pulse(
-                    duration=build.var("t_drive"),  # type: ignore[arg-type]  # Variable duration in ns
+                square_pulse(
+                    duration=var("t_drive"),  # type: ignore[arg-type]  # Variable duration in ns
                     amplitude="80mV",  # Fixed amplitude
                 ),
             )
 
             # Measure and discriminate
-            build.measure_and_discriminate(
+            measure_and_discriminate(
                 "qubit",
                 "readout",
                 "raw_result",
@@ -123,10 +123,10 @@ def example_time_rabi():
             )
 
             # Store result
-            build.store("rabi_time", "qubit_state", mode="average")
+            store("rabi_time", "qubit_state", mode="average")
 
             # Relaxation time
-            build.wait("qubit", duration="10us")
+            wait("qubit", duration="10us")
 
     print(f"Created sequence with {len(seq.items)} operations")
     print(seq.model_dump_json(indent=2))
@@ -150,30 +150,30 @@ def example_frequency_rabi():
     print("Sweep drive frequency to find qubit resonance")
     print()
 
-    with build.sequence() as seq:
+    with sequence() as seq:
         # Declare frequency variable with unit
-        build.var_decl("freq", "float", unit="GHz")
+        var_decl("freq", "float", unit="GHz")
 
         # Sweep frequency around expected qubit frequency
         # For spin qubits in GaAs: typically 10-20 GHz
         # Values in GHz
         freq_sweep = LinSpace(start=14.0, stop=16.0, num=200)
 
-        with build.for_loop("freq", freq_sweep):
+        with for_loop("freq", freq_sweep):
             # Set drive frequency
-            build.set_frequency("qubit", build.var("freq"))  # type: ignore[arg-type]  # freq in GHz
+            set_frequency("qubit", var("freq"))  # type: ignore[arg-type]  # freq in GHz
 
             # Apply π/2 pulse (or saturating pulse)
-            build.play(
+            play(
                 "qubit",
-                build.square_pulse(
+                square_pulse(
                     duration="50ns",
                     amplitude="100mV",
                 ),
             )
 
             # Measure
-            build.measure_and_discriminate(
+            measure_and_discriminate(
                 "qubit",
                 "readout",
                 "raw_result",
@@ -184,10 +184,10 @@ def example_frequency_rabi():
             )
 
             # Store
-            build.store("spectroscopy", "qubit_state", mode="average")
+            store("spectroscopy", "qubit_state", mode="average")
 
             # Wait
-            build.wait("qubit", duration="10us")
+            wait("qubit", duration="10us")
 
     print(f"Created sequence with {len(seq.items)} operations")
     print(seq.model_dump_json(indent=2))
@@ -210,10 +210,10 @@ def example_2d_rabi():
     print("Create 2D map for comprehensive pulse calibration")
     print()
 
-    with build.sequence() as seq:
+    with sequence() as seq:
         # Declare variables with units
-        build.var_decl("amp", "float", unit="mV")
-        build.var_decl("dur", "float", unit="ns")
+        var_decl("amp", "float", unit="mV")
+        var_decl("dur", "float", unit="ns")
 
         # Amplitude sweep
         amp_sweep = LinSpace(start=20.0, stop=100.0, num=20)
@@ -221,19 +221,19 @@ def example_2d_rabi():
         dur_sweep = LinSpace(start=10.0, stop=200.0, num=40)
 
         # Nested loops for 2D sweep
-        with build.for_loop("amp", amp_sweep):
-            with build.for_loop("dur", dur_sweep):
+        with for_loop("amp", amp_sweep):
+            with for_loop("dur", dur_sweep):
                 # Drive pulse with both parameters varying
-                build.play(
+                play(
                     "qubit",
-                    build.square_pulse(
-                        duration=build.var("dur"),  # type: ignore[arg-type]  # Variable duration in ns
-                        amplitude=build.var("amp"),  # type: ignore[arg-type]  # Variable amplitude in mV
+                    square_pulse(
+                        duration=var("dur"),  # type: ignore[arg-type]  # Variable duration in ns
+                        amplitude=var("amp"),  # type: ignore[arg-type]  # Variable amplitude in mV
                     ),
                 )
 
                 # Measure
-                build.measure_and_discriminate(
+                measure_and_discriminate(
                     "qubit",
                     "readout",
                     "raw_result",
@@ -244,10 +244,10 @@ def example_2d_rabi():
                 )
 
                 # Store with 2D coordinates
-                build.store("rabi_2d", "qubit_state", mode="average")
+                store("rabi_2d", "qubit_state", mode="average")
 
                 # Wait
-                build.wait("qubit", duration="10us")
+                wait("qubit", duration="10us")
 
     print(f"Created sequence with {len(seq.items)} operations")
     print(seq.model_dump_json(indent=2))
@@ -270,33 +270,33 @@ def example_rabi_with_detuning():
     print("Characterize Rabi oscillations off-resonance")
     print()
 
-    with build.sequence() as seq:
+    with sequence() as seq:
         # Declare variables with units
-        build.var_decl("detuning", "float", unit="MHz")
-        build.var_decl("t_pulse", "float", unit="ns")
+        var_decl("detuning", "float", unit="MHz")
+        var_decl("t_pulse", "float", unit="ns")
 
         # Detuning values (offset from qubit frequency) in MHz
         detuning_sweep = LinSpace(start=-50.0, stop=50.0, num=11)
         # Pulse duration sweep in ns
         duration_sweep = LinSpace(start=0.0, stop=200.0, num=50)
 
-        with build.for_loop("detuning", detuning_sweep):
+        with for_loop("detuning", detuning_sweep):
             # Set frequency with detuning
             # Assumes base frequency is already set
-            build.shift_frequency("qubit", build.var("detuning"))  # type: ignore[arg-type]  # detuning in MHz
+            shift_frequency("qubit", var("detuning"))  # type: ignore[arg-type]  # detuning in MHz
 
-            with build.for_loop("t_pulse", duration_sweep):
+            with for_loop("t_pulse", duration_sweep):
                 # Drive pulse
-                build.play(
+                play(
                     "qubit",
-                    build.square_pulse(
-                        duration=build.var("t_pulse"),  # type: ignore[arg-type]  # Variable duration in ns
+                    square_pulse(
+                        duration=var("t_pulse"),  # type: ignore[arg-type]  # Variable duration in ns
                         amplitude="80mV",
                     ),
                 )
 
                 # Measure
-                build.measure_and_discriminate(
+                measure_and_discriminate(
                     "qubit",
                     "readout",
                     "raw_result",
@@ -307,13 +307,13 @@ def example_rabi_with_detuning():
                 )
 
                 # Store
-                build.store("rabi_detuned", "qubit_state", mode="average")
+                store("rabi_detuned", "qubit_state", mode="average")
 
                 # Wait
-                build.wait("qubit", duration="10us")
+                wait("qubit", duration="10us")
 
             # Reset frequency shift for next detuning
-            build.shift_frequency("qubit", build.var("detuning"))  # Undo shift
+            shift_frequency("qubit", var("detuning"))  # Undo shift
 
     print(f"Created sequence with {len(seq.items)} operations")
     print(seq.model_dump_json(indent=2))
@@ -336,27 +336,27 @@ def example_pulsed_rabi():
     print("Use Gaussian pulses for cleaner spectral properties")
     print()
 
-    with build.sequence() as seq:
+    with sequence() as seq:
         # Declare amplitude variable with unit
-        build.var_decl("amp", "float", unit="mV")
+        var_decl("amp", "float", unit="mV")
 
         # Amplitude sweep for shaped pulses in mV
         amp_sweep = LinSpace(start=0.0, stop=100.0, num=50)
 
-        with build.for_loop("amp", amp_sweep):
+        with for_loop("amp", amp_sweep):
             # Use external Gaussian pulse shape
-            build.play(
+            play(
                 "qubit",
-                build.external_pulse(
+                external_pulse(
                     "pulses.gaussian",
                     duration="100ns",
-                    amplitude=build.var("amp"),  # type: ignore[arg-type]  # Variable amplitude in mV
+                    amplitude=var("amp"),  # type: ignore[arg-type]  # Variable amplitude in mV
                     params={"sigma": "20ns"},  # Gaussian width
                 ),
             )
 
             # Measure
-            build.measure_and_discriminate(
+            measure_and_discriminate(
                 "qubit",
                 "readout",
                 "raw_result",
@@ -367,10 +367,10 @@ def example_pulsed_rabi():
             )
 
             # Store
-            build.store("rabi_gaussian", "qubit_state", mode="average")
+            store("rabi_gaussian", "qubit_state", mode="average")
 
             # Wait
-            build.wait("qubit", duration="10us")
+            wait("qubit", duration="10us")
 
     print(f"Created sequence with {len(seq.items)} operations")
     print(seq.model_dump_json(indent=2))
