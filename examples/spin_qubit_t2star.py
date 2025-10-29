@@ -40,14 +40,16 @@ def example_basic_t2star():
     print("π/2 - wait(τ) - π/2 sequence to measure dephasing")
     print()
 
-    with sequence() as seq:
+    with build_sequence() as seq:
+        var_decl("raw", "complex", unit="mV")
+        var_decl("state", "bool")
         # Declare tau variable with unit
         var_decl("tau", "float", unit="us")
 
         # Sweep free evolution time from 0 to 10 μs in 100 steps
         delay_sweep = LinSpace(start=0.0, stop=10.0, num=100)
 
-        with for_loop("tau", delay_sweep):
+        with for_("tau", delay_sweep):
             # First π/2 pulse (superposition)
             play(
                 "qubit",
@@ -72,9 +74,8 @@ def example_basic_t2star():
             # Measurement and discrimination
             measure_and_discriminate(
                 "qubit",
-                "readout",
-                "raw_result",
-                "qubit_state",
+                raw_var="raw_result",
+                result_var="qubit_state",
                 threshold="0.5mV",
                 duration="1us",
                 amplitude="50mV",
@@ -108,7 +109,9 @@ def example_t2star_with_detuning():
     print("Add detuning to observe oscillations more clearly")
     print()
 
-    with sequence() as seq:
+    with build_sequence() as seq:
+        var_decl("raw", "complex", unit="mV")
+        var_decl("state", "bool")
         # Declare tau variable with unit
         var_decl("tau", "float", unit="us")
 
@@ -118,7 +121,7 @@ def example_t2star_with_detuning():
         # Sweep delay time
         delay_sweep = LinSpace(start=0.0, stop=5.0, num=150)
 
-        with for_loop("tau", delay_sweep):
+        with for_("tau", delay_sweep):
             # Apply detuning
             shift_frequency("qubit", detuning)
 
@@ -143,9 +146,8 @@ def example_t2star_with_detuning():
             # Measure
             measure_and_discriminate(
                 "qubit",
-                "readout",
-                "raw_result",
-                "qubit_state",
+                raw_var="raw_result",
+                result_var="qubit_state",
                 threshold="0.5mV",
                 duration="1us",
                 amplitude="50mV",
@@ -178,14 +180,16 @@ def example_t2star_echo():
     print("π/2 - τ/2 - π - τ/2 - π/2 to refocus slow noise")
     print()
 
-    with sequence() as seq:
+    with build_sequence() as seq:
+        var_decl("raw", "complex", unit="mV")
+        var_decl("state", "bool")
         # Declare tau variable with unit
         var_decl("tau", "float", unit="us")
 
         # Sweep total evolution time
         delay_sweep = LinSpace(start=0.0, stop=20.0, num=100)
 
-        with for_loop("tau", delay_sweep):
+        with for_("tau", delay_sweep):
             # First π/2 pulse
             play(
                 "qubit",
@@ -217,9 +221,8 @@ def example_t2star_echo():
             # Measure
             measure_and_discriminate(
                 "qubit",
-                "readout",
-                "raw_result",
-                "qubit_state",
+                raw_var="raw_result",
+                result_var="qubit_state",
                 threshold="0.5mV",
                 duration="1us",
                 amplitude="50mV",
@@ -252,7 +255,9 @@ def example_cpmg_sequence():
     print("Multiple refocusing pulses for noise suppression")
     print()
 
-    with sequence() as seq:
+    with build_sequence() as seq:
+        var_decl("raw", "complex", unit="mV")
+        var_decl("state", "bool")
         # Declare tau variable with unit
         var_decl("tau", "float", unit="us")
 
@@ -262,8 +267,8 @@ def example_cpmg_sequence():
         # Sweep evolution time
         delay_sweep = LinSpace(start=0.0, stop=50.0, num=50)
 
-        with for_loop("n", n_pulses):
-            with for_loop("tau", delay_sweep):
+        with for_("n", n_pulses):
+            with for_("tau", delay_sweep):
                 # Initial π/2 pulse
                 play(
                     "qubit",
@@ -294,9 +299,8 @@ def example_cpmg_sequence():
                 # Measure
                 measure_and_discriminate(
                     "qubit",
-                    "readout",
-                    "raw_result",
-                    "qubit_state",
+                    raw_var="raw_result",
+                    result_var="qubit_state",
                     threshold="0.5mV",
                     duration="1us",
                     amplitude="50mV",
@@ -329,7 +333,9 @@ def example_t2star_vs_magnetic_field():
     print("2D map to find optimal operating point (sweet spot)")
     print()
 
-    with sequence() as seq:
+    with build_sequence() as seq:
+        var_decl("raw", "complex", unit="mV")
+        var_decl("state", "bool")
         # Declare variables with units
         var_decl("field", "float", unit="mT")
         var_decl("tau", "float", unit="us")
@@ -340,12 +346,12 @@ def example_t2star_vs_magnetic_field():
         # Delay sweep
         delay_sweep = LinSpace(start=0.0, stop=10.0, num=80)
 
-        with for_loop("field", field_sweep):
+        with for_("field", field_sweep):
             # Set magnetic field via some control channel
             # (implementation-specific)
             set_frequency("qubit", var("field"))  # type: ignore[arg-type]  # Proxy for B-field
 
-            with for_loop("tau", delay_sweep):
+            with for_("tau", delay_sweep):
                 # Ramsey sequence
                 # π/2 pulse
                 play(
@@ -365,9 +371,8 @@ def example_t2star_vs_magnetic_field():
                 # Measure
                 measure_and_discriminate(
                     "qubit",
-                    "readout",
-                    "raw_result",
-                    "qubit_state",
+                    raw_var="raw_result",
+                    result_var="qubit_state",
                     threshold="0.5mV",
                     duration="1us",
                     amplitude="50mV",
@@ -400,7 +405,9 @@ def example_phase_tomography():
     print("Measure qubit state in different bases")
     print()
 
-    with sequence() as seq:
+    with build_sequence() as seq:
+        var_decl("raw", "complex", unit="mV")
+        var_decl("state", "bool")
         # Declare variables with units
         var_decl("tau", "float", unit="us")
         var_decl("phi", "float", unit="deg")
@@ -411,8 +418,8 @@ def example_phase_tomography():
         # Phase sweep for tomography
         phase_sweep = LinSpace(start=0.0, stop=360.0, num=8)
 
-        with for_loop("tau", delay_sweep):
-            with for_loop("phi", phase_sweep):
+        with for_("tau", delay_sweep):
+            with for_("phi", phase_sweep):
                 # First π/2 pulse
                 play(
                     "qubit",
@@ -437,9 +444,8 @@ def example_phase_tomography():
                 # Measure
                 measure_and_discriminate(
                     "qubit",
-                    "readout",
-                    "raw_result",
-                    "qubit_state",
+                    raw_var="raw_result",
+                    result_var="qubit_state",
                     threshold="0.5mV",
                     duration="1us",
                     amplitude="50mV",

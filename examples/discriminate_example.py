@@ -22,15 +22,17 @@ def example_basic_discriminate():
     print("Example 1: Basic Discriminate")
     print("=" * 70)
 
-    with sequence() as seq:
+    with build_sequence() as seq:
+        var_decl("raw_result", "complex", unit="mV")
+        var_decl("qubit_state", "bool")
         # Perform measurement
-        measure("drive", "readout", "raw_result", duration="1us", amplitude="50mV")
+        measure("drive", result_var="raw_result", duration="1us", amplitude="50mV")
 
         # Discriminate the result to get a binary outcome
         discriminate(target="qubit_state", source="raw_result", threshold="0.5mV")
 
         # Use the discriminated result in a conditional
-        with if_condition("qubit_state"):
+        with if_("qubit_state"):
             play("qubit", square_pulse(duration="50ns", amplitude="100mV"))
 
     print(f"Created sequence with {len(seq.items)} operations")
@@ -45,7 +47,7 @@ def example_discriminate_with_rotation():
     print("Example 2: Discriminate with Rotation and Projection")
     print("=" * 70)
 
-    with sequence() as seq:
+    with build_sequence() as seq:
         # Perform measurement
         record(
             "readout",
@@ -86,12 +88,13 @@ def example_discriminate_in_schedule():
     print("Example 3: Discriminate in Schedule")
     print("=" * 70)
 
-    with schedule() as sched:
+    with build_schedule() as sched:
+        var_decl("result", "complex", unit="mV")
+        var_decl("bit", "bool")
         # Perform measurement
         meas_op = measure(
-            "drive",
-            "readout",
-            "result",
+            ("drive", "readout"),
+            result_var="result",
             duration="1us",
             amplitude="50mV",
             name="measurement",
@@ -120,10 +123,14 @@ def example_multi_qubit_readout():
     print("Example 4: Multi-Qubit Readout")
     print("=" * 70)
 
-    with sequence() as seq:
+    with build_sequence() as seq:
+        var_decl("raw_q0", "complex", unit="mV")
+        var_decl("raw_q1", "complex", unit="mV")
+        var_decl("state_q0", "bool")
+        var_decl("state_q1", "bool")
         # Read out multiple qubits
-        measure("drive_q0", "readout_q0", "raw_q0", duration="1us", amplitude="50mV")
-        measure("drive_q1", "readout_q1", "raw_q1", duration="1us", amplitude="50mV")
+        measure(("drive_q0", "readout_q0"), result_var="raw_q0", duration="1us", amplitude="50mV")
+        measure(("drive_q1", "readout_q1"), result_var="raw_q1", duration="1us", amplitude="50mV")
 
         # Discriminate each qubit with potentially different thresholds
         discriminate(
@@ -141,10 +148,10 @@ def example_multi_qubit_readout():
         )
 
         # Conditional operations based on results
-        with if_condition("state_q0"):
+        with if_("state_q0"):
             play("qubit_0", square_pulse(duration="50ns", amplitude="100mV"))
 
-        with if_condition("state_q1"):
+        with if_("state_q1"):
             play("qubit_1", square_pulse(duration="50ns", amplitude="100mV"))
 
     print(f"Created sequence with {len(seq.items)} operations")

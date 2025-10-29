@@ -39,7 +39,7 @@ def example_gaussian_pulse():
     print("Use external Gaussian pulse for smooth transitions")
     print()
 
-    with sequence() as seq:
+    with build_sequence() as seq:
         # Declare amplitude variable
         var_decl("amp", "float", unit="mV")
 
@@ -54,8 +54,9 @@ def example_gaussian_pulse():
             ),
         )
 
+        var_decl("result", "complex", unit="mV")
         # Measurement
-        measure("qubit", "readout", "result", duration="1us", amplitude="50mV")
+        measure("qubit", result_var="result", duration="1us", amplitude="50mV")
 
     print(f"Created sequence with {len(seq.items)} operations")
     print(seq.model_dump_json(indent=2))
@@ -77,7 +78,7 @@ def example_drag_pulse():
     print("DRAG pulse with derivative compensation")
     print()
 
-    with sequence() as seq:
+    with build_sequence() as seq:
         # DRAG pulse with beta parameter
         play(
             "qubit",
@@ -93,8 +94,9 @@ def example_drag_pulse():
             ),
         )
 
+        var_decl("result", "complex", unit="mV")
         # Measurement
-        measure("qubit", "readout", "result", duration="1us", amplitude="50mV")
+        measure("qubit", result_var="result", duration="1us", amplitude="50mV")
 
     print(f"Created sequence with {len(seq.items)} operations")
     print(seq.model_dump_json(indent=2))
@@ -115,7 +117,7 @@ def example_triangle_pulse():
     print("Custom triangle waveform from samples")
     print()
 
-    with sequence() as seq:
+    with build_sequence() as seq:
         # Triangle pulse with explicit samples
         play(
             "qubit",
@@ -124,8 +126,9 @@ def example_triangle_pulse():
             ),
         )
 
+        var_decl("result", "complex", unit="mV")
         # Measurement
-        measure("qubit", "readout", "result", duration="1us", amplitude="50mV")
+        measure("qubit", result_var="result", duration="1us", amplitude="50mV")
 
     print(f"Created sequence with {len(seq.items)} operations")
     print(seq.model_dump_json(indent=2))
@@ -147,7 +150,7 @@ def example_iq_modulation():
     print("Complex waveform with explicit IQ components")
     print()
 
-    with sequence() as seq:
+    with build_sequence() as seq:
         # Complex samples for IQ modulation
         # This creates a rotating frame pulse
         iq_samples = [
@@ -165,8 +168,9 @@ def example_iq_modulation():
             arbitrary_pulse(samples=iq_samples, duration="80ns", amplitude="90mV", interpolation="linear"),
         )
 
+        var_decl("result", "complex", unit="mV")
         # Measurement
-        measure("qubit", "readout", "result", duration="1us", amplitude="50mV")
+        measure("qubit", result_var="result", duration="1us", amplitude="50mV")
 
     print(f"Created sequence with {len(seq.items)} operations")
     print(seq.model_dump_json(indent=2))
@@ -188,7 +192,7 @@ def example_shaped_readout():
     print("Optimized readout pulse envelope")
     print()
 
-    with sequence() as seq:
+    with build_sequence() as seq:
         # π pulse
         play(
             "qubit",
@@ -230,7 +234,7 @@ def example_composite_pulse():
     print("Error-robust pulse sequence")
     print()
 
-    with sequence() as seq:
+    with build_sequence() as seq:
         # BB1 composite pulse for amplitude-error robustness
         # First pulse: X(φ)
         set_phase("qubit", "0deg")
@@ -256,8 +260,9 @@ def example_composite_pulse():
         # Reset phase
         set_phase("qubit", "0deg")
 
+        var_decl("result", "complex", unit="mV")
         # Measurement
-        measure("qubit", "readout", "result", duration="1us", amplitude="50mV")
+        measure("qubit", result_var="result", duration="1us", amplitude="50mV")
 
     print(f"Created sequence with {len(seq.items)} operations")
     print(seq.model_dump_json(indent=2))

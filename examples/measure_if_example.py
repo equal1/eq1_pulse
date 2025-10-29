@@ -22,13 +22,14 @@ def example_basic_measure_if():
     print("Example 1: Basic Measure-If")
     print("=" * 70)
 
-    with sequence() as seq:
+    with build_sequence() as seq:
+        var_decl("raw_data", "complex", unit="mV")
+        var_decl("qubit_state", "bool")
         # Measure, discriminate, and execute conditionally in one call
-        with measure_if(
-            "drive",
-            "readout",
-            "raw_data",
-            "qubit_state",
+        with measure_and_discriminate_and_if_(
+            "qubit",
+            raw_var="raw_data",
+            result_var="qubit_state",
             threshold="0.5mV",
             duration="1us",
             amplitude="50mV",
@@ -48,13 +49,14 @@ def example_measure_if_with_rotation():
     print("Example 2: Measure-If with Phase Rotation")
     print("=" * 70)
 
-    with sequence() as seq:
+    with build_sequence() as seq:
+        var_decl("raw_iq", "complex", unit="mV")
+        var_decl("excited_state", "bool")
         # Use phase rotation for better state separation
-        with measure_if(
-            "drive",
-            "readout",
-            "raw_iq",
-            "excited_state",
+        with measure_and_discriminate_and_if_(
+            "qubit",
+            raw_var="raw_iq",
+            result_var="excited_state",
             threshold="0.0mV",
             duration="1us",
             amplitude="50mV",
@@ -80,23 +82,25 @@ def example_nested_measure_if():
     print("Example 3: Nested Conditional Measurements")
     print("=" * 70)
 
-    with sequence() as seq:
+    with build_sequence() as seq:
+        var_decl("raw_q0", "complex", unit="mV")
+        var_decl("state_q0", "bool")
+        var_decl("raw_q1", "complex", unit="mV")
+        var_decl("state_q1", "bool")
         # First measurement
-        with measure_if(
-            "drive_q0",
-            "readout_q0",
-            "raw_q0",
-            "state_q0",
+        with measure_and_discriminate_and_if_(
+            "qubit_q0",
+            raw_var="raw_q0",
+            result_var="state_q0",
             threshold="0.5mV",
             duration="1us",
             amplitude="50mV",
         ):
             # If Q0 is excited, measure Q1
-            with measure_if(
-                "drive_q1",
-                "readout_q1",
-                "raw_q1",
-                "state_q1",
+            with measure_and_discriminate_and_if_(
+                "qubit_q1",
+                raw_var="raw_q1",
+                result_var="state_q1",
                 threshold="0.5mV",
                 duration="1us",
                 amplitude="50mV",
@@ -119,20 +123,21 @@ def example_measure_and_discriminate_separate():
     print("Example 4: Measure and Discriminate (Separate)")
     print("=" * 70)
 
-    with sequence() as seq:
+    with build_sequence() as seq:
+        var_decl("raw_result", "complex", unit="mV")
+        var_decl("discriminated_state", "bool")
         # Perform measurement and discrimination
         measure_and_discriminate(
-            "drive",
-            "readout",
-            "raw_result",
-            "discriminated_state",
+            "qubit",
+            raw_var="raw_result",
+            result_var="discriminated_state",
             threshold="0.5mV",
             duration="1us",
             amplitude="50mV",
         )
 
         # Manually create conditional - gives more control
-        with if_condition("discriminated_state"):
+        with if_("discriminated_state"):
             play("qubit", square_pulse(duration="50ns", amplitude="100mV"))
 
         # Can also do operations outside the conditional
@@ -150,14 +155,15 @@ def example_active_reset():
     print("Example 5: Active Reset Protocol")
     print("=" * 70)
 
-    with sequence() as seq:
+    with build_sequence() as seq:
+        var_decl("raw_state", "complex", unit="mV")
+        var_decl("is_excited", "bool")
         # Repeat measurement and reset until ground state
         with repeat(3):  # Max 3 attempts
-            with measure_if(
-                "drive",
-                "readout",
-                "raw_state",
-                "is_excited",
+            with measure_and_discriminate_and_if_(
+                "qubit",
+                raw_var="raw_state",
+                result_var="is_excited",
                 threshold="0.5mV",
                 duration="1us",
                 amplitude="50mV",
@@ -180,13 +186,14 @@ def example_measure_if_in_schedule():
     print("Example 6: Measure-If in Schedule")
     print("=" * 70)
 
-    with schedule() as sched:
+    with build_schedule() as sched:
+        var_decl("raw", "complex", unit="mV")
+        var_decl("state", "bool")
         # In schedules, measure_if works with relative timing
-        with measure_if(
-            "drive",
-            "readout",
-            "raw",
-            "state",
+        with measure_and_discriminate_and_if_(
+            "qubit",
+            raw_var="raw",
+            result_var="state",
             threshold="0.5mV",
             duration="1us",
             amplitude="50mV",

@@ -15,24 +15,25 @@ Examples
     from eq1_pulse.builder import *
 
     # Building a sequence
-    with sequence() as seq:
+    with build_sequence() as seq:
         play("ch1", square_pulse(duration="10us", amplitude="100mV"))
         wait("ch1", "5us")
         play("ch1", sine_pulse(duration="20us", amplitude="50mV", frequency="5GHz"))
 
     # Building a schedule with relative positioning
-    with schedule() as sched:
+    with build_schedule() as sched:
         op1 = play("ch1", square_pulse(duration="10us", amplitude="100mV"))
         op2 = play("ch2", square_pulse(duration="10us", amplitude="100mV"),
                         ref_op=op1, ref_pt="start", rel_time="5us")
 
     # Using control flow
-    with sequence() as seq:
+    with build_sequence() as seq:
         with repeat(10):
             play("qubit", square_pulse(duration="50ns", amplitude="100mV"))
-            measure("qubit", "readout", duration="1us", amplitude="50mV")
+            measure("qubit", result_var="readout", duration="1us", amplitude="50mV")
 
-        with for_loop("i", range(0, 100, 10)):
+        var_decl("i", "int", unit="MHz")
+        with for_("i", range(0, 100, 10)):
             set_frequency("qubit", var("i"))
             play("qubit", square_pulse(duration="100ns", amplitude="50mV"))
 """
@@ -79,20 +80,20 @@ if TYPE_CHECKING:
 __all__ = (
     "arbitrary_pulse",
     "barrier",
+    "build_schedule",
+    "build_sequence",
     "channel",
     "discriminate",
     "external_pulse",
-    "for_loop",
-    "if_condition",
+    "for_",
+    "if_",
     "measure",
     "measure_and_discriminate",
-    "measure_if",
+    "measure_and_discriminate_and_if_",
     "play",
     "pulse_ref",
     "record",
     "repeat",
-    "schedule",
-    "sequence",
     "set_frequency",
     "set_phase",
     "shift_frequency",
@@ -130,7 +131,7 @@ def _current_context() -> Any:
     :raises RuntimeError: If no context is active
     """
     if not _context_stack:
-        raise RuntimeError("No active building context. Use sequence() or schedule() context manager first.")
+        raise RuntimeError("No active building context. Use build_sequence() or bschedule() context manager first.")
     return _context_stack[-1]
 
 
@@ -182,7 +183,7 @@ def _add_to_schedule(operation: Any, **schedule_params: Unpack[ScheduleParams]) 
 
 
 @contextmanager
-def sequence() -> Iterator[OpSequence]:
+def build_sequence() -> Iterator[OpSequence]:
     """Context manager for building an operation sequence.
 
     :yield: The operation sequence being built
@@ -193,7 +194,7 @@ def sequence() -> Iterator[OpSequence]:
 
         from eq1_pulse.builder import *
 
-        with sequence() as seq:
+        with build_sequence() as seq:
             play("ch1", square_pulse(duration="10us", amplitude="100mV"))
             wait("ch1", "5us")
     """
@@ -206,7 +207,7 @@ def sequence() -> Iterator[OpSequence]:
 
 
 @contextmanager
-def schedule() -> Iterator[Schedule]:
+def build_schedule() -> Iterator[Schedule]:
     """Context manager for building a schedule.
 
     :yield: The schedule being built
@@ -217,7 +218,7 @@ def schedule() -> Iterator[Schedule]:
 
         from eq1_pulse.builder import *
 
-        with schedule() as sched:
+        with build_schedule() as sched:
             op1 = play("ch1", square_pulse(duration="10us", amplitude="100mV"))
             op2 = play("ch2", square_pulse(duration="10us", amplitude="100mV"),
                             ref_op=op1, ref_pt="start", rel_time="5us")
@@ -244,7 +245,7 @@ def repeat(count: int) -> Iterator[Repetition]:
 
         from eq1_pulse.builder import *
 
-        with sequence():
+        with build_sequence():
             with repeat(10):
                 play("qubit", square_pulse(duration="50ns", amplitude="100mV"))
     """
@@ -277,7 +278,7 @@ def repeat(count: int) -> Iterator[Repetition]:
 
 
 @contextmanager
-def for_loop(
+def for_(
     var: VariableRefLike | list[VariableRefLike],
     items: Iterable[Any] | Range | LinSpace,
 ) -> Iterator[Iteration]:
@@ -294,8 +295,9 @@ def for_loop(
 
         from eq1_pulse.builder import *
 
-        with sequence():
-            with for_loop("i", range(0, 100, 10)):
+        with build_sequence():
+            var_decl("i", "int", unit="MHz")
+            with for_("i", range(0, 100, 10)):
                 set_frequency("qubit", var("i"))
     """
     body = OpSequence(items=[])
@@ -327,7 +329,7 @@ def for_loop(
 
 
 @contextmanager
-def if_condition(var: VariableRefLike) -> Iterator[Conditional]:
+def if_(var: VariableRefLike) -> Iterator[Conditional]:
     """Context manager for building a conditional block.
 
     :param var: Variable reference for the condition
@@ -340,8 +342,10 @@ def if_condition(var: VariableRefLike) -> Iterator[Conditional]:
 
         from eq1_pulse.builder import *
 
-        with sequence():
-            with if_condition("result"):
+        with build_sequence():
+            var_decl("result", "bool")
+            # ... perform measurement to populate result ...
+            with if_("result"):
                 play("qubit", square_pulse(duration="50ns", amplitude="100mV"))
     """
     body = OpSequence(items=[])
@@ -373,12 +377,11 @@ def if_condition(var: VariableRefLike) -> Iterator[Conditional]:
 
 
 @contextmanager
-def measure_if(
-    drive_channel: ChannelRefLike,
-    readout_channel: ChannelRefLike,
+def measure_and_discriminate_and_if_(
+    channel: ChannelRefLike | tuple[ChannelRefLike, ChannelRefLike],
+    *,
     raw_var: VariableRefLike,
     result_var: VariableRefLike,
-    *,
     threshold: ThresholdLike,
     duration: DurationLike,
     amplitude: AmplitudeLike,
@@ -394,11 +397,11 @@ def measure_if(
     """Measure, discriminate, and create a conditional block in one call.
 
     This is a convenience context manager that combines :func:`measure_and_discriminate`
-    with :func:`if_condition`. It performs a measurement, discriminates the result,
+    with :func:`if_`. It performs a measurement, discriminates the result,
     and opens a conditional block that executes if the discrimination result is true.
 
-    :param drive_channel: Channel to play measurement pulse on
-    :param readout_channel: Channel to record from
+    :param channel: Channel for measurement. Can be a single channel (used for both
+        drive and readout) or a tuple of (drive_channel, readout_channel)
     :param raw_var: Variable to store the raw measurement result
     :param result_var: Variable to store the discriminated binary result
     :param threshold: Threshold value for discrimination
@@ -421,21 +424,26 @@ def measure_if(
 
         from eq1_pulse.builder import *
 
-        with sequence():
+        with build_sequence():
+            var_decl("raw", "complex", unit="mV")
+            var_decl("state", "bool")
             # Measure, discriminate, and execute conditionally
-            with measure_if(
-                "drive", "readout", "raw", "state", "0.5mV",
-                duration="1us", amplitude="50mV"
+            with measure_and_discriminate_and_if_(
+                "qubit",
+                raw_var="raw",
+                result_var="state",
+                threshold="0.5mV",
+                duration="1us",
+                amplitude="50mV"
             ):
                 # This block executes if state is true
                 play("qubit", square_pulse(duration="50ns", amplitude="100mV"))
     """
     # Perform measurement and discrimination
     measure_and_discriminate(
-        drive_channel,
-        readout_channel,
-        raw_var,
-        result_var,
+        channel,
+        raw_var=raw_var,
+        result_var=result_var,
         threshold=threshold,
         duration=duration,
         amplitude=amplitude,
@@ -450,7 +458,7 @@ def measure_if(
     )
 
     # Open conditional block using the discriminated result
-    with if_condition(result_var) as cond:
+    with if_(result_var) as cond:
         yield cond
 
 
@@ -722,7 +730,7 @@ def var_decl(
 
         from eq1_pulse.builder import *
 
-        with sequence():
+        with build_sequence():
             # Declare a float variable for amplitude with unit
             var_decl("amp", "float", unit="mV")
 
@@ -834,7 +842,7 @@ def barrier(
 
         from eq1_pulse.builder import *
 
-        with sequence():
+        with build_sequence():
             # Operations on different channels may have different durations
             play("drive", square_pulse(duration="10us", amplitude="100mV"))
             play("readout", sine_pulse(duration="5us", amplitude="50mV", frequency="5GHz"))
@@ -1011,9 +1019,11 @@ def record(
 
     .. code-block:: python
 
-        from eq1_pulse.builder import record
+        from eq1_pulse.builder import build_sequence, record, var_decl
 
-        record("readout", "result", duration="1us", integration="demod")
+        var_decl("result", "complex", unit="mV")
+        with build_sequence() as seq:
+            record("readout", "result", duration="1us", integration="demod")
     """
     # Handle integration type
     if isinstance(integration, str):
@@ -1117,13 +1127,22 @@ def store(
 
         from eq1_pulse.builder import *
 
-        # Store single measurement
-        store("result", "measurement", mode="last")
+        with build_sequence():
+            var_decl("measurement", "complex", unit="mV")
+            var_decl("result", "complex", unit="mV")
+            # ... perform measurement to populate measurement ...
+
+            # Store single measurement
+            store("result", "measurement", mode="last")
 
         # Average multiple measurements
-        with for_loop("i", range(100)):
-            measure("drive", "readout", "m", duration="1us", amplitude="50mV")
-            store("avg_result", "m", mode="average")
+        with build_sequence():
+            var_decl("i", "int")
+            var_decl("m", "complex", unit="mV")
+            var_decl("avg_result", "complex", unit="mV")
+            with for_("i", range(100)):
+                measure("drive", result_var="m", duration="1us", amplitude="50mV")
+                store("avg_result", "m", mode="average")
     """
     op = Store(key=key, source=source, mode=mode)  # type: ignore[arg-type]
 
@@ -1136,10 +1155,9 @@ def store(
 
 
 def measure(
-    drive_channel: ChannelRefLike,
-    readout_channel: ChannelRefLike,
-    result_var: VariableRefLike,
+    channel: ChannelRefLike | tuple[ChannelRefLike, ChannelRefLike],
     *,
+    result_var: VariableRefLike,
     duration: DurationLike,
     amplitude: AmplitudeLike,
     integration: IntegrationType | Literal["full", "demod"] = "full",
@@ -1153,8 +1171,8 @@ def measure(
     This is a convenience function that creates a square pulse play operation
     and a record operation that execute simultaneously.
 
-    :param drive_channel: Channel to play measurement pulse on
-    :param readout_channel: Channel to record from
+    :param channel: Channel for measurement. Can be a single channel (used for both
+        drive and readout) or a tuple of (drive_channel, readout_channel)
     :param result_var: Variable to store the measurement result
     :param duration: Measurement duration
     :param amplitude: Measurement pulse amplitude
@@ -1170,11 +1188,24 @@ def measure(
 
     .. code-block:: python
 
-        from eq1_pulse.builder import measure
+        from eq1_pulse.builder import build_sequence, measure, var_decl
 
-        measure("qubit", "readout", "result",
-                     duration="1us", amplitude="50mV", integration="demod")
+        var_decl("result", "complex", unit="mV")
+        with build_sequence() as seq:
+            # Single channel for both drive and readout
+            measure("qubit", result_var="result",
+                    duration="1us", amplitude="50mV", integration="demod")
+
+            # Separate drive and readout channels
+            measure(("drive", "readout"), result_var="result",
+                    duration="1us", amplitude="50mV", integration="demod")
     """
+    # Parse channel parameter
+    if isinstance(channel, tuple):
+        drive_channel, readout_channel = channel
+    else:
+        drive_channel = readout_channel = channel
+
     # Create measurement pulse
     meas_pulse = square_pulse(duration=duration, amplitude=amplitude)
 
@@ -1220,11 +1251,10 @@ def measure(
 
 
 def measure_and_discriminate(
-    drive_channel: ChannelRefLike,
-    readout_channel: ChannelRefLike,
+    channel: ChannelRefLike | tuple[ChannelRefLike, ChannelRefLike],
+    *,
     raw_var: VariableRefLike,
     result_var: VariableRefLike,
-    *,
     threshold: ThresholdLike,
     duration: DurationLike,
     amplitude: AmplitudeLike,
@@ -1244,8 +1274,8 @@ def measure_and_discriminate(
     the raw result, discriminates it to a binary outcome, and returns
     a token for the discrimination operation.
 
-    :param drive_channel: Channel to play measurement pulse on
-    :param readout_channel: Channel to record from
+    :param channel: Channel for measurement. Can be a single channel (used for both
+        drive and readout) or a tuple of (drive_channel, readout_channel)
     :param raw_var: Variable to store the raw measurement result
     :param result_var: Variable to store the discriminated binary result
     :param threshold: Threshold value for discrimination
@@ -1268,21 +1298,28 @@ def measure_and_discriminate(
 
         from eq1_pulse.builder import *
 
-        # Measure and discriminate in one call
-        measure_and_discriminate(
-            "drive", "readout", "raw_data", "qubit_state", "0.5mV",
-            duration="1us", amplitude="50mV"
-        )
+        with build_sequence():
+            var_decl("raw_data", "complex", unit="mV")
+            var_decl("qubit_state", "bool")
 
-        # Then use the result in a conditional
-        with if_condition("qubit_state"):
-            play("qubit", square_pulse(duration="50ns", amplitude="100mV"))
+            # Measure and discriminate in one call
+            measure_and_discriminate(
+                "qubit",
+                raw_var="raw_data",
+                result_var="qubit_state",
+                threshold="0.5mV",
+                duration="1us",
+                amplitude="50mV"
+            )
+
+            # Then use the result in a conditional
+            with if_("qubit_state"):
+                play("qubit", square_pulse(duration="50ns", amplitude="100mV"))
     """
     # Perform measurement
     measure(
-        drive_channel,
-        readout_channel,
-        raw_var,
+        channel,
+        result_var=raw_var,
         duration=duration,
         amplitude=amplitude,
         integration=integration,

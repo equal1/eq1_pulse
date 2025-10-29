@@ -38,14 +38,16 @@ def example_amplitude_rabi():
     print("Sweep drive amplitude to calibrate π pulse")
     print()
 
-    with sequence() as seq:
+    with build_sequence() as seq:
+        var_decl("raw", "complex", unit="mV")
+        var_decl("state", "bool")
         # Declare amplitude variable with unit
         var_decl("amp", "float", unit="mV")
 
         # Sweep amplitude from 0 to 100 mV in 50 steps
         amplitude_sweep = LinSpace(start=0.0, stop=100.0, num=50)
 
-        with for_loop("amp", amplitude_sweep):
+        with for_("amp", amplitude_sweep):
             # Apply drive pulse with variable amplitude
             # Note: amp variable represents mV, use variable reference
             play(
@@ -59,9 +61,8 @@ def example_amplitude_rabi():
             # Measure qubit state
             measure_and_discriminate(
                 "qubit",
-                "readout",
-                "raw_result",
-                "qubit_state",
+                raw_var="raw_result",
+                result_var="qubit_state",
                 threshold="0.5mV",
                 duration="1us",
                 amplitude="50mV",
@@ -94,14 +95,16 @@ def example_time_rabi():
     print("Sweep pulse duration to calibrate π pulse timing")
     print()
 
-    with sequence() as seq:
+    with build_sequence() as seq:
+        var_decl("raw", "complex", unit="mV")
+        var_decl("state", "bool")
         # Declare duration variable with unit
         var_decl("t_drive", "float", unit="ns")
 
         # Sweep duration from 0 to 200 ns in 100 steps
         duration_sweep = LinSpace(start=0.0, stop=200.0, num=100)
 
-        with for_loop("t_drive", duration_sweep):
+        with for_("t_drive", duration_sweep):
             # Apply drive pulse with variable duration
             play(
                 "qubit",
@@ -114,9 +117,8 @@ def example_time_rabi():
             # Measure and discriminate
             measure_and_discriminate(
                 "qubit",
-                "readout",
-                "raw_result",
-                "qubit_state",
+                raw_var="raw_result",
+                result_var="qubit_state",
                 threshold="0.5mV",
                 duration="1us",
                 amplitude="50mV",
@@ -150,7 +152,9 @@ def example_frequency_rabi():
     print("Sweep drive frequency to find qubit resonance")
     print()
 
-    with sequence() as seq:
+    with build_sequence() as seq:
+        var_decl("raw", "complex", unit="mV")
+        var_decl("state", "bool")
         # Declare frequency variable with unit
         var_decl("freq", "float", unit="GHz")
 
@@ -159,7 +163,7 @@ def example_frequency_rabi():
         # Values in GHz
         freq_sweep = LinSpace(start=14.0, stop=16.0, num=200)
 
-        with for_loop("freq", freq_sweep):
+        with for_("freq", freq_sweep):
             # Set drive frequency
             set_frequency("qubit", var("freq"))  # type: ignore[arg-type]  # freq in GHz
 
@@ -175,9 +179,8 @@ def example_frequency_rabi():
             # Measure
             measure_and_discriminate(
                 "qubit",
-                "readout",
-                "raw_result",
-                "qubit_state",
+                raw_var="raw_result",
+                result_var="qubit_state",
                 threshold="0.5mV",
                 duration="1us",
                 amplitude="50mV",
@@ -210,7 +213,9 @@ def example_2d_rabi():
     print("Create 2D map for comprehensive pulse calibration")
     print()
 
-    with sequence() as seq:
+    with build_sequence() as seq:
+        var_decl("raw", "complex", unit="mV")
+        var_decl("state", "bool")
         # Declare variables with units
         var_decl("amp", "float", unit="mV")
         var_decl("dur", "float", unit="ns")
@@ -221,8 +226,8 @@ def example_2d_rabi():
         dur_sweep = LinSpace(start=10.0, stop=200.0, num=40)
 
         # Nested loops for 2D sweep
-        with for_loop("amp", amp_sweep):
-            with for_loop("dur", dur_sweep):
+        with for_("amp", amp_sweep):
+            with for_("dur", dur_sweep):
                 # Drive pulse with both parameters varying
                 play(
                     "qubit",
@@ -235,9 +240,8 @@ def example_2d_rabi():
                 # Measure
                 measure_and_discriminate(
                     "qubit",
-                    "readout",
-                    "raw_result",
-                    "qubit_state",
+                    raw_var="raw_result",
+                    result_var="qubit_state",
                     threshold="0.5mV",
                     duration="1us",
                     amplitude="50mV",
@@ -270,7 +274,9 @@ def example_rabi_with_detuning():
     print("Characterize Rabi oscillations off-resonance")
     print()
 
-    with sequence() as seq:
+    with build_sequence() as seq:
+        var_decl("raw", "complex", unit="mV")
+        var_decl("state", "bool")
         # Declare variables with units
         var_decl("detuning", "float", unit="MHz")
         var_decl("t_pulse", "float", unit="ns")
@@ -280,12 +286,12 @@ def example_rabi_with_detuning():
         # Pulse duration sweep in ns
         duration_sweep = LinSpace(start=0.0, stop=200.0, num=50)
 
-        with for_loop("detuning", detuning_sweep):
+        with for_("detuning", detuning_sweep):
             # Set frequency with detuning
             # Assumes base frequency is already set
             shift_frequency("qubit", var("detuning"))  # type: ignore[arg-type]  # detuning in MHz
 
-            with for_loop("t_pulse", duration_sweep):
+            with for_("t_pulse", duration_sweep):
                 # Drive pulse
                 play(
                     "qubit",
@@ -298,9 +304,8 @@ def example_rabi_with_detuning():
                 # Measure
                 measure_and_discriminate(
                     "qubit",
-                    "readout",
-                    "raw_result",
-                    "qubit_state",
+                    raw_var="raw_result",
+                    result_var="qubit_state",
                     threshold="0.5mV",
                     duration="1us",
                     amplitude="50mV",
@@ -336,14 +341,16 @@ def example_pulsed_rabi():
     print("Use Gaussian pulses for cleaner spectral properties")
     print()
 
-    with sequence() as seq:
+    with build_sequence() as seq:
+        var_decl("raw", "complex", unit="mV")
+        var_decl("state", "bool")
         # Declare amplitude variable with unit
         var_decl("amp", "float", unit="mV")
 
         # Amplitude sweep for shaped pulses in mV
         amp_sweep = LinSpace(start=0.0, stop=100.0, num=50)
 
-        with for_loop("amp", amp_sweep):
+        with for_("amp", amp_sweep):
             # Use external Gaussian pulse shape
             play(
                 "qubit",
@@ -358,9 +365,8 @@ def example_pulsed_rabi():
             # Measure
             measure_and_discriminate(
                 "qubit",
-                "readout",
-                "raw_result",
-                "qubit_state",
+                raw_var="raw_result",
+                result_var="qubit_state",
                 threshold="0.5mV",
                 duration="1us",
                 amplitude="50mV",

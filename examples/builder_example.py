@@ -30,7 +30,7 @@ def example_simple_sequence():
     print("Example 1: Simple Sequence")
     print("=" * 70)
 
-    with sequence() as seq:
+    with build_sequence() as seq:
         # Play pulses on different channels
         play("drive", square_pulse(duration="10us", amplitude="100mV"))
         play("readout", sine_pulse(duration="5us", amplitude="50mV", frequency="5GHz"))
@@ -54,7 +54,7 @@ def example_schedule_with_positioning():
     print("Example 2: Schedule with Relative Positioning")
     print("=" * 70)
 
-    with schedule() as sched:
+    with build_schedule() as sched:
         # First operation starts at default time
         op1 = play("qubit", square_pulse(duration="10us", amplitude="100mV"), name="drive_pulse")
 
@@ -83,7 +83,7 @@ def example_with_repetition():
     print("Example 3: Repetition (Loop)")
     print("=" * 70)
 
-    with sequence() as seq:
+    with build_sequence() as seq:
         # Repeat a pulse sequence 10 times
         with repeat(10):
             play("qubit", square_pulse(duration="50ns", amplitude="100mV"))
@@ -101,9 +101,9 @@ def example_with_iteration():
     print("Example 4: Iteration (For Loop)")
     print("=" * 70)
 
-    with sequence() as seq:
+    with build_sequence() as seq:
         # Iterate over frequency values
-        with for_loop("freq", range(4000, 6000, 100)):
+        with for_("freq", range(4000, 6000, 100)):
             set_frequency("qubit", var("freq"))
             play("qubit", square_pulse(duration="100ns", amplitude="50mV"))
             wait("qubit", duration="100ns")
@@ -120,12 +120,13 @@ def example_with_conditional():
     print("Example 5: Conditional")
     print("=" * 70)
 
-    with sequence() as seq:
+    with build_sequence() as seq:
+        var_decl("result", "complex", unit="mV")
         # Measure first
-        measure("qubit", "readout", "result", duration="1us", amplitude="50mV", integration="demod")
+        measure("qubit", result_var="result", duration="1us", amplitude="50mV", integration="demod")
 
         # Conditionally apply correction based on result
-        with if_condition("result"):
+        with if_("result"):
             play("qubit", square_pulse(duration="50ns", amplitude="100mV"))
 
     print(f"Created sequence with {len(seq.items)} operation(s)")
@@ -140,13 +141,15 @@ def example_measurement():
     print("Example 6: Measurement Operation")
     print("=" * 70)
 
-    with sequence() as seq:
+    with build_sequence() as seq:
+        var_decl("result", "complex", unit="mV")
+        var_decl("result_demod", "complex", unit="mV")
         # Simple measurement
-        measure("qubit", "readout", "result", duration="1us", amplitude="50mV", integration="full")
+        measure("qubit", result_var="result", duration="1us", amplitude="50mV", integration="full")
 
         # Measurement with demodulation
         measure(
-            "qubit", "readout", "result_demod", duration="1us", amplitude="50mV", integration="demod", phase="90deg"
+            "qubit", result_var="result_demod", duration="1us", amplitude="50mV", integration="demod", phase="90deg"
         )
 
     print(f"Created sequence with {len(seq.items)} operation(s)")
@@ -161,24 +164,26 @@ def example_complex_program():
     print("Example 7: Complex Program")
     print("=" * 70)
 
-    with sequence() as seq:
+    with build_sequence() as seq:
         # Initialize
         set_frequency("qubit", "5GHz")
         set_phase("qubit", "0deg")
 
+        var_decl("amp", "int", unit="mV")
+        var_decl("measurement", "complex", unit="mV")
         # Repeated Rabi experiment
         with repeat(100):
             # Sweep pulse amplitude
-            with for_loop("amp", range(0, 200, 10)):
+            with for_("amp", range(0, 200, 10)):
                 # Apply pulse with variable amplitude
                 amp_ref = var("amp")
                 play("qubit", square_pulse(duration="100ns", amplitude="1mV"), scale_amp=amp_ref)
 
                 # Measure
-                measure("qubit", "readout", "measurement", duration="1us", amplitude="50mV")
+                measure("qubit", result_var="measurement", duration="1us", amplitude="50mV")
 
                 # Reset if needed
-                with if_condition("measurement"):
+                with if_("measurement"):
                     play("qubit", square_pulse(duration="1us", amplitude="200mV"))
 
                 # Wait between experiments
