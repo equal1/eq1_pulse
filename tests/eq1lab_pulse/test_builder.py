@@ -3,6 +3,7 @@
 import pytest
 
 from eq1_pulse.builder import (
+    add_block,
     arbitrary_pulse,
     barrier,
     build_schedule,
@@ -695,3 +696,236 @@ class TestSerialization:
         # Deserialize
         restored = Schedule.model_validate_json(json_str)
         assert len(restored.items) == len(sched.items)
+
+
+class TestNestedDecorators:
+    """Tests for the @nested_sequence and @nested_schedule decorators."""
+
+    def test_nested_sequence_decorator_in_sequence(self):
+        """Test @nested_sequence decorator creates sub_sequence in sequence context."""
+        from eq1_pulse.builder import nested_sequence
+
+        @nested_sequence
+        def hadamard_gate(qubit: str):
+            """Apply a Hadamard gate."""
+            play(qubit, square_pulse(duration="20ns", amplitude="100mV"))
+            shift_phase(qubit, "90deg")
+            play(qubit, square_pulse(duration="20ns", amplitude="100mV"))
+
+        with build_sequence() as seq:
+            hadamard_gate("qubit0")
+            play("qubit0", square_pulse(duration="10ns", amplitude="50mV"))
+
+        # Should have 2 items: sub-sequence (with hadamard) + play
+        assert len(seq.items) == 2
+        assert isinstance(seq.items[0], OpSequence)  # sub_sequence
+        assert isinstance(seq.items[1], Play)
+
+        # Check the sub-sequence contains 3 operations
+        sub_seq = seq.items[0]
+        assert len(sub_seq.items) == 3
+
+    def test_nested_schedule_decorator_in_schedule(self):
+        """Test @nested_schedule decorator creates sub_schedule in schedule context."""
+        from eq1_pulse.builder import nested_schedule
+
+        @nested_schedule
+        def measurement_block(drive_ch: str, readout_ch: str, result_var: str):
+            """Perform readout measurement."""
+            play(drive_ch, square_pulse(duration="1us", amplitude="50mV"))
+            record(readout_ch, var=result_var, duration="1us")
+
+        with build_schedule() as sched:
+            op1 = play("qubit", square_pulse(duration="20ns", amplitude="100mV"))
+            add_block(measurement_block("drive0", "readout0", "result"), ref_op=op1, ref_pt="end", rel_time="100ns")
+
+        # Should have 2 items: play + sub-schedule
+        assert len(sched.items) == 2
+        assert isinstance(sched.items[0].op, Play)
+        assert isinstance(sched.items[1].op, Schedule)  # sub_schedule
+
+        # Check the sub-schedule contains 2 operations
+        sub_sched = sched.items[1].op
+        assert isinstance(sub_sched, Schedule)
+        assert len(sub_sched.items) == 2
+
+    def test_nested_sequence_with_parameters(self):
+        """Test @nested_sequence decorator with function parameters."""
+        from eq1_pulse.builder import nested_sequence
+
+        @nested_sequence
+        def rabi_pulse(qubit: str, amplitude: str, duration: str):
+            """Apply a Rabi drive pulse."""
+            play(qubit, square_pulse(duration=duration, amplitude=amplitude))
+            wait(qubit, duration="50ns")
+
+        with build_sequence() as seq:
+            rabi_pulse("qubit0", "100mV", "20ns")
+            rabi_pulse("qubit1", "150mV", "30ns")
+
+        assert len(seq.items) == 2
+        for item in seq.items:
+            assert isinstance(item, OpSequence)
+            assert len(item.items) == 2  # play + wait
+
+    def test_nested_schedule_returns_token(self):
+        """Test @nested_schedule decorator returns operation token in schedule context."""
+        from eq1_pulse.builder import nested_schedule
+
+        @nested_schedule
+        def gate_sequence(qubit: str):
+            """Apply gate sequence."""
+            play(qubit, square_pulse(duration="20ns", amplitude="100mV"))
+
+        with build_schedule() as sched:
+            token1 = add_block(gate_sequence("qubit0"), name="gate1")
+            add_block(gate_sequence("qubit1"), ref_op=token1, ref_pt="end", rel_time="50ns")
+
+        assert len(sched.items) == 2
+
+    def test_nested_sequence_in_control_flow(self):
+        """Test @nested_sequence decorator works inside control flow."""
+        from eq1_pulse.builder import nested_sequence
+
+        @nested_sequence
+        def pulse_block(qubit: str):
+            """Simple pulse block."""
+            play(qubit, square_pulse(duration="20ns", amplitude="100mV"))
+
+        with build_sequence() as seq:
+            with repeat(3):
+                pulse_block("qubit0")
+
+        assert len(seq.items) == 1
+        assert isinstance(seq.items[0], Repetition)
+        # Inside the repetition body, there should be a sub-sequence
+        assert len(seq.items[0].body.items) == 1
+        assert isinstance(seq.items[0].body.items[0], OpSequence)
+
+    def test_nested_sequence_without_context(self):
+        """Test @nested_sequence decorator works outside building context."""
+        from eq1_pulse.builder import nested_sequence
+
+        call_count = 0
+
+        @nested_sequence
+        def test_func(x: int) -> int:
+            """Test function."""
+            nonlocal call_count
+            call_count += 1
+            return x * 2
+
+        # Should work normally without context
+        result = test_func(5)
+        assert result == 10
+        assert call_count == 1
+
+    def test_nested_schedule_without_context(self):
+        """Test @nested_schedule decorator raises error outside building context."""
+        from eq1_pulse.builder import nested_schedule
+
+        @nested_schedule
+        def test_func(x: int) -> int:
+            """Test function."""
+            return x * 2
+
+        # Should raise error when called without context
+        with pytest.raises(RuntimeError, match=r"No active building context"):
+            test_func(5)
+
+    def test_multiple_nested_sequence_functions(self):
+        """Test using multiple @nested_sequence decorated functions."""
+        from eq1_pulse.builder import nested_sequence
+
+        @nested_sequence
+        def init_block(qubit: str):
+            """Initialization."""
+            play(qubit, square_pulse(duration="100ns", amplitude="200mV"))
+
+        @nested_sequence
+        def gate_block(qubit: str):
+            """Gate operations."""
+            play(qubit, square_pulse(duration="20ns", amplitude="100mV"))
+            shift_phase(qubit, "90deg")
+
+        @nested_sequence
+        def readout_block(qubit: str):
+            """Readout."""
+            play(qubit, square_pulse(duration="1us", amplitude="50mV"))
+
+        with build_sequence() as seq:
+            init_block("qubit0")
+            gate_block("qubit0")
+            readout_block("qubit0")
+
+        # Should have 3 sub-sequences
+        assert len(seq.items) == 3
+        assert all(isinstance(item, OpSequence) for item in seq.items)
+
+    def test_nested_sequence_in_schedule_raises_error(self):
+        """Test @nested_sequence raises error in schedule context."""
+        from eq1_pulse.builder import nested_sequence
+
+        @nested_sequence
+        def sequence_func(qubit: str):
+            """Function for sequences only."""
+            play(qubit, square_pulse(duration="20ns", amplitude="100mV"))
+
+        with (
+            pytest.raises(RuntimeError, match=r"@nested_sequence decorator cannot be used in schedule context"),
+            build_schedule(),
+        ):
+            sequence_func("qubit0")
+
+    def test_nested_schedule_in_sequence_raises_error(self):
+        """Test @nested_schedule raises error in sequence context."""
+        from eq1_pulse.builder import nested_schedule
+
+        @nested_schedule
+        def schedule_func(qubit: str):
+            """Function for schedules only."""
+            play(qubit, square_pulse(duration="20ns", amplitude="100mV"))
+
+        # ScheduleBlock can only be added in schedule contexts
+        with (
+            pytest.raises(RuntimeError, match=r"add_block\(\) can only be used within a build_schedule\(\) context"),
+            build_sequence(),
+        ):
+            block = schedule_func("qubit0")
+            add_block(block)
+
+    def test_unconsumed_schedule_block_raises_error(self):
+        """Test that unconsumed ScheduleBlock raises error on context close."""
+        from eq1_pulse.builder import nested_schedule
+
+        @nested_schedule
+        def test_block(qubit: str):
+            """Test block."""
+            play(qubit, square_pulse(duration="20ns", amplitude="100mV"))
+
+        # Should raise error when block is created but not added
+        with pytest.raises(
+            RuntimeError,
+            match=r"Schedule context closed with 1 unconsumed ScheduleBlock\(s\).*add_block\(\)",
+        ):
+            with build_schedule():
+                test_block("qubit0")  # Created but not added with add_block()
+
+    def test_multiple_unconsumed_blocks_raises_error(self):
+        """Test that multiple unconsumed ScheduleBlocks are detected."""
+        from eq1_pulse.builder import nested_schedule
+
+        @nested_schedule
+        def test_block(qubit: str):
+            """Test block."""
+            play(qubit, square_pulse(duration="20ns", amplitude="100mV"))
+
+        # Should report count of unconsumed blocks
+        with pytest.raises(
+            RuntimeError,
+            match=r"Schedule context closed with 2 unconsumed ScheduleBlock\(s\)",
+        ):
+            with build_schedule():
+                test_block("qubit0")
+                test_block("qubit1")
+                # Neither added with add_block()

@@ -73,6 +73,8 @@ Examples
 """
 
 from .core import (
+    ScheduleBlock,
+    add_block,
     arbitrary_pulse,
     barrier,
     build_schedule,
@@ -85,6 +87,8 @@ from .core import (
     measure,
     measure_and_discriminate,
     measure_and_discriminate_and_if_,
+    nested_schedule,
+    nested_sequence,
     play,
     pulse_ref,
     record,
@@ -106,7 +110,9 @@ from .utils import OperationToken, ScheduleParams, resolve_schedule_params
 
 __all__ = (
     "OperationToken",
+    "ScheduleBlock",
     "ScheduleParams",
+    "add_block",
     "arbitrary_pulse",
     "barrier",
     "build_schedule",
@@ -119,6 +125,8 @@ __all__ = (
     "measure",
     "measure_and_discriminate",
     "measure_and_discriminate_and_if_",
+    "nested_schedule",
+    "nested_sequence",
     "play",
     "pulse_ref",
     "record",

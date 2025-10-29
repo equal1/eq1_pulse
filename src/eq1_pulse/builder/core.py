@@ -40,6 +40,9 @@ Examples
 
 from __future__ import annotations
 
+import traceback
+from collections import defaultdict
+from collections.abc import Callable
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, Literal, Unpack
 
@@ -78,6 +81,8 @@ if TYPE_CHECKING:
     from ..models.reference_types import ChannelRefLike, PulseRefLike, VariableRefLike
 
 __all__ = (
+    "ScheduleBlock",
+    "add_block",
     "arbitrary_pulse",
     "barrier",
     "build_schedule",
@@ -90,6 +95,8 @@ __all__ = (
     "measure",
     "measure_and_discriminate",
     "measure_and_discriminate_and_if_",
+    "nested_schedule",
+    "nested_sequence",
     "play",
     "pulse_ref",
     "record",
@@ -113,6 +120,9 @@ _context_stack: list[
     OpSequence | Schedule | Repetition | Iteration | Conditional | SchedRepetition | SchedIteration | SchedConditional
 ] = []
 _op_counter = 0
+# Track unconsumed schedule blocks per context using defaultdict
+# Key is id(context), value is list of unconsumed blocks
+_unconsumed_blocks: defaultdict[int, list[ScheduleBlock]] = defaultdict(list)
 
 
 def _generate_op_name() -> str:
@@ -280,9 +290,33 @@ def build_schedule() -> Iterator[Schedule]:
     """
     sched = Schedule(items=[])
     _context_stack.append(sched)
+    sched_id = id(sched)
     try:
         yield sched
     finally:
+        # Check for unconsumed schedule blocks before popping context
+        unconsumed = _unconsumed_blocks[sched_id]
+        if unconsumed:
+            count = len(unconsumed)
+            # Build detailed error message with traceback info
+            error_parts = [
+                f"Schedule context closed with {count} unconsumed ScheduleBlock(s). "
+                "All @nested_schedule decorated function calls must be passed to add_block() "
+                "with schedule parameters.\n"
+            ]
+
+            # Add creation info for each unconsumed block
+            for i, block in enumerate(unconsumed, 1):
+                error_parts.append(f"\nUnconsumed block #{i} created at:")
+                error_parts.append(block._get_creation_info())
+
+            # Clean up before raising
+            del _unconsumed_blocks[sched_id]
+            _context_stack.pop()
+            raise RuntimeError("".join(error_parts))
+        # Clean up empty list
+        if sched_id in _unconsumed_blocks:
+            del _unconsumed_blocks[sched_id]
         _context_stack.pop()
 
 
@@ -332,9 +366,33 @@ def sub_schedule(**schedule_params: Unpack[ScheduleParams]) -> Iterator[Schedule
 
     # Push nested schedule as current context for operations inside it
     _context_stack.append(nested_sched)
+    sched_id = id(nested_sched)
     try:
         yield nested_sched
     finally:
+        # Check for unconsumed schedule blocks before popping context
+        unconsumed = _unconsumed_blocks[sched_id]
+        if unconsumed:
+            count = len(unconsumed)
+            # Build detailed error message with traceback info
+            error_parts = [
+                f"sub_schedule context closed with {count} unconsumed ScheduleBlock(s). "
+                "All @nested_schedule decorated function calls must be passed to add_block() "
+                "with schedule parameters.\n"
+            ]
+
+            # Add creation info for each unconsumed block
+            for i, block in enumerate(unconsumed, 1):
+                error_parts.append(f"\nUnconsumed block #{i} created at:")
+                error_parts.append(block._get_creation_info())
+
+            # Clean up before raising
+            del _unconsumed_blocks[sched_id]
+            _context_stack.pop()
+            raise RuntimeError("".join(error_parts))
+        # Clean up empty list
+        if sched_id in _unconsumed_blocks:
+            del _unconsumed_blocks[sched_id]
         _context_stack.pop()
 
     # Return the token so it can be used for further references
@@ -852,6 +910,223 @@ def var_decl(
     """
     var_decl_obj = VariableDecl(name=name, dtype=dtype, shape=shape, unit=unit)
     _add_to_sequence(var_decl_obj)
+
+
+# ============================================================================
+# Decorators for automatic sub-context wrapping
+# ============================================================================
+
+
+class ScheduleBlock:
+    """A schedule block that must be added via add_block().
+
+    This is returned by @nested_schedule decorated functions and must be
+    passed to add_block() to be added to the schedule. Unconsumed blocks
+    are tracked and verified when the schedule context closes.
+    """
+
+    def __init__(self, func: Callable[..., Any], args: tuple[Any, ...], kwargs: dict[str, Any]):
+        """Initialize the schedule block.
+
+        :param func: The wrapped function to execute later
+        :param args: Positional arguments for the function
+        :param kwargs: Keyword arguments for the function
+        """
+        self._func = func
+        self._args = args
+        self._kwargs = kwargs
+
+        # Capture the traceback of where this block was created
+        # We'll use this to provide helpful error messages if the block is not consumed
+        self._creation_traceback = traceback.format_stack()[:-1]  # Exclude this __init__ frame
+
+        # Register this block with the current context
+        context = _current_context()
+        _unconsumed_blocks[id(context)].append(self)
+
+    def _execute(self) -> None:
+        """Execute the block's function and mark as consumed."""
+        # Remove from unconsumed list (find the context this belongs to)
+        for blocks in _unconsumed_blocks.values():
+            if self in blocks:
+                blocks.remove(self)
+                break
+
+        # Execute the function
+        self._func(*self._args, **self._kwargs)
+
+    def _get_creation_info(self) -> str:
+        """Get formatted information about where this block was created."""
+        # Format the traceback to show where the block was created
+        return "".join(self._creation_traceback)
+
+
+def add_block(block: ScheduleBlock, **schedule_params: Unpack[ScheduleParams]) -> OperationToken | None:
+    """Add a schedule block to the current schedule with timing parameters.
+
+    This function must be used with @nested_schedule decorated functions to
+    add them to a schedule with positioning parameters.
+
+    :param block: The ScheduleBlock returned by calling a @nested_schedule decorated function
+    :param schedule_params: Schedule timing parameters (name, ref_op, ref_pt, ref_pt_new, rel_time)
+
+    :return: Operation token for referencing this block
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import *
+
+        @nested_schedule
+        def init_block(qubit: str):
+            play(qubit, square_pulse(duration="100ns", amplitude="200mV"))
+
+        with build_schedule():
+            # Call the function to create a block, then add it with timing
+            token = add_block(init_block("qubit0"), name="init")
+            add_block(init_block("qubit1"), ref_op=token, ref_pt="end", rel_time="50ns")
+    """
+    if not isinstance(block, ScheduleBlock):
+        raise TypeError("add_block() requires a ScheduleBlock from @nested_schedule decorated function")
+
+    context = _current_context()
+    if not isinstance(context, Schedule):
+        raise RuntimeError("add_block() can only be used within a build_schedule() context")
+
+    # Record the number of items before
+    items_before = len(context.items)
+
+    # Execute the block within a sub_schedule
+    with sub_schedule(**schedule_params) as _:  # type: ignore[arg-type]
+        block._execute()
+
+    # Get the token from the newly added scheduled operation
+    if len(context.items) > items_before:
+        last_sched_op = context.items[-1]
+        if last_sched_op.name:
+            return OperationToken(last_sched_op.name, last_sched_op)
+    return None
+
+
+def nested_sequence[R, **P](func: Callable[P, R]) -> Callable[P, R]:
+    """Decorator that automatically wraps a function body in a sub-sequence.
+
+    This decorator creates a :func:`sub_sequence` context around the function body,
+    allowing you to define reusable operation blocks that can be composed together
+    in sequence contexts. Use this for functions that don't need schedule-specific
+    timing parameters.
+
+    :param func: The function to decorate
+
+    :return: The decorated function that creates a sub-sequence when called
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import *
+
+        @nested_sequence
+        def hadamard_gate(qubit: str):
+            '''Apply a Hadamard gate.'''
+            play(qubit, square_pulse(duration="20ns", amplitude="100mV"))
+            shift_phase(qubit, "90deg")
+            play(qubit, square_pulse(duration="20ns", amplitude="100mV"))
+            shift_phase(qubit, "-90deg")
+
+        @nested_sequence
+        def measurement_block(drive_ch: str, readout_ch: str, result_var: str):
+            '''Perform readout measurement.'''
+            play(drive_ch, square_pulse(duration="1us", amplitude="50mV"))
+            record(readout_ch, var=result_var, duration="1us")
+
+        # Use in sequence context - automatically creates sub_sequence
+        with build_sequence():
+            var_decl("readout", "complex", unit="mV")
+            hadamard_gate("qubit0")
+            measurement_block("drive0", "readout0", "readout")
+    """
+    from functools import wraps
+
+    @wraps(func)
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+        # Check if we're in a context
+        if _context_stack:
+            context = _current_context()
+
+            # In sequence context (OpSequence or control flow)
+            if isinstance(context, OpSequence | Repetition | Iteration | Conditional):
+                # Use sub_sequence context
+                with sub_sequence() as _:
+                    return func(*args, **kwargs)  # type: ignore[return-value]
+            # In schedule context - not supported, raise error
+            elif isinstance(context, Schedule):
+                raise RuntimeError(
+                    "@nested_sequence decorator cannot be used in schedule context. "
+                    "Use @nested_schedule decorator instead for functions that need schedule timing parameters."
+                )
+
+        # If not in a context, just call the function directly
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
+def nested_schedule[**P](func: Callable[P, Any]) -> Callable[P, ScheduleBlock]:
+    """Decorator that creates schedule blocks for modular composition.
+
+    Functions decorated with @nested_schedule return a :class:`ScheduleBlock` when called.
+    This block must be passed to :func:`add_block` along with schedule timing parameters
+    to be added to the schedule.
+
+    This approach provides proper type safety: the decorated function's parameters are
+    preserved, and schedule parameters are provided separately via :func:`add_block`.
+
+    :param func: The function to decorate
+
+    :return: A function that returns a ScheduleBlock when called
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import *
+
+        @nested_schedule
+        def initialization(qubit: str):
+            '''Initialize qubit.'''
+            play(qubit, square_pulse(duration="100ns", amplitude="200mV"))
+            wait(qubit, duration="50ns")
+
+        @nested_schedule
+        def measurement_block(drive_ch: str, readout_ch: str, result_var: str):
+            '''Perform readout measurement.'''
+            play(drive_ch, square_pulse(duration="1us", amplitude="50mV"))
+            record(readout_ch, var=result_var, duration="1us")
+
+        # Use in schedule context - pass block to add_block with schedule parameters
+        with build_schedule():
+            var_decl("result", "complex", unit="mV")
+
+            # Create block and add with timing parameters
+            init_token = add_block(initialization("qubit0"), name="init")
+
+            # Position second block relative to first
+            add_block(
+                measurement_block("drive0", "readout0", "result"),
+                ref_op=init_token,
+                ref_pt="end",
+                rel_time="100ns"
+            )
+    """
+    from functools import wraps
+
+    @wraps(func)
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> ScheduleBlock:
+        return ScheduleBlock(func, args, kwargs)
+
+    return wrapper
 
 
 # ============================================================================
