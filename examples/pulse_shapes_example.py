@@ -16,8 +16,6 @@ For spin qubits, advanced pulse shapes are useful for:
 - Composite pulses for error suppression
 """
 
-# ruff: noqa:
-
 import sys
 from pathlib import Path
 

@@ -79,8 +79,9 @@ class WrappedValueModel(NoExtrasModel):
         """
         if args and len(args) == 1 and not kwargs:
             super().__init__(**{get_unit_of_zero(self.__class__): args[0]})
-        else:
-            super().__init__(*args, **kwargs)
+            return
+
+        super().__init__(*args, **kwargs)
 
     @classmethod
     def model_json_schema(
@@ -205,7 +206,12 @@ def get_unit_of_zero(type_: type) -> str:
     """Get the registered unit string for the zero value of a specific type.
 
     :param type_: The type for which to get the registered unit.
-    :return: The unit string if registered, otherwise None.
+    :return: The unit string if registered
+    :raise KeyError: If no unit is registered for the type.
+
+    If the class is not registered but a base class is, the base class's unit  will be returned,
+    and the class will be registered with the same unit.
+    (Base classes will be traversed in MRO order and the first match will be used.)
     """
     if type_ in _unit_of_zero:
         return _unit_of_zero[type_]

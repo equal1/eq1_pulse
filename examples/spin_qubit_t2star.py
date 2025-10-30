@@ -16,7 +16,7 @@ T2* is measured using a Ramsey experiment: π/2 - wait(τ) - π/2 - measure
 The oscillating signal decays with characteristic time T2*.
 """
 
-# ruff: noqa: SIM117
+# ruff: noqa: SIM117 RUF100
 
 import sys
 from pathlib import Path
