@@ -23,3 +23,6 @@ When generating (Python) documentation:
 
 Misc:
 - (UP038) Use `X | Y` in `isinstance` call instead of `(X, Y)`
+
+About pulses:
+- There are no Gaussian and DRAG pulses in the code models. Use arbitrary and external pulses instead.
