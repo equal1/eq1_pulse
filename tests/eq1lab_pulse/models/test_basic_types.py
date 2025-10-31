@@ -1,12 +1,25 @@
 """Tests for basic types used in eq1_pulse models."""
 
 import cmath
+import math
 from cmath import pi as π
 
 import pytest
 from pydantic import ValidationError
+from pytest import approx
 
-from eq1_pulse.models.basic_types import Amplitude, Angle, Duration, Frequency, Threshold, Time
+from eq1_pulse.models.basic_types import (
+    Amplitude,
+    Angle,
+    ComplexVoltage,
+    Duration,
+    Frequency,
+    Magnitude,
+    Phase,
+    Threshold,
+    Time,
+    Voltage,
+)
 
 
 def test_threshold_schema():
@@ -518,6 +531,279 @@ def test_amplitude_multiplication():
     assert isinstance(a4, Amplitude)
 
 
+def test_amplitude_abs():
+    """Test absolute value (magnitude) of Amplitude."""
+    # Test with 3-4-5 right triangle (magnitude should be 5)
+    a1 = Amplitude(V=3 + 4j)
+    mag1 = abs(a1)
+    assert mag1.V == 5.0
+    assert isinstance(mag1, Magnitude)
+
+    # Test with real-only amplitude
+    a2 = Amplitude(V=5.0)
+    mag2 = abs(a2)
+    assert mag2.V == 5.0
+    assert isinstance(mag2, Magnitude)
+
+    # Test with imaginary-only amplitude
+    a3 = Amplitude(V=12j)
+    mag3 = abs(a3)
+    assert mag3.V == 12.0
+    assert isinstance(mag3, Magnitude)
+
+    # Test with negative real part
+    a4 = Amplitude(V=-3 + 4j)
+    mag4 = abs(a4)
+    assert mag4.V == 5.0
+    assert isinstance(mag4, Magnitude)
+
+    # Test with negative imaginary part
+    a5 = Amplitude(V=3 - 4j)
+    mag5 = abs(a5)
+    assert mag5.V == 5.0
+    assert isinstance(mag5, Magnitude)
+
+    # Test with both negative
+    a6 = Amplitude(V=-3 - 4j)
+    mag6 = abs(a6)
+    assert mag6.V == 5.0
+    assert isinstance(mag6, Magnitude)
+
+    # Test with zero
+    a_zero = Amplitude(0)
+    mag_zero = abs(a_zero)
+    assert mag_zero.V == 0.0
+    assert isinstance(mag_zero, Magnitude)
+
+    # Test with millivolts
+    a_mv = Amplitude(mV=3000 + 4000j)
+    mag_mv = abs(a_mv)
+    assert mag_mv.V == 5.0
+    assert mag_mv.mV == 5000.0
+    assert isinstance(mag_mv, Magnitude)
+
+
+def test_complex_voltage_abs():
+    """Test absolute value (magnitude) of ComplexVoltage."""
+    # Test with 5-12-13 right triangle
+    cv1 = ComplexVoltage(V=5 + 12j)
+    mag1 = abs(cv1)
+    assert mag1.V == 13.0
+    assert isinstance(mag1, Magnitude)
+
+    # Test with real-only
+    cv2 = ComplexVoltage(V=-7.0)
+    mag2 = abs(cv2)
+    assert mag2.V == 7.0
+    assert isinstance(mag2, Magnitude)
+
+    # Test with imaginary-only
+    cv3 = ComplexVoltage(V=-15j)
+    mag3 = abs(cv3)
+    assert mag3.V == 15.0
+    assert isinstance(mag3, Magnitude)
+
+    # Test with millivolts
+    cv_mv = ComplexVoltage(mV=5000 + 12000j)
+    mag_mv = abs(cv_mv)
+    assert mag_mv.V == 13.0
+    assert mag_mv.mV == 13000.0
+    assert isinstance(mag_mv, Magnitude)
+
+    # Test zero
+    cv_zero = ComplexVoltage(0)
+    mag_zero = abs(cv_zero)
+    assert mag_zero.V == 0.0
+    assert isinstance(mag_zero, Magnitude)
+
+
+def test_amplitude_phase():
+    """Test phase property of Amplitude."""
+    # Test positive real (0 degrees)
+    a1 = Amplitude(V=5.0)
+    phase1 = a1.phase
+    assert phase1.rad == 0.0
+    assert phase1.deg == 0.0
+    assert isinstance(phase1, Phase)
+
+    # Test positive imaginary (90 degrees)
+    a2 = Amplitude(V=5j)
+    phase2 = a2.phase
+    assert phase2.rad == π / 2
+    assert phase2.deg == 90
+    assert isinstance(phase2, Phase)
+
+    # Test negative real (180 degrees or -180 degrees)
+    a3 = Amplitude(V=-5.0)
+    phase3 = a3.phase
+    assert abs(phase3.rad) == π
+    assert abs(phase3.deg) == 180
+    assert isinstance(phase3, Phase)
+
+    # Test negative imaginary (-90 degrees)
+    a4 = Amplitude(V=-5j)
+    phase4 = a4.phase
+    assert phase4.rad == -π / 2
+    assert phase4.deg == -90
+    assert isinstance(phase4, Phase)
+
+    # Test 45 degrees (1+1j)
+    a5 = Amplitude(V=1 + 1j)
+    phase5 = a5.phase
+    assert phase5.rad == π / 4
+    assert phase5.deg == approx(45)
+    assert isinstance(phase5, Phase)
+
+    # Test 135 degrees (-1+1j)
+    a6 = Amplitude(V=-1 + 1j)
+    phase6 = a6.phase
+    assert phase6.rad == 3 * π / 4
+    assert phase6.deg == approx(135)
+    assert isinstance(phase6, Phase)
+
+    # Test -45 degrees (1-1j)
+    a7 = Amplitude(V=1 - 1j)
+    phase7 = a7.phase
+    assert phase7.rad == -π / 4
+    assert phase7.deg == approx(-45)
+    assert isinstance(phase7, Phase)
+
+    # Test -135 degrees (-1-1j)
+    a8 = Amplitude(V=-1 - 1j)
+    phase8 = a8.phase
+    assert phase8.rad == -3 * π / 4
+    assert phase8.deg == approx(-135)
+    assert isinstance(phase8, Phase)
+
+
+def test_amplitude_angle():
+    """Test angle property of Amplitude."""
+    # Test positive real (0 degrees)
+    a1 = Amplitude(V=5.0)
+    angle1 = a1.angle
+    assert angle1.deg == 0.0
+    assert angle1.rad == 0.0
+    assert isinstance(angle1, Angle)
+
+    # Test positive imaginary (90 degrees)
+    a2 = Amplitude(V=5j)
+    angle2 = a2.angle
+    assert angle2.deg == 90
+    assert angle2.rad == π / 2
+    assert isinstance(angle2, Angle)
+
+    # Test negative real (180 or -180 degrees)
+    a3 = Amplitude(V=-5.0)
+    angle3 = a3.angle
+    assert abs(angle3.deg) == 180
+    assert isinstance(angle3, Angle)
+
+    # Test negative imaginary (-90 degrees)
+    a4 = Amplitude(V=-5j)
+    angle4 = a4.angle
+    assert angle4.deg == -90
+    assert isinstance(angle4, Angle)
+
+    # Test 45 degrees
+    a5 = Amplitude(V=1 + 1j)
+    angle5 = a5.angle
+    assert angle5.deg == approx(45)
+    assert isinstance(angle5, Angle)
+
+    # Test that angle and phase give consistent results
+    a6 = Amplitude(V=3 + 4j)
+    assert a6.angle.rad == approx(a6.phase.rad)
+    assert a6.angle.deg == approx(a6.phase.deg)
+
+
+def test_complex_voltage_phase():
+    """Test phase property of ComplexVoltage."""
+    # Test positive real (0 radians)
+    cv1 = ComplexVoltage(V=10.0)
+    phase1 = cv1.phase
+    assert phase1.rad == 0.0
+    assert phase1.deg == 0.0
+    assert isinstance(phase1, Phase)
+
+    # Test positive imaginary (π/2 radians)
+    cv2 = ComplexVoltage(V=10j)
+    phase2 = cv2.phase
+    assert phase2.rad == π / 2
+    assert phase2.deg == 90
+    assert isinstance(phase2, Phase)
+
+    # Test negative real (±π radians)
+    cv3 = ComplexVoltage(V=-10.0)
+    phase3 = cv3.phase
+    assert abs(phase3.rad) == π
+    assert isinstance(phase3, Phase)
+
+    # Test negative imaginary (-π/2 radians)
+    cv4 = ComplexVoltage(V=-10j)
+    phase4 = cv4.phase
+    assert phase4.rad == -π / 2
+    assert phase4.deg == -90
+    assert isinstance(phase4, Phase)
+
+    # Test with millivolts
+    cv_mv = ComplexVoltage(mV=1000 + 1000j)
+    phase_mv = cv_mv.phase
+    assert phase_mv.rad == π / 4
+    assert phase_mv.deg == approx(45)
+    assert isinstance(phase_mv, Phase)
+
+    # Test 3-4-5 triangle (should give atan(4/3))
+    cv5 = ComplexVoltage(V=3 + 4j)
+    phase5 = cv5.phase
+    expected_phase = cmath.phase(3 + 4j)
+    assert phase5.rad == approx(expected_phase)
+    assert isinstance(phase5, Phase)
+
+
+def test_complex_voltage_angle():
+    """Test angle property of ComplexVoltage."""
+    # Test positive real (0 degrees)
+    cv1 = ComplexVoltage(V=10.0)
+    angle1 = cv1.angle
+    assert angle1.deg == 0.0
+    assert isinstance(angle1, Angle)
+
+    # Test positive imaginary (90 degrees)
+    cv2 = ComplexVoltage(V=10j)
+    angle2 = cv2.angle
+    assert angle2.deg == 90
+    assert isinstance(angle2, Angle)
+
+    # Test negative real (±180 degrees)
+    cv3 = ComplexVoltage(V=-10.0)
+    angle3 = cv3.angle
+    assert abs(angle3.deg) == 180
+    assert isinstance(angle3, Angle)
+
+    # Test negative imaginary (-90 degrees)
+    cv4 = ComplexVoltage(V=-10j)
+    angle4 = cv4.angle
+    assert angle4.deg == -90
+    assert isinstance(angle4, Angle)
+
+    # Test 30 degrees (using polar representation)
+    cv5 = ComplexVoltage(V=math.sqrt(3) + 1j)  # tan(30°) = 1/sqrt(3)
+    angle5 = cv5.angle
+    assert angle5.deg == approx(30)
+    assert isinstance(angle5, Angle)
+
+    # Test 60 degrees
+    cv6 = ComplexVoltage(V=1 + math.sqrt(3) * 1j)  # tan(60°) = sqrt(3)
+    angle6 = cv6.angle
+    assert angle6.deg == approx(60)
+    assert isinstance(angle6, Angle)
+
+    # Verify angle and phase consistency
+    cv7 = ComplexVoltage(V=5 + 12j)
+    assert cv7.angle.rad == approx(cv7.phase.rad)
+    assert cv7.angle.deg == approx(cv7.phase.deg)
+
+
 def test_amplitude_equality():
     """Test equality comparison between amplitudes."""
     a1 = Amplitude(V=1.5 + 2j)
@@ -778,7 +1064,7 @@ def test_frequency_model_validation():
 
 def test_frequency_model_string_data_validation_for_zero():
     """Test string data JSON model validation for Frequency."""
-    freq = Frequency.model_validate_strings(" 0 ")
+    freq = Frequency.model_validate_strings("  0  ")
     assert freq.Hz == 0
 
 
@@ -801,3 +1087,600 @@ def test_frequency_model_string_data_validation():
 
     with pytest.raises(ValidationError):
         Frequency.model_validate_strings({"Hz": "1e6", "MHz": " 1.0"})
+
+
+def test_angle_inequality_comparisons():
+    """Test inequality comparisons for Angle."""
+    a1 = Angle(deg=90)
+    a2 = Angle(deg=180)
+    a3 = Angle(deg=90)
+    a4 = Angle(rad=π / 2)  # 90 degrees
+
+    # Less than
+    assert a1 < a2
+    assert not (a2 < a1)
+    assert not (a1 < a3)
+    assert not (a1 < a4)
+
+    # Less than or equal
+    assert a1 <= a2
+    assert not (a2 <= a1)
+    assert a1 <= a3
+    assert a1 <= a4
+
+    # Greater than
+    assert a2 > a1
+    assert not (a1 > a2)
+    assert not (a1 > a3)
+    assert not (a1 > a4)
+
+    # Greater than or equal
+    assert a2 >= a1
+    assert not (a1 >= a2)
+    assert a1 >= a3
+    assert a1 >= a4
+
+
+def test_angle_inequality_comparisons_with_zero():
+    """Test inequality comparisons for Angle with zero literal."""
+    a_positive = Angle(deg=90)
+    a_negative = Angle(deg=-90)
+    a_zero = Angle(0)
+
+    # Comparison with zero literal
+    assert a_positive > 0
+    assert a_positive >= 0
+    assert not (a_positive < 0)
+    assert not (a_positive <= 0)
+
+    assert a_negative < 0
+    assert a_negative <= 0
+    assert not (a_negative > 0)
+    assert not (a_negative >= 0)
+
+    assert not (a_zero < 0)
+    assert a_zero <= 0
+    assert not (a_zero > 0)
+    assert a_zero >= 0
+
+
+def test_angle_inequality_comparisons_different_units():
+    """Test inequality comparisons for Angle with different units."""
+    a1 = Angle(deg=90)
+    a2 = Angle(rad=π)  # 180 degrees
+    a3 = Angle(turns=0.25)  # 90 degrees
+    a4 = Angle(half_turns=1.0)  # 180 degrees
+
+    # Less than
+    assert a1 < a2
+    assert not (a1 < a3)
+
+    # Less than or equal
+    assert a1 <= a2
+    assert a1 <= a3
+
+    # Greater than
+    assert a2 > a1
+    assert not (a1 > a3)
+
+    # Greater than or equal
+    assert a2 >= a1
+    assert a1 >= a3
+    assert a2 >= a4
+
+
+def test_time_inequality_comparisons():
+    """Test inequality comparisons for Time."""
+    t1 = Time(s=1.0)
+    t2 = Time(s=2.0)
+    t3 = Time(s=1.0)
+    t4 = Time(ms=1000)  # 1.0 second
+
+    # Less than
+    assert t1 < t2
+    assert not (t2 < t1)
+    assert not (t1 < t3)
+    assert not (t1 < t4)
+
+    # Less than or equal
+    assert t1 <= t2
+    assert not (t2 <= t1)
+    assert t1 <= t3
+    assert t1 <= t4
+
+    # Greater than
+    assert t2 > t1
+    assert not (t1 > t2)
+    assert not (t1 > t3)
+    assert not (t1 > t4)
+
+    # Greater than or equal
+    assert t2 >= t1
+    assert not (t1 >= t2)
+    assert t1 >= t3
+    assert t1 >= t4
+
+
+def test_time_inequality_comparisons_with_zero():
+    """Test inequality comparisons for Time with zero literal."""
+    t_positive = Time(s=1.0)
+    t_negative = Time(s=-1.0)
+    t_zero = Time(0)
+
+    # Comparison with zero literal
+    assert t_positive > 0
+    assert t_positive >= 0
+    assert not (t_positive < 0)
+    assert not (t_positive <= 0)
+
+    assert t_negative < 0
+    assert t_negative <= 0
+    assert not (t_negative > 0)
+    assert not (t_negative >= 0)
+
+    assert not (t_zero < 0)
+    assert t_zero <= 0
+    assert not (t_zero > 0)
+    assert t_zero >= 0
+
+
+def test_time_inequality_comparisons_different_units():
+    """Test inequality comparisons for Time with different units."""
+    t1 = Time(s=1.0)
+    t2 = Time(ms=2000)  # 2.0 seconds
+    t3 = Time(us=1000000)  # 1.0 second
+    t4 = Time(ns=2000000000)  # 2.0 seconds
+
+    # Less than
+    assert t1 < t2
+    assert not (t1 < t3)
+
+    # Less than or equal
+    assert t1 <= t2
+    assert t1 <= t3
+
+    # Greater than
+    assert t2 > t1
+    assert not (t1 > t3)
+
+    # Greater than or equal
+    assert t2 >= t1
+    assert t1 >= t3
+    assert t2 >= t4
+
+
+def test_duration_inequality_comparisons():
+    """Test inequality comparisons for Duration."""
+    d1 = Duration(s=1.0)
+    d2 = Duration(s=2.0)
+    d3 = Duration(s=1.0)
+    d4 = Duration(ms=1000)  # 1.0 second
+
+    # Less than
+    assert d1 < d2
+    assert not (d2 < d1)
+    assert not (d1 < d3)
+    assert not (d1 < d4)
+
+    # Less than or equal
+    assert d1 <= d2
+    assert not (d2 <= d1)
+    assert d1 <= d3
+    assert d1 <= d4
+
+    # Greater than
+    assert d2 > d1
+    assert not (d1 > d2)
+    assert not (d1 > d3)
+    assert not (d1 > d4)
+
+    # Greater than or equal
+    assert d2 >= d1
+    assert not (d1 >= d2)
+    assert d1 >= d3
+    assert d1 >= d4
+
+
+def test_duration_inequality_comparisons_with_zero():
+    """Test inequality comparisons for Duration with zero literal."""
+    d_positive = Duration(s=1.0)
+    d_zero = Duration(0)
+
+    # Comparison with zero literal
+    assert d_positive > 0
+    assert d_positive >= 0
+    assert not (d_positive < 0)
+    assert not (d_positive <= 0)
+
+    assert not (d_zero < 0)
+    assert d_zero <= 0
+    assert not (d_zero > 0)
+    assert d_zero >= 0
+
+
+def test_duration_inequality_comparisons_different_units():
+    """Test inequality comparisons for Duration with different units."""
+    d1 = Duration(s=1.0)
+    d2 = Duration(ms=2000)  # 2.0 seconds
+    d3 = Duration(us=1000000)  # 1.0 second
+    d4 = Duration(ns=500000000)  # 0.5 seconds
+
+    # Less than
+    assert d1 < d2
+    assert not (d1 < d3)
+    assert d4 < d1
+
+    # Less than or equal
+    assert d1 <= d2
+    assert d1 <= d3
+    assert d4 <= d1
+
+    # Greater than
+    assert d2 > d1
+    assert not (d1 > d3)
+    assert d1 > d4
+
+    # Greater than or equal
+    assert d2 >= d1
+    assert d1 >= d3
+    assert d1 >= d4
+
+
+def test_frequency_inequality_comparisons():
+    """Test inequality comparisons for Frequency."""
+    f1 = Frequency(MHz=100)
+    f2 = Frequency(MHz=200)
+    f3 = Frequency(MHz=100)
+    f4 = Frequency(Hz=100000000)  # 100 MHz
+
+    # Less than
+    assert f1 < f2
+    assert not (f2 < f1)
+    assert not (f1 < f3)
+    assert not (f1 < f4)
+
+    # Less than or equal
+    assert f1 <= f2
+    assert not (f2 <= f1)
+    assert f1 <= f3
+    assert f1 <= f4
+
+    # Greater than
+    assert f2 > f1
+    assert not (f1 > f2)
+    assert not (f1 > f3)
+    assert not (f1 > f4)
+
+    # Greater than or equal
+    assert f2 >= f1
+    assert not (f1 >= f2)
+    assert f1 >= f3
+    assert f1 >= f4
+
+
+def test_frequency_inequality_comparisons_with_zero():
+    """Test inequality comparisons for Frequency with zero literal."""
+    f_positive = Frequency(MHz=100)
+    f_zero = Frequency(0)
+
+    # Comparison with zero literal
+    assert f_positive > 0
+    assert f_positive >= 0
+    assert not (f_positive < 0)
+    assert not (f_positive <= 0)
+
+    assert not (f_zero < 0)
+    assert f_zero <= 0
+    assert not (f_zero > 0)
+    assert f_zero >= 0
+
+
+def test_frequency_inequality_comparisons_different_units():
+    """Test inequality comparisons for Frequency with different units."""
+    f1 = Frequency(MHz=100)
+    f2 = Frequency(GHz=0.2)  # 200 MHz
+    f3 = Frequency(kHz=100000)  # 100 MHz
+    f4 = Frequency(Hz=50000000)  # 50 MHz
+
+    # Less than
+    assert f1 < f2
+    assert not (f1 < f3)
+    assert f4 < f1
+
+    # Less than or equal
+    assert f1 <= f2
+    assert f1 <= f3
+    assert f4 <= f1
+
+    # Greater than
+    assert f2 > f1
+    assert not (f1 > f3)
+    assert f1 > f4
+
+    # Greater than or equal
+    assert f2 >= f1
+    assert f1 >= f3
+    assert f1 >= f4
+
+
+def test_threshold_inequality_comparisons():
+    """Test inequality comparisons for Threshold."""
+    t1 = Threshold(V=1.0)
+    t2 = Threshold(V=2.0)
+    t3 = Threshold(V=1.0)
+    t4 = Threshold(mV=1000)  # 1.0 V
+
+    # Less than
+    assert t1 < t2
+    assert not (t2 < t1)
+    assert not (t1 < t3)
+    assert not (t1 < t4)
+
+    # Less than or equal
+    assert t1 <= t2
+    assert not (t2 <= t1)
+    assert t1 <= t3
+    assert t1 <= t4
+
+    # Greater than
+    assert t2 > t1
+    assert not (t1 > t2)
+    assert not (t1 > t3)
+    assert not (t1 > t4)
+
+    # Greater than or equal
+    assert t2 >= t1
+    assert not (t1 >= t2)
+    assert t1 >= t3
+    assert t1 >= t4
+
+
+def test_threshold_inequality_comparisons_with_zero():
+    """Test inequality comparisons for Threshold with zero literal."""
+    t_positive = Threshold(V=1.0)
+    t_negative = Threshold(V=-1.0)
+    t_zero = Threshold(0)
+
+    # Comparison with zero literal
+    assert t_positive > 0
+    assert t_positive >= 0
+    assert not (t_positive < 0)
+    assert not (t_positive <= 0)
+
+    assert t_negative < 0
+    assert t_negative <= 0
+    assert not (t_negative > 0)
+    assert not (t_negative >= 0)
+
+    assert not (t_zero < 0)
+    assert t_zero <= 0
+    assert not (t_zero > 0)
+    assert t_zero >= 0
+
+
+def test_threshold_inequality_comparisons_different_units():
+    """Test inequality comparisons for Threshold with different units."""
+    t1 = Threshold(V=1.0)
+    t2 = Threshold(mV=2000)  # 2.0 V
+    t3 = Threshold(mV=1000)  # 1.0 V
+
+    # Less than
+    assert t1 < t2
+    assert not (t1 < t3)
+
+    # Less than or equal
+    assert t1 <= t2
+    assert t1 <= t3
+
+    # Greater than
+    assert t2 > t1
+    assert not (t1 > t3)
+
+    # Greater than or equal
+    assert t2 >= t1
+    assert t1 >= t3
+
+
+def test_amplitude_inequality_comparisons_real():
+    """Test inequality comparisons for Amplitude with real values."""
+    a1 = Amplitude(V=1.0)
+    a2 = Amplitude(V=2.0)
+    a3 = Amplitude(V=1.0)
+    a4 = Amplitude(mV=1000)  # 1.0 V
+
+    # Less than
+    assert a1 < a2
+    assert not (a2 < a1)
+    assert not (a1 < a3)
+    assert not (a1 < a4)
+
+    # Less than or equal
+    assert a1 <= a2
+    assert not (a2 <= a1)
+    assert a1 <= a3
+    assert a1 <= a4
+
+    # Greater than
+    assert a2 > a1
+    assert not (a1 > a2)
+    assert not (a1 > a3)
+    assert not (a1 > a4)
+
+    # Greater than or equal
+    assert a2 >= a1
+    assert not (a1 >= a2)
+    assert a1 >= a3
+    assert a1 >= a4
+
+
+def test_amplitude_inequality_comparisons_with_zero():
+    """Test inequality comparisons for Amplitude with zero literal."""
+    a_positive = Amplitude(V=1.0)
+    a_negative = Amplitude(V=-1.0)
+    a_zero = Amplitude(0)
+
+    # Comparison with zero literal (uses real part for real values)
+    assert a_positive > 0
+    assert a_positive >= 0
+    assert not (a_positive < 0)
+    assert not (a_positive <= 0)
+
+    assert a_negative < 0
+    assert a_negative <= 0
+    assert not (a_negative > 0)
+    assert not (a_negative >= 0)
+
+    assert not (a_zero < 0)
+    assert a_zero <= 0
+    assert not (a_zero > 0)
+    assert a_zero >= 0
+
+
+def test_voltage_inequality_comparisons():
+    """Test inequality comparisons for Voltage."""
+    v1 = Voltage(V=1.0)
+    v2 = Voltage(V=2.0)
+    v3 = Voltage(V=1.0)
+    v4 = Voltage(mV=1000)  # 1.0 V
+
+    # Less than
+    assert v1 < v2
+    assert not (v2 < v1)
+    assert not (v1 < v3)
+    assert not (v1 < v4)
+
+    # Less than or equal
+    assert v1 <= v2
+    assert not (v2 <= v1)
+    assert v1 <= v3
+    assert v1 <= v4
+
+    # Greater than
+    assert v2 > v1
+    assert not (v1 > v2)
+    assert not (v1 > v3)
+    assert not (v1 > v4)
+
+    # Greater than or equal
+    assert v2 >= v1
+    assert not (v1 >= v2)
+    assert v1 >= v3
+    assert v1 >= v4
+
+
+def test_voltage_inequality_comparisons_with_zero():
+    """Test inequality comparisons for Voltage with zero literal."""
+    v_positive = Voltage(V=1.0)
+    v_negative = Voltage(V=-1.0)
+    v_zero = Voltage(0)
+
+    # Comparison with zero literal
+    assert v_positive > 0
+    assert v_positive >= 0
+    assert not (v_positive < 0)
+    assert not (v_positive <= 0)
+
+    assert v_negative < 0
+    assert v_negative <= 0
+    assert not (v_negative > 0)
+    assert not (v_negative >= 0)
+
+    assert not (v_zero < 0)
+    assert v_zero <= 0
+    assert not (v_zero > 0)
+    assert v_zero >= 0
+
+
+def test_voltage_inequality_comparisons_different_units():
+    """Test inequality comparisons for Voltage with different units."""
+    v1 = Voltage(V=1.0)
+    v2 = Voltage(mV=2000)  # 2.0 V
+    v3 = Voltage(mV=1000)  # 1.0 V
+
+    # Less than
+    assert v1 < v2
+    assert not (v1 < v3)
+
+    # Less than or equal
+    assert v1 <= v2
+    assert v1 <= v3
+
+    # Greater than
+    assert v2 > v1
+    assert not (v1 > v3)
+
+    # Greater than or equal
+    assert v2 >= v1
+    assert v1 >= v3
+
+
+def test_magnitude_inequality_comparisons():
+    """Test inequality comparisons for Magnitude."""
+    m1 = Magnitude(V=1.0)
+    m2 = Magnitude(V=2.0)
+    m3 = Magnitude(V=1.0)
+    m4 = Magnitude(mV=1000)  # 1.0 V
+
+    # Less than
+    assert m1 < m2
+    assert not (m2 < m1)
+    assert not (m1 < m3)
+    assert not (m1 < m4)
+
+    # Less than or equal
+    assert m1 <= m2
+    assert not (m2 <= m1)
+    assert m1 <= m3
+    assert m1 <= m4
+
+    # Greater than
+    assert m2 > m1
+    assert not (m1 > m2)
+    assert not (m1 > m3)
+    assert not (m1 > m4)
+
+    # Greater than or equal
+    assert m2 >= m1
+    assert not (m1 >= m2)
+    assert m1 >= m3
+    assert m1 >= m4
+
+
+def test_magnitude_inequality_comparisons_with_zero():
+    """Test inequality comparisons for Magnitude with zero literal."""
+    m_positive = Magnitude(V=1.0)
+    m_zero = Magnitude(0)
+
+    # Comparison with zero literal
+    assert m_positive > 0
+    assert m_positive >= 0
+    assert not (m_positive < 0)
+    assert not (m_positive <= 0)
+
+    assert not (m_zero < 0)
+    assert m_zero <= 0
+    assert not (m_zero > 0)
+    assert m_zero >= 0
+
+
+def test_magnitude_inequality_comparisons_different_units():
+    """Test inequality comparisons for Magnitude with different units."""
+    m1 = Magnitude(V=1.0)
+    m2 = Magnitude(mV=2000)  # 2.0 V
+    m3 = Magnitude(mV=1000)  # 1.0 V
+
+    # Less than
+    assert m1 < m2
+    assert not (m1 < m3)
+
+    # Less than or equal
+    assert m1 <= m2
+    assert m1 <= m3
+
+    # Greater than
+    assert m2 > m1
+    assert not (m1 > m3)
+
+    # Greater than or equal
+    assert m2 >= m1
+    assert m1 >= m3

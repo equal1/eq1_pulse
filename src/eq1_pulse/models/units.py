@@ -7,12 +7,21 @@ conversion between the units should be automatic.
 from __future__ import annotations
 
 import cmath
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Literal, Union
 
 if TYPE_CHECKING:
     pass
 
-from .arithmetic import SupportUnitArithmeticOperations, collapse_float, collapse_scalar, register_unit_value_field
+from pydantic import TypeAdapter, model_validator
+from pydantic.json_schema import DEFAULT_REF_TEMPLATE, GenerateJsonSchema, JsonSchemaMode
+
+from .arithmetic import (
+    SupportUnitArithmeticOperations,
+    collapse_float,
+    collapse_scalar,
+    get_unit_value_field_name_and_type,
+    register_unit_value_field,
+)
 from .base_models import FrozenModel
 from .complex import complex_from_tuple
 
@@ -40,8 +49,52 @@ __all__ = (
 )
 
 
+class BaseUnit(FrozenModel):
+    """Base class for units, a model that accepts a numeric string followed by a property name.
+
+    It will be stripped of whitespace and converted to a dictionary where the key is the property name.
+    """
+
+    @model_validator(mode="before")
+    @classmethod
+    def _model_validate(cls, data: Any) -> Any:
+        if isinstance(data, str):
+            value = data.strip()
+            unit_name, unit_type = get_unit_value_field_name_and_type(cls)
+            if value.endswith(unit_name):
+                value = value.removesuffix(unit_name)
+                unit_type_adapter: TypeAdapter[Any] = (
+                    TypeAdapter(unit_type) if len(unit_type) == 1 else TypeAdapter(Union[*unit_type])
+                )
+                return {unit_name: unit_type_adapter.validate_python(value.strip(), strict=False)}
+        return data
+
+    @classmethod
+    def model_json_schema(
+        cls,
+        by_alias: bool = True,
+        ref_template: str = DEFAULT_REF_TEMPLATE,
+        schema_generator: type[GenerateJsonSchema] = GenerateJsonSchema,
+        mode: JsonSchemaMode = "validation",
+        *,
+        union_format: Literal["any_of", "primitive_type_array"] = "any_of",
+    ) -> dict[str, Any]:
+        """Generate the JSON schema for the model, adjusting for wrapped value representation."""
+        base_schema = super().model_json_schema(
+            by_alias=by_alias,
+            ref_template=ref_template,
+            schema_generator=schema_generator,
+            mode=mode,
+            union_format=union_format,
+        )
+        unit, _ = get_unit_value_field_name_and_type(cls)
+        assert str.isidentifier(unit)
+
+        return {"anyOf": [base_schema, {"type": "string", "pattern": unit + r"\s*$"}]}
+
+
 @register_unit_value_field("deg")
-class Degrees(FrozenModel, SupportUnitArithmeticOperations[int | float]):
+class Degrees(BaseUnit, SupportUnitArithmeticOperations[int | float]):
     """Degrees as a unit of angle."""
 
     deg: int | float
@@ -64,7 +117,7 @@ class Degrees(FrozenModel, SupportUnitArithmeticOperations[int | float]):
 
 
 @register_unit_value_field("rad")
-class Radians(FrozenModel, SupportUnitArithmeticOperations[int | float]):
+class Radians(BaseUnit, SupportUnitArithmeticOperations[int | float]):
     """Radians as a unit of angle."""
 
     rad: float
@@ -87,7 +140,7 @@ class Radians(FrozenModel, SupportUnitArithmeticOperations[int | float]):
 
 
 @register_unit_value_field("turns")
-class Turns(FrozenModel, SupportUnitArithmeticOperations[int | float]):
+class Turns(BaseUnit, SupportUnitArithmeticOperations[int | float]):
     """Turns as a unit of angle.
 
     A turn is a full rotation, i.e. 360 degrees or 2π radians.
@@ -113,7 +166,7 @@ class Turns(FrozenModel, SupportUnitArithmeticOperations[int | float]):
 
 
 @register_unit_value_field("half_turns")
-class HalfTurns(FrozenModel, SupportUnitArithmeticOperations[int | float]):
+class HalfTurns(BaseUnit, SupportUnitArithmeticOperations[int | float]):
     """Half turns as a unit of angle.
 
     A half turn is half a full rotation, i.e. 180 degrees or π radians.
@@ -139,7 +192,7 @@ class HalfTurns(FrozenModel, SupportUnitArithmeticOperations[int | float]):
 
 
 @register_unit_value_field("s")
-class Seconds(FrozenModel, SupportUnitArithmeticOperations[int | float]):
+class Seconds(BaseUnit, SupportUnitArithmeticOperations[int | float]):
     """Seconds as a unit of time."""
 
     s: float
@@ -167,7 +220,7 @@ class Seconds(FrozenModel, SupportUnitArithmeticOperations[int | float]):
 
 
 @register_unit_value_field("ms")
-class Milliseconds(FrozenModel, SupportUnitArithmeticOperations[int | float]):
+class Milliseconds(BaseUnit, SupportUnitArithmeticOperations[int | float]):
     """Milliseconds as a unit of time."""
 
     ms: int | float
@@ -195,7 +248,7 @@ class Milliseconds(FrozenModel, SupportUnitArithmeticOperations[int | float]):
 
 
 @register_unit_value_field("us")
-class Microseconds(FrozenModel, SupportUnitArithmeticOperations[int | float]):
+class Microseconds(BaseUnit, SupportUnitArithmeticOperations[int | float]):
     """Microseconds as a unit of time."""
 
     us: int | float
@@ -223,7 +276,7 @@ class Microseconds(FrozenModel, SupportUnitArithmeticOperations[int | float]):
 
 
 @register_unit_value_field("ns")
-class Nanoseconds(FrozenModel, SupportUnitArithmeticOperations[int | float]):
+class Nanoseconds(BaseUnit, SupportUnitArithmeticOperations[int | float]):
     """Nanoseconds as a unit of time."""
 
     ns: int
@@ -256,7 +309,7 @@ class Nanoseconds(FrozenModel, SupportUnitArithmeticOperations[int | float]):
 
 
 @register_unit_value_field("V")
-class Volts(FrozenModel, SupportUnitArithmeticOperations[int | float]):
+class Volts(BaseUnit, SupportUnitArithmeticOperations[int | float]):
     """Volts as a unit of voltage (real)."""
 
     V: int | float
@@ -272,9 +325,13 @@ class Volts(FrozenModel, SupportUnitArithmeticOperations[int | float]):
         """The raw stored value."""
         return self.V
 
+    def __abs__(self) -> Volts:
+        """The magnitude of the complex voltage."""
+        return Volts(V=abs(self.V))
+
 
 @register_unit_value_field("mV")
-class Millivolts(FrozenModel, SupportUnitArithmeticOperations[int | float]):
+class Millivolts(BaseUnit, SupportUnitArithmeticOperations[int | float]):
     """Millivolts as a unit of voltage (real)."""
 
     mV: int | float
@@ -290,9 +347,13 @@ class Millivolts(FrozenModel, SupportUnitArithmeticOperations[int | float]):
         """The raw stored value."""
         return self.mV
 
+    def __abs__(self) -> Millivolts:
+        """The magnitude of the complex voltage."""
+        return Millivolts(mV=abs(self.mV))
+
 
 @register_unit_value_field("V", (int, float, complex))
-class ComplexVolts(FrozenModel, SupportUnitArithmeticOperations[int | float | complex]):
+class ComplexVolts(BaseUnit, SupportUnitArithmeticOperations[int | float | complex]):
     """Volts as a unit of voltage (real + imaginary)."""
 
     V: int | float | complex_from_tuple
@@ -318,9 +379,13 @@ class ComplexVolts(FrozenModel, SupportUnitArithmeticOperations[int | float | co
         """The imaginary part of the voltage as Volts."""
         return Volts(V=self.V.imag)
 
+    def __abs__(self) -> Volts:
+        """The magnitude of the complex voltage."""
+        return Volts(V=abs(self.V))
+
 
 @register_unit_value_field("mV", (int, float, complex))
-class ComplexMillivolts(FrozenModel, SupportUnitArithmeticOperations[int | float | complex]):
+class ComplexMillivolts(BaseUnit, SupportUnitArithmeticOperations[int | float | complex]):
     """Millivolts as a unit of voltage (real + imaginary)."""
 
     mV: int | float | complex_from_tuple
@@ -346,6 +411,10 @@ class ComplexMillivolts(FrozenModel, SupportUnitArithmeticOperations[int | float
         """The imaginary part of the voltage as Millivolts."""
         return Millivolts(mV=self.mV.imag)
 
+    def __abs__(self) -> Millivolts:
+        """The magnitude of the complex voltage."""
+        return Millivolts(mV=abs(self.mV))
+
 
 #
 #  Frequency units
@@ -353,7 +422,7 @@ class ComplexMillivolts(FrozenModel, SupportUnitArithmeticOperations[int | float
 
 
 @register_unit_value_field("Hz")
-class Hertz(FrozenModel, SupportUnitArithmeticOperations[int | float]):
+class Hertz(BaseUnit, SupportUnitArithmeticOperations[int | float]):
     """Hertz as a unit of frequency."""
 
     Hz: int | float
@@ -381,7 +450,7 @@ class Hertz(FrozenModel, SupportUnitArithmeticOperations[int | float]):
 
 
 @register_unit_value_field("kHz")
-class Kilohertz(FrozenModel, SupportUnitArithmeticOperations[int | float]):
+class Kilohertz(BaseUnit, SupportUnitArithmeticOperations[int | float]):
     """Kilohertz as a unit of frequency."""
 
     kHz: int | float
@@ -409,7 +478,7 @@ class Kilohertz(FrozenModel, SupportUnitArithmeticOperations[int | float]):
 
 
 @register_unit_value_field("MHz")
-class Megahertz(FrozenModel, SupportUnitArithmeticOperations[int | float]):
+class Megahertz(BaseUnit, SupportUnitArithmeticOperations[int | float]):
     """Megahertz as a unit of frequency."""
 
     MHz: int | float
@@ -437,7 +506,7 @@ class Megahertz(FrozenModel, SupportUnitArithmeticOperations[int | float]):
 
 
 @register_unit_value_field("GHz", (int, float))
-class Gigahertz(FrozenModel, SupportUnitArithmeticOperations[int | float]):
+class Gigahertz(BaseUnit, SupportUnitArithmeticOperations[int | float]):
     """Gigahertz as a unit of frequency."""
 
     GHz: int | float
