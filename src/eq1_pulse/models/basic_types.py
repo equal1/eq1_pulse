@@ -14,8 +14,9 @@ or Duration instead of Time.
 from __future__ import annotations
 
 import cmath
+from collections.abc import Callable, Iterable
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self, TypedDict, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, Self, TypedDict, TypeGuard, overload
 
 from pydantic import Field, model_validator
 
@@ -108,8 +109,207 @@ class ArithmeticFrozenWrappedValueModel[ScalarType](FrozenWrappedValueModel):
         return type(self).model_construct(value=self.value / other)  # type: ignore[return-value]
 
 
+class ComparisonCompatibleUnitAndTypes(NamedTuple):
+    """A tuple to hold the unit of comparison and compatible types for equality checks."""
+
+    unit: str
+    """The unit of comparison for equality checks when the values have different units."""
+    types: set[type]
+    """Set of types that are considered equality compatible with the registered type.
+    Must include the registered type itself."""
+
+    raw: str | None
+    """The raw value attribute to use for zero comparisons, if different from the unit of comparison.
+
+    It is also used for boolean evaluation."""
+
+
+_comparison_unit_and_types: dict[type[ComparableWrappedValueOrZeroModel], ComparisonCompatibleUnitAndTypes] = {}
+"""Maps a type to a tuple of (unit_of_comparison, set of equality compatible types)."""
+
+
+def register_comparison_unit[T: ComparableWrappedValueOrZeroModel](
+    unit: str, *, compatible_with: type | Iterable[type] = (), raw: str | None = None
+) -> Callable[[type[T]], type[T]]:
+    """Decorator to register a unit of comparison for equality checks for a type and extra compatible types.
+
+    :param unit: The unit of comparison to use for equality checks.
+    :param extra_types: Extra types that are considered equality compatible with the decorated type.
+    :return: The decorated type.
+    """
+    if not isinstance(compatible_with, Iterable):
+        assert isinstance(compatible_with, type)
+        compatible_with = (compatible_with,)
+
+    def decorator(cls: type[T]) -> type[T]:
+        _comparison_unit_and_types[cls] = ComparisonCompatibleUnitAndTypes(
+            unit=unit,
+            types={cls, *compatible_with},
+            raw=raw,
+        )
+        return cls
+
+    return decorator
+
+
+def _find_registered_equality_comparison_type_info(type1: type) -> ComparisonCompatibleUnitAndTypes | None:
+    """Find the registered type info for a type, checking its MRO if needed."""
+    type1_comp = _comparison_unit_and_types.get(type1)
+    if type1_comp is None:
+        for base_type1 in type1.__mro__:
+            if base_type1 in _comparison_unit_and_types:
+                type1_comp = _comparison_unit_and_types[base_type1]
+                _comparison_unit_and_types[type1] = type1_comp
+                break
+    return type1_comp
+
+
+def _get_equality_comparison_unit(type1: type, type2: type) -> str | None:
+    """Return the unit of comparison for two types, if they are compatible.
+
+    The relationship is symmetrical, but the unit of comparison is preferred
+    from type1 if both types are compatible.
+    """
+    type1_comp = _find_registered_equality_comparison_type_info(type1)
+
+    def find_type_in_types(type_to_find: type, types_set: set[type]) -> TypeGuard[type]:
+        if type_to_find in types_set:
+            return True
+        for base_type in type_to_find.__mro__:
+            if base_type in types_set:
+                types_set.add(type_to_find)
+                return True
+        return False
+
+    if type1_comp is not None and find_type_in_types(type2, type1_comp.types):
+        return type1_comp.unit
+
+    type2_comp = _find_registered_equality_comparison_type_info(type2)
+    if type2_comp is not None and find_type_in_types(type1, type2_comp.types):
+        # Avoid the second path next time if result is the same unit
+        if type1_comp is not None and type1_comp.unit == type2_comp.unit:
+            type1_comp.types.add(type2)
+            return type1_comp.unit
+        return type2_comp.unit
+
+    return None
+
+
+def _get_raw_value_attribute(type1: type) -> str | None:
+    """Return the raw value attribute for a type, if it is registered.
+
+    Falls back to the equality comparison unit, if available.
+    Returns :obj:`None` if not found.
+    """
+    type_comp = _find_registered_equality_comparison_type_info(type1)
+    if type_comp is None:
+        return None
+
+    return type_comp.raw if type_comp.raw is not None else type_comp.unit
+
+
+class ComparableWrappedValueOrZeroModel(WrappedValueOrZeroModel):
+    """A :class:`WrappedValueOrZeroModel` that supports comparison with zero literal and compatible types.
+
+    The unit of comparison and additional compatible types for equality checks is registered using the
+    :func:`register_equality_comparison_unit` decorator
+    """
+
+    def __eq__(self, value: object) -> bool:
+        """Check equality with another object, considering zero literal and wrapped value types.
+
+        It handles comparisons with the literal 0 and other WrappedValueOrZeroModel instances which
+        have compatible value types. (either same type of registered as `extra_equality_compatible_types`)
+        """
+        if isinstance(value, WrappedValueOrZeroModel):
+            cls = type(self)
+            unit_of_comparison = _get_equality_comparison_unit(cls, type(value))
+            if unit_of_comparison is None:
+                return NotImplemented
+            return (  # type: ignore[no-any-return]
+                self.value == value.value
+                or getattr(self.value, unit_of_comparison) == getattr(value.value, unit_of_comparison)
+            )
+
+        if isinstance(value, int | float | complex) and value == 0:
+            cls = type(self)
+            unit_of_zero = _get_raw_value_attribute(cls)
+            if unit_of_zero is None:
+                return NotImplemented
+
+            return getattr(self.value, unit_of_zero) == 0  # type: ignore[no-any-return]
+
+        return super().__eq__(value)
+
+    def __lt__(self, other: object) -> bool:
+        """Less-than comparison with another object, considering zero literal and compatible types."""
+        if isinstance(other, WrappedValueOrZeroModel):
+            cls = type(self)
+            unit_of_comparison = _get_equality_comparison_unit(cls, type(other))
+            if unit_of_comparison is None:
+                return NotImplemented
+            return (  # type: ignore[no-any-return]
+                getattr(self.value, unit_of_comparison) < getattr(other.value, unit_of_comparison)
+            )
+
+        if isinstance(other, int | float | complex) and other == 0:
+            cls = type(self)
+            unit_of_zero = _get_raw_value_attribute(cls)
+            if unit_of_zero is None:
+                return NotImplemented
+
+            return getattr(self.value, unit_of_zero) < 0  # type: ignore[no-any-return]
+
+        return NotImplemented
+
+    def __le__(self, other: object) -> bool:
+        """Less-than-or-equal comparison with another object, considering zero literal and compatible types."""
+        if isinstance(other, WrappedValueOrZeroModel):
+            cls = type(self)
+            unit_of_comparison = _get_equality_comparison_unit(cls, type(other))
+            if unit_of_comparison is None:
+                return NotImplemented
+            return (  # type: ignore[no-any-return]
+                getattr(self.value, unit_of_comparison) <= getattr(other.value, unit_of_comparison)
+            )
+
+        if isinstance(other, int | float | complex) and other == 0:
+            cls = type(self)
+            unit_of_zero = _get_raw_value_attribute(cls)
+            if unit_of_zero is None:
+                return NotImplemented
+
+            return getattr(self.value, unit_of_zero) <= 0  # type: ignore[no-any-return]
+
+        return NotImplemented
+
+    def __gt__(self, other: object) -> bool:
+        """Greater-than comparison with another object, considering zero literal and compatible types."""
+        result = self.__le__(other)
+        if result is NotImplemented:
+            return NotImplemented
+        return not result
+
+    def __ge__(self, other: object) -> bool:
+        """Greater-than-or-equal comparison with another object, considering zero literal and compatible types."""
+        result = self.__lt__(other)
+        if result is NotImplemented:
+            return NotImplemented
+        return not result
+
+    def __bool__(self) -> bool:
+        """Return True if the wrapped value is non-zero, based on the registered raw value attribute."""
+        cls = type(self)
+        unit_of_zero = _get_raw_value_attribute(cls)
+        if unit_of_zero is None:
+            return NotImplemented  # type: ignore[no-any-return]
+
+        return bool(getattr(self.value, unit_of_zero))  # type: ignore[no-any-return]
+
+
 @register_unit_of_zero("deg")
-class Angle(WrappedValueOrZeroModel, ArithmeticFrozenWrappedValueModel[int | float]):
+@register_comparison_unit("turns")
+class Angle(ComparableWrappedValueOrZeroModel, ArithmeticFrozenWrappedValueModel[int | float]):
     r"""A model representing an angle in either degrees, radians, turns or half-turns.
 
     Turns are also known as revolutions or cycles, also :math:`\tau=2\pi` radians or 360°.
@@ -160,11 +360,9 @@ class Angle(WrappedValueOrZeroModel, ArithmeticFrozenWrappedValueModel[int | flo
         """Value in half-turns."""
         return self.value.half_turns
 
-    def __eq__(self, other) -> bool:
-        """Equality comparison with another Angle instance."""  # noqa: D401
-        if not isinstance(other, Angle):
-            return NotImplemented
-        return self.value == other.value or self.value.turns == other.value.turns
+    if TYPE_CHECKING:
+
+        def __eq__(self, other: Angle | Literal[0]) -> bool: ...  # type: ignore[override]
 
     @property
     def complex_rotation(self) -> complex:
@@ -205,7 +403,8 @@ class Phase(Angle):
 
 
 @register_unit_of_zero("s")
-class Time(WrappedValueOrZeroModel, ArithmeticFrozenWrappedValueModel[int | float]):
+@register_comparison_unit("s", raw="_raw")
+class Time(ComparableWrappedValueOrZeroModel, ArithmeticFrozenWrappedValueModel[int | float]):
     """A model representing time (instant or difference).
 
     The model can represent time in seconds, milliseconds, microseconds, or nanoseconds,
@@ -259,11 +458,9 @@ class Time(WrappedValueOrZeroModel, ArithmeticFrozenWrappedValueModel[int | floa
             """"""  # noqa: D419
             ...
 
-    def __eq__(self, other) -> bool:
-        """Equality comparison with another Time instance."""  # noqa: D401
-        if not isinstance(other, Time):
-            return NotImplemented
-        return self.value == other.value or self.value.s == other.value.s
+    if TYPE_CHECKING:
+
+        def __eq__(self, other: Time | Literal[0]) -> bool: ...  # type: ignore[override]
 
     def __bool__(self) -> bool:
         """Return True if the time value is non-zero."""
@@ -302,7 +499,8 @@ class Duration(Time):
 
 
 @register_unit_of_zero("V")
-class Voltage(WrappedValueOrZeroModel, ArithmeticFrozenWrappedValueModel[int | float]):
+@register_comparison_unit("V", raw="_raw")
+class Voltage(ComparableWrappedValueOrZeroModel, ArithmeticFrozenWrappedValueModel[int | float]):
     """A model representing a real voltage in volts or millivolts."""
 
     value: Volts | Millivolts
@@ -328,13 +526,7 @@ class Voltage(WrappedValueOrZeroModel, ArithmeticFrozenWrappedValueModel[int | f
 
         def __init__(self, /, *args, **data): ...
 
-    def __eq__(self, other) -> bool:
-        if not isinstance(other, Voltage | ComplexVoltage):
-            return NotImplemented
-        return self.value == other.value or self.value.V == other.value.V
-
-    def __bool__(self) -> bool:
-        return bool(self.value._raw)
+        def __eq__(self, other: Voltage | ComplexVoltage | Literal[0]) -> bool: ...  # type: ignore[override]
 
     @classmethod
     def from_value(cls, value: Volts | Millivolts) -> Self:
@@ -349,7 +541,8 @@ class Voltage(WrappedValueOrZeroModel, ArithmeticFrozenWrappedValueModel[int | f
 
 
 @register_unit_of_zero("V")
-class ComplexVoltage(WrappedValueOrZeroModel, ArithmeticFrozenWrappedValueModel[int | float | complex]):
+@register_comparison_unit("V", compatible_with=Voltage, raw="_raw")
+class ComplexVoltage(ComparableWrappedValueOrZeroModel, ArithmeticFrozenWrappedValueModel[int | float | complex]):
     """A model representing a complex voltage in volts or millivolts.
 
     Complex voltages are used to represent both amplitude and phase information,
@@ -379,23 +572,7 @@ class ComplexVoltage(WrappedValueOrZeroModel, ArithmeticFrozenWrappedValueModel[
 
         def __init__(self, /, *args, **data): ...
 
-    def __eq__(self, other) -> bool:
-        if not isinstance(other, Voltage | ComplexVoltage):
-            return NotImplemented
-        return self.value == other.value or self.value.V == other.value.V
-
-    def __mul__(self: Self, other: int | float | complex) -> Self:
-        if isinstance(other, int | float | complex):
-            return type(self).model_construct(value=self.value * other)  # type: ignore[return-value]
-        return NotImplemented  # type: ignore[unreachable]
-
-    def __rmul__(self: Self, other: int | float | complex) -> Self:
-        if isinstance(other, int | float | complex):
-            return type(self).model_construct(value=other * self.value)  # type: ignore[return-value]
-        return NotImplemented  # type: ignore[unreachable]
-
-    def __bool__(self) -> bool:
-        return bool(self.value._raw)
+        def __eq__(self, other: Voltage | ComplexVoltage | Literal[0]) -> bool: ...  # type: ignore[override]
 
     @classmethod
     def create_from(cls, real: Voltage, imag: Voltage = Voltage(0), /) -> Self:  # noqa: B008
@@ -415,9 +592,24 @@ class ComplexVoltage(WrappedValueOrZeroModel, ArithmeticFrozenWrappedValueModel[
         """Get the imaginary part of the complex voltage as a Voltage instance."""
         return Voltage.from_value(self.value.imag)
 
+    def __abs__(self) -> Magnitude:
+        """Get the magnitude of the complex voltage as a Magnitude instance."""
+        return Magnitude.from_value(abs(self.value))  # type: ignore[arg-type]
+
+    @property
+    def phase(self) -> Phase:
+        """Get the phase of the complex voltage as a Phase instance (radians)."""
+        return Phase(rad=cmath.phase(self.value._raw))  # type: ignore[arg-type]
+
+    @property
+    def angle(self) -> Angle:
+        """Get the angle of the complex voltage as an Angle instance (degrees)."""
+        return Angle(deg=self.phase.deg)  # type: ignore[arg-type]
+
 
 @register_unit_of_zero("Hz")
-class Frequency(WrappedValueOrZeroModel, ArithmeticFrozenWrappedValueModel[int | float]):
+@register_comparison_unit("Hz", raw="_raw")
+class Frequency(ComparableWrappedValueOrZeroModel, ArithmeticFrozenWrappedValueModel[int | float]):
     """A model representing a frequency in Hertz, Kilohertz, Megahertz, or Gigahertz."""
 
     value: Hertz | Kilohertz | Megahertz | Gigahertz
@@ -457,13 +649,7 @@ class Frequency(WrappedValueOrZeroModel, ArithmeticFrozenWrappedValueModel[int |
 
         def __init__(self, /, *args, **data): ...
 
-    def __eq__(self, other) -> bool:
-        if not isinstance(other, Frequency):
-            return NotImplemented
-        return self.value == other.value or self.value.Hz == other.value.Hz
-
-    def __bool__(self) -> bool:
-        return bool(self.value._raw)
+        def __eq__(self, other: Frequency | Literal[0]) -> bool: ...  # type: ignore[override]
 
 
 class Amplitude(ComplexVoltage):
@@ -492,10 +678,10 @@ class Threshold(Voltage):
         def __init__(self, _: Literal[0], /): ...
 
         @overload
-        def __init__(self, /, *, V: float | complex): ...
+        def __init__(self, /, *, V: float): ...
 
         @overload
-        def __init__(self, /, *, mV: float | complex): ...
+        def __init__(self, /, *, mV: float): ...
 
         def __init__(self, *args, **data): ...
 
@@ -668,7 +854,7 @@ class Range(LeanModel, _StartStopInterval):
 
 
 #
-# These types below are only for type checking and not part of the runtime code.
+# These types below are only for type checking and IDE support for initialization arguments.
 #
 
 

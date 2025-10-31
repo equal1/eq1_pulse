@@ -59,7 +59,7 @@ class BaseUnit(FrozenModel):
     @classmethod
     def _model_validate(cls, data: Any) -> Any:
         if isinstance(data, str):
-            value = data.rstrip()
+            value = data.strip()
             unit_name, unit_type = get_unit_value_field_name_and_type(cls)
             if value.endswith(unit_name):
                 value = value.removesuffix(unit_name)
@@ -325,6 +325,10 @@ class Volts(BaseUnit, SupportUnitArithmeticOperations[int | float]):
         """The raw stored value."""
         return self.V
 
+    def __abs__(self) -> Volts:
+        """The magnitude of the complex voltage."""
+        return Volts(V=abs(self.V))
+
 
 @register_unit_value_field("mV")
 class Millivolts(BaseUnit, SupportUnitArithmeticOperations[int | float]):
@@ -342,6 +346,10 @@ class Millivolts(BaseUnit, SupportUnitArithmeticOperations[int | float]):
     def _raw(self) -> int | float:
         """The raw stored value."""
         return self.mV
+
+    def __abs__(self) -> Millivolts:
+        """The magnitude of the complex voltage."""
+        return Millivolts(mV=abs(self.mV))
 
 
 @register_unit_value_field("V", (int, float, complex))
@@ -371,6 +379,10 @@ class ComplexVolts(BaseUnit, SupportUnitArithmeticOperations[int | float | compl
         """The imaginary part of the voltage as Volts."""
         return Volts(V=self.V.imag)
 
+    def __abs__(self) -> Volts:
+        """The magnitude of the complex voltage."""
+        return Volts(V=abs(self.V))
+
 
 @register_unit_value_field("mV", (int, float, complex))
 class ComplexMillivolts(BaseUnit, SupportUnitArithmeticOperations[int | float | complex]):
@@ -398,6 +410,10 @@ class ComplexMillivolts(BaseUnit, SupportUnitArithmeticOperations[int | float | 
     def imag(self) -> Millivolts:
         """The imaginary part of the voltage as Millivolts."""
         return Millivolts(mV=self.mV.imag)
+
+    def __abs__(self) -> Millivolts:
+        """The magnitude of the complex voltage."""
+        return Millivolts(mV=abs(self.mV))
 
 
 #
