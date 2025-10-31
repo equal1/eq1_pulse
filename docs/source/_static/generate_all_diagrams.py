@@ -25,6 +25,9 @@ GENERATORS = [
     "generate_hahn_echo_diagram.py",
     "generate_barrier_diagram.py",
     "generate_schedule_refop_diagram.py",
+    "generate_nested_sequence_diagram.py",
+    "generate_nested_schedule_diagram.py",
+    "generate_decorator_comparison_diagram.py",
 ]
 
 
