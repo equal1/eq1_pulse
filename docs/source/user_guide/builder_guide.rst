@@ -737,3 +737,21 @@ The JSON structure shows:
    - **Wait operation** (lines 64-70): Allow qubit to relax between measurements
 
 This JSON can be exported to control hardware or used for simulation and analysis.
+
+Pulse Sequence Visualization
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The diagram below shows how the JSON structure translates into a concrete pulse sequence timeline:
+
+.. image:: /_static/pulse_sequence_diagram.svg
+   :width: 100%
+   :alt: Pulse sequence timing diagram
+   :align: center
+
+The visualization shows three iterations of the 50-iteration loop, displaying the temporal structure:
+
+- **Drive pulses** (purple): Applied on the qubit channel with increasing amplitude (25 mV, 50 mV, 75 mV shown). Pulse duration is 100 ns.
+- **Readout pulses** (orange): Applied on the readout channel immediately after each drive pulse. Fixed at 30 mV amplitude and 1 μs duration.
+- **Wait periods** (gray dashed): 10 μs relaxation time on both channels to allow the qubit to return to ground state before the next iteration.
+
+Each iteration follows the same temporal pattern: drive → readout → wait. The amplitude sweep from 0 to 100 mV across all 50 iterations enables calibration of the π pulse amplitude for this qubit.
