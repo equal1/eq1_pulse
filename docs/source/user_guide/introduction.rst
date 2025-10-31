@@ -114,8 +114,10 @@ Pulses are waveforms with defined shape, duration, amplitude, and optional frequ
 
 * **Square pulse** - constant amplitude
 * **Sine pulse** - sinusoidal waveform
-* **Gaussian pulse** - Gaussian envelope
-* **DRAG pulse** - Derivative Removal by Adiabatic Gate
+* **Externally defined pulse** - functions generating the waveform, such as:
+  * `gaussian_pulse(duration, amplitude)` - generates a Gaussian pulse
+  * `drag_pulse(duration, amplitude)` - generates a DRAG pulse
+* **Arbitrary pulse** - user-defined waveform samples with interpolation
 
 Basic Types
 ~~~~~~~~~~~

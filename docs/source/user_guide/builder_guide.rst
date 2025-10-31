@@ -629,3 +629,111 @@ Here's a complete Rabi oscillation experiment:
     print(rabi_seq.model_dump_json(indent=2))
 
 This creates a complete experiment that sweeps the drive amplitude and measures the excited state population at each amplitude value.
+
+JSON Output
+~~~~~~~~~~~
+
+.. code-block:: json
+
+    [
+      {
+        "op_type": "var_decl",
+        "name": "amp",
+        "dtype": "float",
+        "unit": "mV"
+      },
+      {
+        "op_type": "var_decl",
+        "name": "raw",
+        "dtype": "complex",
+        "unit": "mV"
+      },
+      {
+        "op_type": "var_decl",
+        "name": "state",
+        "dtype": "bool"
+      },
+      {
+        "op_type": "for",
+        "var": "amp",
+        "items": {
+          "start": 0.0,
+          "stop": 100.0,
+          "num": 50
+        },
+        "body": [
+          {
+            "op_type": "play",
+            "channel": "qubit",
+            "pulse": {
+              "pulse_type": "square",
+              "duration": {
+                "ns": 100
+              },
+              "amplitude": "amp"
+            }
+          },
+          {
+            "op_type": "play",
+            "channel": "readout",
+            "pulse": {
+              "pulse_type": "square",
+              "duration": {
+                "us": 1
+              },
+              "amplitude": {
+                "mV": 30
+              }
+            }
+          },
+          {
+            "op_type": "record",
+            "channel": "readout",
+            "var": "raw",
+            "duration": {
+              "us": 1
+            },
+            "integration": {
+              "integration_type": "full"
+            }
+          },
+          {
+            "op_type": "discriminate",
+            "target": "state",
+            "source": "raw",
+            "threshold": {
+              "mV": 0.5
+            }
+          },
+          {
+            "op_type": "store",
+            "key": "rabi_amplitude",
+            "source": "state",
+            "mode": "average"
+          },
+          {
+            "op_type": "wait",
+            "channels": [
+              "qubit"
+            ],
+            "duration": {
+              "us": 10
+            }
+          }
+        ]
+      }
+    ]
+
+The JSON structure shows:
+
+1. **Variable declarations** (lines 2-14): Three variables for amplitude sweep, raw measurement, and discriminated state
+2. **For loop** (lines 15-93): Sweeps amplitude from 0 to 100 mV in 50 steps
+3. **Loop body** contains:
+
+   - **Play operation** (lines 19-29): Variable-amplitude square pulse on qubit channel
+   - **Measurement** (lines 30-50): Readout pulse and recording with integration
+   - **Discrimination** (lines 51-57): Threshold comparison to classify qubit state
+   - **Data storage** (lines 58-63): Store averaged results
+   - **Wait operation** (lines 64-70): Allow qubit to relax between measurements
+
+This JSON can be exported to control hardware or used for simulation and analysis.
