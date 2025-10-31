@@ -30,25 +30,23 @@ The most basic pulse sequence applies operations sequentially:
 Pulse Sequence Diagram
 ~~~~~~~~~~~~~~~~~~~~~~~
 
-.. code-block:: text
+.. only:: html
 
-    Channel: drive
-    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-              ┌──────────────────┐
-              │                  │
-    ──────────┤  Square 100mV    ├──────────────
-              │                  │
-              │      10 μs       │
-              └──────────────────┘
+   .. figure:: ../_static/basic_usage_pulse_diagram.svg
+      :align: center
+      :width: 80%
+      :name: basic-usage-pulse-diagram
 
-    Channel: readout
-    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-              ┌──────────┐
-              │  ∿∿∿∿∿∿  │
-    ──────────┤ Sine 50mV├────────────────────
-              │  5 GHz   │
-              │   5 μs   │
-              └──────────┘
+      Pulse sequence showing square pulse on drive channel and sine pulse on readout channel.
+
+.. only:: latex
+
+   .. figure:: ../_static/basic_usage_pulse_diagram.pdf
+      :align: center
+      :width: 80%
+      :name: basic-usage-pulse-diagram
+
+      Pulse sequence showing square pulse on drive channel and sine pulse on readout channel.
 
 JSON Output
 ~~~~~~~~~~~
@@ -120,25 +118,21 @@ Use ``barrier()`` to synchronize multiple channels:
 Pulse Sequence Diagram
 ~~~~~~~~~~~~~~~~~~~~~~~
 
-.. code-block:: text
+.. only:: html
 
-    Channel: drive
-    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-              ┌──────────┐      ▮
-              │          │      ▮ barrier
-    ──────────┤  100mV   ├──────▮────┌────────────────────┐
-              │   10μs   │      ▮    │       80mV         │
-              └──────────┘      ▮    │        20μs        │
-                                     └────────────────────┘
+   .. figure:: ../_static/barrier_sync_pulse_diagram.svg
+      :align: center
+      :alt: Barrier synchronization pulse sequence diagram
 
-    Channel: readout
-    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-              ┌─────┐            ▮
-              │ 50mV│            ▮ barrier
-    ──────────┤ 5μs ├────────────▮────┌────────────────────┐
-              │     │            ▮    │       40mV         │
-              └─────┘            ▮    │        20μs        │
-                                      └────────────────────┘
+      Barrier synchronization between drive and readout channels
+
+.. only:: latex
+
+   .. figure:: ../_static/barrier_sync_pulse_diagram.pdf
+      :align: center
+      :alt: Barrier synchronization pulse sequence diagram
+
+      Barrier synchronization between drive and readout channels
 
 JSON Output
 ~~~~~~~~~~~
@@ -481,10 +475,10 @@ With else clause:
         )
 
         with if_("state"):
-            # State is |1⟩
+            # State is |1>
             play("qubit", square_pulse(duration="50ns", amplitude="100mV"))
         with else_():
-            # State is |0⟩
+            # State is |0>
             play("qubit", square_pulse(duration="25ns", amplitude="50mV"))
 
 Storing Results
@@ -547,25 +541,21 @@ For explicit timing control, use schedules instead of sequences:
 Schedule Diagram
 ~~~~~~~~~~~~~~~~
 
-.. code-block:: text
+.. only:: html
 
-    Channel: qubit
-    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-              ┌────┐                    ┌────┐
-              │50mV│                    │30mV│
-    ──────────┤100n├────────────────────┤100n├────────────
-              │ s  │  500ns delay       │ s  │
-              └────┘                    └────┘
-               op1 ──────500ns──────────▶ op2
+   .. figure:: ../_static/schedule_refop_timing_diagram.svg
+      :align: center
+      :alt: Schedule with ref_op timing diagram
 
-    Channel: readout
-    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-                                        ┌──────────────┐
-                                        │    20mV      │
-    ────────────────────────────────────┤     1μs      ├────
-                                        │              │
-                                        └──────────────┘
-                                         (starts with op2)
+      Schedule showing ref_op timing relationships between operations
+
+.. only:: latex
+
+   .. figure:: ../_static/schedule_refop_timing_diagram.pdf
+      :align: center
+      :alt: Schedule with ref_op timing diagram
+
+      Schedule showing ref_op timing relationships between operations
 
 Working with Different Pulse Shapes
 ------------------------------------
@@ -579,29 +569,33 @@ Constant amplitude:
 
     pulse = square_pulse(duration="100ns", amplitude="50mV", phase="0deg")
 
-Gaussian Pulse
-~~~~~~~~~~~~~~
+External Pulse (e.g., Gaussian)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Gaussian envelope reduces spectral leakage:
 
 .. code-block:: python
 
-    pulse = gaussian_pulse(
+    pulse = external_pulse(
+        function="pulse_library.gaussian",
         duration="200ns",
         amplitude="50mV",
-        sigma="40ns",  # Width parameter
+        params={
+            "sigma": "40ns"  # Width parameter
+        },
         frequency="5.2GHz",
         phase="0deg"
     )
 
-DRAG Pulse
-~~~~~~~~~~
+External Pulse (e.g., DRAG)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Derivative Removal by Adiabatic Gate (reduces leakage):
 
 .. code-block:: python
 
-    pulse = drag_pulse(
+    pulse = external_pulse(
+        function="pulse_library.drag_pulse",
         duration="200ns",
         amplitude="50mV",
         sigma="40ns",

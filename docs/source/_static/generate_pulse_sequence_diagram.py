@@ -9,15 +9,16 @@ It visualizes the JSON output structure as a timeline showing:
 - Readout pulses on the readout channel
 - Wait periods for qubit relaxation
 
-The generated SVG is saved in the same directory as this script (docs/source/_static/).
+The generated files are saved in the same directory as this script (docs/source/_static/).
 
 Usage:
     cd docs/source/_static
     python generate_pulse_sequence_diagram.py
 
 Output:
-    - pulse_sequence_diagram.svg (primary output)
-    - pulse_sequence_diagram.png (compatibility fallback)
+    - pulse_sequence_diagram.pdf (vector format for LaTeX/PDF)
+    - pulse_sequence_diagram.png (raster format for compatibility)
+    - pulse_sequence_diagram.svg (vector format for HTML)
 """
 
 import os
@@ -234,12 +235,17 @@ ax.text(
 
 plt.tight_layout()
 
-# Save as SVG (preferred format) to the same directory as this script
-output_svg = os.path.join(script_dir, "pulse_sequence_diagram.svg")
-plt.savefig(output_svg, bbox_inches="tight", facecolor="white")
-print(f"SVG saved to: {output_svg}")
+# Save as PDF (vector format for LaTeX) - primary output
+output_pdf = os.path.join(script_dir, "pulse_sequence_diagram.pdf")
+plt.savefig(output_pdf, bbox_inches="tight", facecolor="white")
+print(f"PDF saved to: {output_pdf}")
 
 # Also save PNG for compatibility
 output_png = os.path.join(script_dir, "pulse_sequence_diagram.png")
 plt.savefig(output_png, dpi=150, bbox_inches="tight", facecolor="white")
 print(f"PNG saved to: {output_png}")
+
+# Also save SVG for HTML
+output_svg = os.path.join(script_dir, "pulse_sequence_diagram.svg")
+plt.savefig(output_svg, bbox_inches="tight", facecolor="white")
+print(f"SVG saved to: {output_svg}")

@@ -21,51 +21,29 @@ The standard Ramsey sequence creates a superposition, allows free evolution, the
 Pulse Sequence Diagram
 ~~~~~~~~~~~~~~~~~~~~~~~
 
-.. code-block:: text
+.. only:: html
 
-    Channel: qubit
-    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-              ┌─────┐            ┌─────┐      ┌──────────┐
-              │     │            │     │      │          │
-    ──────────┤ π/2 ├────wait(τ)─┤ π/2 ├──────┤  Readout ├─────
-              │     │            │     │      │          │
-              │ 25ns│            │ 25ns│      │          │
-              └─────┘            └─────┘      └──────────┘
+   .. figure:: ../_static/t2star_ramsey_pulse_diagram.svg
+      :align: center
+      :alt: T2* Ramsey pulse sequence diagram
 
-              |←─── Free evolution time τ ───→|
+      T2* Ramsey pulse sequence showing free evolution between π/2 pulses
 
-    Sweep: τ from 0 → 10 μs
+.. only:: latex
+
+   .. figure:: ../_static/t2star_ramsey_pulse_diagram.pdf
+      :align: center
+      :alt: T2* Ramsey pulse sequence diagram
+
+      T2* Ramsey pulse sequence showing free evolution between π/2 pulses
 
 What Happens
 ~~~~~~~~~~~~
 
-1. **First π/2 pulse**: Creates equal superposition |0⟩ + |1⟩
+1. **First π/2 pulse**: Creates equal superposition \|0> + \|1>
 2. **Free evolution**: Qubit accumulates phase, dephases due to noise
 3. **Second π/2 pulse**: Converts phase to population
 4. **Readout**: Measures excited state probability
-
-Expected Results
-~~~~~~~~~~~~~~~~
-
-.. code-block:: text
-
-    P(|1⟩)
-      1.0 ┤  ╱╲
-          │ ╱  ╲  ╱╲
-          │╱    ╲╱  ╲  ╱╲      ← Envelope decays as e^(-t/T2*)
-      0.5 ┤      ╲   ╲╱  ╲─────
-          │       ╲
-          │        ╲─────────── ← Final decay to 0.5
-      0.0 ┤
-          └────┴────┴────┴────┴────┴────┴────┴────┴────┴──
-               0    2    4    6    8   10   12   14   16
-                          Time τ (μs)
-
-    Key features:
-    - Damped sinusoidal oscillation
-    - Decay envelope: exp(-τ/T2*)
-    - Oscillation frequency: detuning from qubit resonance
-    - Final value: 0.5 (complete dephasing)
 
 Code Example
 ~~~~~~~~~~~~
@@ -129,42 +107,21 @@ Adding an intentional frequency detuning creates faster oscillations, making it 
 Pulse Sequence Diagram
 ~~~~~~~~~~~~~~~~~~~~~~~
 
-.. code-block:: text
+.. only:: html
 
-    Channel: qubit
-    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    shift_freq(+δ)
-         │        ┌─────┐            ┌─────┐      ┌──────────┐
-         │        │     │            │     │      │          │
-         └───────►│ π/2 ├────wait(τ)─┤ π/2 ├──────┤  Readout ├──
-                  │     │            │     │      │          │
-                  │ 25ns│            │ 25ns│      │          │
-                  └─────┘            └─────┘      └──────────┘
-                                                         │
-                                                  shift_freq(-δ)
+   .. figure:: ../_static/ramsey_detuning_pulse_diagram.svg
+      :align: center
+      :alt: Ramsey with detuning pulse sequence diagram
 
-    Detuning: δ = +5 MHz
-    Sweep: τ from 0 → 5 μs
+      Ramsey with detuning pulse sequence showing frequency shift
 
-Expected Results
-~~~~~~~~~~~~~~~~
+.. only:: latex
 
-.. code-block:: text
+   .. figure:: ../_static/ramsey_detuning_pulse_diagram.pdf
+      :align: center
+      :alt: Ramsey with detuning pulse sequence diagram
 
-    P(|1⟩)
-      1.0 ┤ ╱╲ ╱╲ ╱╲ ╱╲ ╱╲
-          │╱  V  V  V  V  ╲ ╱╲     ← Faster oscillations
-          │               V  ╲ ╱╲  ← Same decay envelope
-      0.5 ┤                  V  ╲──
-          │
-          │
-      0.0 ┤
-          └────┴────┴────┴────┴────┴────┴────┴────┴────┴──
-               0    1    2    3    4    5    6    7    8
-                          Time τ (μs)
-
-    Oscillation frequency = detuning (5 MHz)
-    Decay rate unchanged (still T2*)
+      Ramsey with detuning pulse sequence showing frequency shift
 
 Code Example
 ~~~~~~~~~~~~
@@ -225,43 +182,21 @@ The spin echo sequence refocuses quasi-static noise, measuring the true decohere
 Pulse Sequence Diagram
 ~~~~~~~~~~~~~~~~~~~~~~~
 
-.. code-block:: text
+.. only:: html
 
-    Channel: qubit
-    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-              ┌─────┐          ┌───┐          ┌─────┐      ┌──────────┐
-              │     │          │   │          │     │      │          │
-    ──────────┤ π/2 ├──wait(τ)─┤ π ├──wait(τ)─┤ π/2 ├──────┤  Readout ├─
-              │     │          │   │          │     │      │          │
-              │ 25ns│          │50n│          │ 25ns│      │          │
-              └─────┘          └───┘          └─────┘      └──────────┘
+   .. figure:: ../_static/hahn_echo_pulse_diagram.svg
+      :align: center
+      :alt: Hahn echo (spin echo) pulse sequence diagram
 
-              |← τ/2 →|  π pulse  |← τ/2 →|
-                       (refocus)
+      Hahn echo pulse sequence showing π pulse refocusing
 
-    Sweep: τ from 0 → 50 μs
+.. only:: latex
 
-Expected Results
-~~~~~~~~~~~~~~~~
+   .. figure:: ../_static/hahn_echo_pulse_diagram.pdf
+      :align: center
+      :alt: Hahn echo (spin echo) pulse sequence diagram
 
-.. code-block:: text
-
-    P(|1⟩)
-      1.0 ┤╲
-          │ ╲
-          │  ╲                      ← Slower decay
-      0.5 ┤   ╲─────────────────────  (T2 > T2*)
-          │
-          │
-      0.0 ┤
-          └────┴────┴────┴────┴────┴────┴────┴────┴────┴──
-               0   10   20   30   40   50   60   70   80
-                          Total time τ (μs)
-
-    T2 > T2* because:
-    - π pulse refocuses quasi-static noise
-    - Only measures true decoherence
-    - Typically T2 ≈ 2×T2* for spin qubits
+      Hahn echo pulse sequence showing π pulse refocusing
 
 Code Example
 ~~~~~~~~~~~~
@@ -308,120 +243,6 @@ Code Example
 
             store("echo", "qubit_state", mode="average")
             wait("qubit", duration="100us")
-
-Data Analysis
--------------
-
-Extracting T2*
-~~~~~~~~~~~~~~
-
-Fit the Ramsey data to:
-
-.. math::
-
-    P(|1\\rangle) = A \\cdot e^{-t/T_2^*} \\cdot \\cos(2\\pi f_{\\text{det}} t + \\phi) + C
-
-Where:
-
-* :math:`A` = oscillation amplitude
-* :math:`T_2^*` = dephasing time (fit parameter)
-* :math:`f_{\\text{det}}` = detuning frequency
-* :math:`\\phi` = initial phase
-* :math:`C` = offset (typically 0.5)
-
-Extracting T2
-~~~~~~~~~~~~~
-
-Fit the echo data to:
-
-.. math::
-
-    P(|1\\rangle) = A \\cdot e^{-t/T_2} + C
-
-Simpler exponential decay without oscillations.
-
-Relationship Between T1, T2*, and T2
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-For a qubit:
-
-.. math::
-
-    \\frac{1}{T_2} \\leq \\frac{1}{2T_1} + \\frac{1}{T_2^{\\text{pure}}}
-
-Where :math:`T_2^{\\text{pure}}` is pure dephasing time.
-
-In the limit where :math:`T_2^{\\text{pure}} \\gg T_1`:
-
-.. math::
-
-    T_2 \\approx 2T_1
-
-Experimental Considerations
-----------------------------
-
-For Spin Qubits
-~~~~~~~~~~~~~~~
-
-Typical values for GaAs spin qubits:
-
-* **T2***: 0.1 - 10 μs
-* **T2**: 1 - 100 μs
-* **T1**: 1 - 100 μs
-* **Typical detuning**: 1 - 10 MHz
-
-Noise Sources
-~~~~~~~~~~~~~
-
-**Charge noise**:
-
-* Dominant for singlet-triplet qubits
-* Couples via detuning
-* Can be reduced at sweet spots
-
-**Nuclear spin bath**:
-
-* Hyperfine interaction with nuclear spins
-* Causes T2* ~ 10-100 ns in GaAs
-* Can be suppressed with:
-
-  * Nuclear spin polarization
-  * Isotopic purification (e.g., :math:`^{28}\\text{Si}`)
-  * Dynamical decoupling sequences
-
-**Magnetic field noise**:
-
-* Affects Zeeman splitting
-* Can be reduced with magnetic shielding
-
-Optimization Strategies
-~~~~~~~~~~~~~~~~~~~~~~~
-
-1. **Find sweet spots**: Operating points where :math:`\\partial E / \\partial \\epsilon = 0`
-2. **Use echo sequences**: Refocus quasi-static noise
-3. **Apply CPMG**: Multiple π pulses extend coherence
-4. **Optimize gates**: Shorter gates reduce dephasing during operations
-
-Common Issues
-~~~~~~~~~~~~~
-
-**Very fast decay** (T2* < 100 ns):
-
-* Strong charge noise coupling
-* Move to different operating point
-* Check gate voltage stability
-
-**No oscillations visible**:
-
-* T2* too short relative to sweep range
-* Reduce sweep range
-* Add intentional detuning
-
-**Oscillation frequency unexpected**:
-
-* Qubit frequency has drifted
-* Re-run spectroscopy
-* Check DC voltage stability
 
 Complete Example Script
 ------------------------

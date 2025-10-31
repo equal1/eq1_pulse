@@ -18,41 +18,23 @@ In an amplitude Rabi experiment, we sweep the drive amplitude while keeping dura
 Pulse Sequence Diagram
 ~~~~~~~~~~~~~~~~~~~~~~~
 
-.. code-block:: text
+.. only:: html
 
-    Channel: qubit
-    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-              ┌────┐         ┌──────────┐
-              │    │         │          │
-    ──────────┤    ├─────────┤  Readout ├──────────────
-              │ X  │  wait   │          │
-              │var │         │          │
-              └────┘         └──────────┘
+   .. figure:: ../_static/rabi_pulse_diagram.svg
+      :align: center
+      :width: 90%
+      :name: rabi-pulse-diagram
 
-    Sweep: amplitude from 0 → 100 mV
+      Rabi pulse sequence with variable amplitude drive pulse followed by readout. The drive pulse amplitude is swept from 25 to 75 mV.
 
-Expected Results
-~~~~~~~~~~~~~~~~
+.. only:: latex
 
-.. code-block:: text
+   .. figure:: ../_static/rabi_pulse_diagram.pdf
+      :align: center
+      :width: 90%
+      :name: rabi-pulse-diagram
 
-    P(|1⟩)
-      1.0 ┤                 ╭╮                ╭╮
-          │                ╱  ╲              ╱  ╲
-          │               ╱    ╲            ╱    ╲
-      0.5 ┤              ╱      ╲          ╱      ╲
-          │             ╱        ╲        ╱        ╲
-          │   ╭────────╯          ╰──────╯          ╰────
-      0.0 ┤───╯
-          └────┴────┴────┴────┴────┴────┴────┴────┴────┴──
-               0   20   40   60   80  100  120  140  160
-                            Amplitude (mV)
-
-    Key features:
-    - Sinusoidal oscillation
-    - π pulse: first minimum (amplitude for complete inversion)
-    - π/2 pulse: first maximum (amplitude for equal superposition)
-    - Rabi frequency ∝ amplitude
+      Rabi pulse sequence with variable amplitude drive pulse followed by readout. The drive pulse amplitude is swept from 25 to 75 mV.
 
 Code Example
 ~~~~~~~~~~~~
@@ -105,40 +87,21 @@ In a time Rabi experiment, we sweep the pulse duration while keeping amplitude f
 Pulse Sequence Diagram
 ~~~~~~~~~~~~~~~~~~~~~~~
 
-.. code-block:: text
+.. only:: html
 
-    Channel: qubit
-    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-              ┌──var──┐       ┌──────────┐
-              │       │       │          │
-    ──────────┤   X   ├───────┤  Readout ├──────────────
-              │       │ wait  │          │
-              │ 80mV  │       │          │
-              └───────┘       └──────────┘
+   .. figure:: ../_static/duration_rabi_pulse_diagram.svg
+      :align: center
+      :alt: Duration Rabi pulse sequence diagram
 
-    Sweep: duration from 0 → 200 ns
+      Duration Rabi pulse sequence showing variable duration drive pulse
 
-Expected Results
-~~~~~~~~~~~~~~~~
+.. only:: latex
 
-.. code-block:: text
+   .. figure:: ../_static/duration_rabi_pulse_diagram.pdf
+      :align: center
+      :alt: Duration Rabi pulse sequence diagram
 
-    P(|1⟩)
-      1.0 ┤         ╱╲           ╱╲          ╱╲
-          │        ╱  ╲         ╱  ╲        ╱  ╲
-          │       ╱    ╲       ╱    ╲      ╱    ╲
-      0.5 ┤      ╱      ╲     ╱      ╲    ╱      ╲
-          │     ╱        ╲   ╱        ╲  ╱        ╲
-          │────╯          ╲─╯          ╲╯          ╲──
-      0.0 ┤
-          └────┴────┴────┴────┴────┴────┴────┴────┴────┴──
-               0    40   80  120  160  200  240  280  320
-                         Duration (ns)
-
-    Key features:
-    - Oscillation period = π pulse duration
-    - First maximum at π pulse duration
-    - Rabi frequency ∝ 1/period
+      Duration Rabi pulse sequence showing variable duration drive pulse
 
 Code Example
 ~~~~~~~~~~~~
@@ -182,6 +145,8 @@ Code Example
             # Relaxation time
             wait("qubit", duration="10us")
 
+Complete Example Script
+
 Frequency Rabi (Spectroscopy)
 ------------------------------
 
@@ -190,42 +155,25 @@ In frequency Rabi (qubit spectroscopy), we sweep the drive frequency to find the
 Pulse Sequence Diagram
 ~~~~~~~~~~~~~~~~~~~~~~~
 
-.. code-block:: text
+.. only:: html
 
-    Channel: qubit
-    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    set_freq(f)
-         │         ┌────┐         ┌──────────┐
-         │         │    │         │          │
-         └────────►│ X  ├─────────┤  Readout ├──────────
-                   │    │  wait   │          │
-                   │    │         │          │
-                   └────┘         └──────────┘
+   .. figure:: ../_static/frequency_spectroscopy_pulse_diagram.svg
+      :align: center
+      :alt: Frequency spectroscopy pulse sequence diagram
 
-    Sweep: frequency from 14.0 → 16.0 GHz
+      Frequency spectroscopy pulse sequence showing frequency sweep
+
+.. only:: latex
+
+   .. figure:: ../_static/frequency_spectroscopy_pulse_diagram.pdf
+      :align: center
+      :alt: Frequency spectroscopy pulse sequence diagram
+
+      Frequency spectroscopy pulse sequence showing frequency sweep
+
+Code Example
+~~~~~~~~~~~~
            (for GaAs spin qubits)
-
-Expected Results
-~~~~~~~~~~~~~~~~
-
-.. code-block:: text
-
-    P(|1⟩)
-      1.0 ┤
-          │
-          │              ╱────╲
-      0.5 ┤            ╱        ╲
-          │          ╱            ╲
-          │──────────                ──────────────────
-      0.0 ┤
-          └────┴────┴────┴────┴────┴────┴────┴────┴────┴──
-              14.0  14.5  15.0  15.5  16.0  16.5  17.0
-                       Frequency (GHz)
-
-    Key features:
-    - Peak at qubit resonance frequency
-    - Width proportional to 1/T2*
-    - Height depends on π pulse calibration
 
 Code Example
 ~~~~~~~~~~~~

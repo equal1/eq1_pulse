@@ -508,10 +508,10 @@ Example:
     )
 
     with if_("state"):
-        # Qubit was in |1⟩, apply correction
+        # Qubit was in |1>, apply correction
         play("qubit", square_pulse(duration="100ns", amplitude="50mV"))
     with else_():
-        # Qubit was in |0⟩, do nothing
+        # Qubit was in |0>, do nothing
         pass
 
 Storing Results
@@ -743,10 +743,19 @@ Pulse Sequence Visualization
 
 The diagram below shows how the JSON structure translates into a concrete pulse sequence timeline:
 
-.. image:: /_static/pulse_sequence_diagram.svg
-   :width: 100%
-   :alt: Pulse sequence timing diagram
-   :align: center
+.. only:: html
+
+   .. image:: /_static/pulse_sequence_diagram.svg
+      :width: 100%
+      :alt: Pulse sequence timing diagram
+      :align: center
+
+.. only:: latex
+
+   .. image:: /_static/pulse_sequence_diagram.pdf
+      :width: 100%
+      :alt: Pulse sequence timing diagram
+      :align: center
 
 The visualization shows three iterations of the 50-iteration loop, displaying the temporal structure:
 
