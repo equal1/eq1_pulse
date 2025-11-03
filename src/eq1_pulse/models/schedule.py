@@ -97,23 +97,21 @@ if TYPE_CHECKING:
 
 
 class ScheduledOperation(LeanModel, FrozenModel):
-    """A class representing a scheduled operation with timing and reference information.
-
-    :param name: Optional name for the operation
-    :param rel_time: Relative time from the reference point
-    :param ref_op: Name of the reference operation
-    :param ref_pt: Reference point on the reference operation
-    :param ref_pt_new: Reference point on the new operation
-    :param op: The schedulable operation
-    """
+    """A class representing a scheduled operation with timing and reference information."""
 
     name: str | None = None
+    """Optional name for the operation."""
     rel_time: RelTime | None = None
+    """Relative time from the reference point."""
     ref_op: str | None = None
+    """Name of the reference operation."""
     ref_pt: Annotated[RefPt, PlainSerializer(str)] | None = None
+    """Reference point on the reference operation."""
     ref_pt_new: Annotated[RefPt, PlainSerializer(str)] | None = None
+    """Reference point on the new operation."""
 
     op: Schedulable
+    """The schedulable operation."""
 
     def __init__(self, op: Schedulable, **data: Unpack[OpScheduleDict]):  # noqa: D107
         super().__init__(op=op, **data)  # type: ignore[call-arg, misc]

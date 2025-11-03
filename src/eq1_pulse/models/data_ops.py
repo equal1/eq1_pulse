@@ -104,12 +104,19 @@ if TYPE_CHECKING:
 
 class Discriminate(DataOpBase):
     op_type: Literal["discriminate"] = "discriminate"
+    """The type discriminator, always "discriminate"."""
     target: VariableRef
+    """The target variable to store the discrimination result."""
     source: VariableRef
+    """The source variable containing the data to discriminate."""
     threshold: Threshold
+    """The threshold value for discrimination."""
     rotation: Phase = Phase(0)
+    """Phase rotation to apply before discrimination."""
     compare: Annotated[ComparisonMode, PlainSerializer(str)] = ComparisonMode.GreaterEqual
+    """The comparison mode to use."""
     project: Annotated[ComplexToRealProjectionMode, PlainSerializer(str)] = ComplexToRealProjectionMode.RealPart
+    """The projection mode for complex to real conversion."""
 
     if TYPE_CHECKING:
 
@@ -140,9 +147,13 @@ type StoreModeLike = StoreMode | StoreModeLiteral
 
 class Store(DataOpBase):
     op_type: Literal["store"] = "store"
+    """The type discriminator, always "store"."""
     key: str
+    """The key to identify the stored data."""
     source: VariableRef
+    """The source variable to store."""
     mode: Annotated[StoreMode, PlainSerializer(str)]
+    """The storage mode to use."""
 
     if TYPE_CHECKING:
 

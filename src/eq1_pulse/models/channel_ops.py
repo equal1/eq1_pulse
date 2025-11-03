@@ -42,13 +42,14 @@ class IntegrationType(LeanModel):
     """Base class for different types of integration operations."""
 
     integration_type: Any  # str
-    """To be set to the discriminator value (literal) in subclasses."""
+    """The type discriminator for integration types."""
 
 
 class FullIntegration(IntegrationType):
     """Full summation of measured values."""
 
     integration_type: Literal["full"] = "full"
+    """The type discriminator, always "full"."""
 
 
 class DemodIntegration(IntegrationType):
@@ -62,15 +63,20 @@ class DemodIntegration(IntegrationType):
     """
 
     integration_type: Literal["demod"] = "demod"
+    """The type discriminator, always "demod"."""
     phase: Phase | None = None
+    """Optional phase rotation to apply to the result."""
     scale_cos: float = 1
+    """Scaling factor for the real (cosine) part."""
     scale_sin: float = 1
+    """Scaling factor for the imaginary (sine) part."""
 
 
 class ChannelOpBase(OpBase):
     """Base class for operations involving a single channel."""
 
     channel: ChannelRef
+    """The channel on which the operation is performed."""
 
     def __init__(self, channel: ChannelRefLike, **data):  # noqa: D107
         super().__init__(channel=channel, **data)  # type: ignore[call-arg]
@@ -116,6 +122,7 @@ class Barrier(ChannelsOpBase):
     """
 
     op_type: Literal["barrier"] = "barrier"
+    """The type discriminator, always "barrier"."""
 
     if TYPE_CHECKING:
 
@@ -137,7 +144,9 @@ class Wait(ChannelsOpBase):
     """
 
     op_type: Literal["wait"] = "wait"
+    """The type discriminator, always "wait"."""
     duration: Duration
+    """The duration to wait."""
 
     if TYPE_CHECKING:
 
@@ -157,6 +166,7 @@ class SetFrequency(ChannelOpBase):
     """The operation type discriminator, always set to "set_frequency"."""
 
     frequency: Frequency | VariableRef
+    """The frequency to set."""
 
     def __init__(self, channel: ChannelRefLike, frequency: FrequencyLike | VariableRefLike, **data):  # noqa: D107
         super().__init__(channel=channel, frequency=frequency, **data)
@@ -168,6 +178,7 @@ class ShiftFrequency(ChannelOpBase):
     op_type: Literal["shift_frequency"] = "shift_frequency"
     """The operation type discriminator, always set to "shift_frequency"."""
     frequency: Frequency | VariableRef
+    """The frequency shift to apply."""
 
     def __init__(self, /, channel: ChannelRefLike, frequency: FrequencyLike | VariableRefLike, **data):  # noqa: D107
         super().__init__(channel=channel, frequency=frequency, **data)
@@ -177,7 +188,9 @@ class SetPhase(ChannelOpBase):
     """Set the phase of a channel."""
 
     op_type: Literal["set_phase"] = "set_phase"
+    """The type discriminator, always "set_phase"."""
     phase: Phase | VariableRef
+    """The phase to set."""
 
     def __init__(self, /, channel: ChannelRefLike, phase: PhaseLike | VariableRefLike, **data):  # noqa: D107
         super().__init__(channel=channel, phase=phase, **data)
@@ -187,7 +200,9 @@ class ShiftPhase(ChannelOpBase):
     """Add a phase shift to the channel phase."""
 
     op_type: Literal["shift_phase"] = "shift_phase"
+    """The type discriminator, always "shift_phase"."""
     phase: Phase | VariableRef
+    """The phase shift to apply."""
 
     def __init__(self, /, channel: ChannelRefLike, phase: PhaseLike | VariableRefLike, **data):  # noqa: D107
         super().__init__(channel=channel, phase=phase, **data)
@@ -208,10 +223,15 @@ class Record(ChannelOpBase):
     """
 
     op_type: Literal["record"] = "record"
+    """The type discriminator, always "record"."""
     var: VariableRef
+    """The variable to store the acquisition result."""
     duration: Duration
+    """The duration of the acquisition."""
     integration: FullIntegration | DemodIntegration
+    """The integration method to use."""
     time_of_flight: Duration | None = None
+    """Optional delay before starting acquisition."""
 
     if TYPE_CHECKING:
 
@@ -242,10 +262,15 @@ class Trace(ChannelOpBase):
     """
 
     op_type: Literal["trace"] = "trace"
+    """The type discriminator, always "trace"."""
     var: VariableRef
+    """The array variable to store the trace data."""
     duration: Duration
+    """The total duration of the trace acquisition."""
     integration: FullIntegration | DemodIntegration | None = None
+    """The integration method to use."""
     time_of_flight: Duration | None = None
+    """Optional delay before starting acquisition."""
 
     if TYPE_CHECKING:
 
@@ -281,13 +306,17 @@ class CompensateDC(ChannelOpBase):
     """
 
     op_type: Literal["dc_comp"] = "dc_comp"
+    """The type discriminator, always "dc_comp"."""
     duration: Duration | VariableRef | None
     """If :obj:`None`, reset channel-accumulated value without playing anything."""
 
     max_amp: Magnitude | None = None
+    """Maximum amplitude limit for the compensation pulse."""
 
     rise_time: Duration | VariableRef | None = None
+    """Duration of the rising edge ramp."""
     fall_time: Duration | VariableRef | None = None
+    """Duration of the falling edge ramp."""
 
     if TYPE_CHECKING:
 

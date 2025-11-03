@@ -23,11 +23,10 @@ class SequenceBase[ItemT](NoExtrasModel):
 
     This class represents an ordered collection of operation sequence items that
     will be serialized as a list when converted to JSON or other formats.
-
-    :ivar items: List of operation sequence items
     """
 
     items: list[ItemT]
+    """List of operation sequence items."""
 
     def __len__(self):
         return len(self.items)
@@ -99,18 +98,14 @@ class SequenceBase[ItemT](NoExtrasModel):
 
 
 class RepetitionBase[BodyT](OpBase):
-    """Represents an abstract repeated sequence of operations.
-
-    :ivar op_type: Operation type, always "repeat"
-    :ivar count: Number of times to repeat the sequence
-    :ivar body: The sequence of operations to repeat
-
-    To be extended with field to contain the operations.
-    """
+    """Represents an abstract repeated sequence of operations."""
 
     op_type: Literal["repeat"] = "repeat"
+    """The type discriminator, always "repeat"."""
     count: int = Field(ge=0)
+    """Number of times to repeat the sequence."""
     body: BodyT
+    """The sequence of operations to repeat."""
 
 
 type NumpyIterableArray = NumpyIntArray1D | NumpyFloatArray1D | NumpyComplexArray1D
@@ -172,5 +167,8 @@ class ConditionalBase[BodyT](OpBase):
     """
 
     op_type: Literal["if"] = "if"
+    """The type discriminator, always "if"."""
     var: VariableRef
+    """The variable reference for the condition."""
     body: BodyT
+    """The sequence of operations to execute if the condition is met."""
