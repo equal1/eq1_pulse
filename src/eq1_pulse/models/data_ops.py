@@ -1,4 +1,4 @@
-# ruff: noqa: D100, D101, D107
+# ruff: noqa: D100, D107
 from __future__ import annotations
 
 from enum import StrEnum
@@ -28,6 +28,8 @@ __all__ = (
 
 
 class DataOpBase(OpBase):
+    """Base class for all data operations."""
+
     if TYPE_CHECKING:
 
         def __init__(*args, **data):
@@ -82,6 +84,8 @@ class PulseDecl(DataOpBase):
 
 
 class ComparisonMode(StrEnum):
+    """Comparison modes for discrimination operations."""
+
     GreaterEqual = ">="
     Greater = ">"
     LessEqual = "<="
@@ -89,6 +93,8 @@ class ComparisonMode(StrEnum):
 
 
 class ComplexToRealProjectionMode(StrEnum):
+    """Projection modes for converting complex values to real values."""
+
     RealPart = "real"
     ImaginaryPart = "imag"
     Magnitude = "abs"
@@ -103,6 +109,8 @@ if TYPE_CHECKING:
 
 
 class Discriminate(DataOpBase):
+    """Discriminate operation to convert complex data to boolean based on threshold comparison."""
+
     op_type: Literal["discriminate"] = "discriminate"
     """The type discriminator, always "discriminate"."""
     target: VariableRef
@@ -135,6 +143,8 @@ class Discriminate(DataOpBase):
 
 
 class StoreMode(StrEnum):
+    """Storage modes for storing variable data."""
+
     Last = "last"
     Average = "average"
     Count = "count"
@@ -146,6 +156,8 @@ type StoreModeLike = StoreMode | StoreModeLiteral
 
 
 class Store(DataOpBase):
+    """Store operation to save variable data for later retrieval."""
+
     op_type: Literal["store"] = "store"
     """The type discriminator, always "store"."""
     key: str

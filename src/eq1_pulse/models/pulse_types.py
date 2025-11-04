@@ -1,4 +1,4 @@
-# ruff: noqa: D100, D101, D107
+# ruff: noqa: D100, D107
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Annotated, Any, Literal
@@ -19,6 +19,8 @@ __all__ = ("ArbitrarySampledPulse", "ExternalPulse", "PulseType", "SinePulse", "
 
 
 class PulseBase(_LeanModel):
+    """Base class for all pulse types."""
+
     pulse_type: Any  # str
     """The type discriminator for pulse types."""
     duration: Duration | VariableRef
@@ -38,12 +40,20 @@ class PulseBase(_LeanModel):
 
 
 class SquarePulse(PulseBase):
+    """Square pulse with optional rise and fall times.
+
+    If rise and fall times are specified, the pulse will
+    have linear ramps at the beginning and end.
+
+    These ramps shorten the flat top duration accordingly.
+    """
+
     pulse_type: Literal["square"] = "square"
     """The type discriminator, always "square"."""
     rise_time: Duration | VariableRef | None = None
-    """The rise time of the pulse."""
+    """The rise time of the pulse. It's also included in the total duration."""
     fall_time: Duration | VariableRef | None = None
-    """The fall time of the pulse."""
+    """The fall time of the pulse. It's also included in the total duration."""
 
     if TYPE_CHECKING:
 
@@ -59,6 +69,8 @@ class SquarePulse(PulseBase):
 
 
 class SinePulse(PulseBase):
+    """Sine wave pulse with optional frequency sweep."""
+
     pulse_type: Literal["sine"] = "sine"
     """The type discriminator, always "sine"."""
     frequency: Frequency | VariableRef
