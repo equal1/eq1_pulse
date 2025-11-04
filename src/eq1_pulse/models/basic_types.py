@@ -63,6 +63,8 @@ __all__ = (
 
 
 class ArithmeticFrozenWrappedValueModel[ScalarType](FrozenWrappedValueModel):
+    """Base class for wrapped value models that support arithmetic operations."""
+
     def __neg__(self: Self) -> Self:
         return type(self).model_construct(value=-self.value)  # type: ignore[return-value]
 
@@ -523,11 +525,17 @@ class OpBase(FrozenLeanModel):
 
 
 class _StartStopInterval(FrozenModel):
+    """Internal base class for intervals defined by start and stop values."""
+
     start: int | float | complex
+    """Start of the interval. It is included in the interval."""
     stop: int | float | complex
+    """Stop of the interval. It is included in the interval."""
 
     _fields_to_scale_: ClassVar[tuple[str, ...]] = ("start", "stop")
+    """Field names which should be scaled by multiplication/division operations."""
     _fields_to_offset_: ClassVar[tuple[str, ...]] = ("start", "stop")
+    """Field names which should be offset by addition/subtraction operations."""
 
     def __mul__(self, other: int | float | complex) -> Self:
         if not isinstance(other, int | float | complex):
@@ -574,6 +582,7 @@ class LinSpace(_StartStopInterval):
     """
 
     num: int = Field(ge=1)
+    """Number of points in the linear space, including both endpoints."""
 
     @model_validator(mode="after")
     def validate_model(self) -> Self:

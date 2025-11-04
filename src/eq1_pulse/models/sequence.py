@@ -46,6 +46,7 @@ class OpSequence(SequenceBase[OpSequenceItem]):
 
     if TYPE_CHECKING:  # mypy food
         items: list[OpSequenceItem]
+        """List of operation sequence items."""
 
         @overload
         def __init__(self, items: Iterable[OpSequenceItem], **data): ...

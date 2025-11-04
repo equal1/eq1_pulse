@@ -1,4 +1,4 @@
-# ruff: noqa: D100, D101, D107
+# ruff: noqa: D100, D107
 from __future__ import annotations
 
 from enum import StrEnum
@@ -28,6 +28,8 @@ __all__ = (
 
 
 class DataOpBase(OpBase):
+    """Base class for all data operations."""
+
     if TYPE_CHECKING:
 
         def __init__(*args, **data):
@@ -82,6 +84,8 @@ class PulseDecl(DataOpBase):
 
 
 class ComparisonMode(StrEnum):
+    """Comparison modes for discrimination operations."""
+
     GreaterEqual = ">="
     Greater = ">"
     LessEqual = "<="
@@ -89,6 +93,8 @@ class ComparisonMode(StrEnum):
 
 
 class ComplexToRealProjectionMode(StrEnum):
+    """Projection modes for converting complex values to real values."""
+
     RealPart = "real"
     ImaginaryPart = "imag"
     Magnitude = "abs"
@@ -103,13 +109,22 @@ if TYPE_CHECKING:
 
 
 class Discriminate(DataOpBase):
+    """Discriminate operation to convert complex data to boolean based on threshold comparison."""
+
     op_type: Literal["discriminate"] = "discriminate"
+    """The type discriminator, always "discriminate"."""
     target: VariableRef
+    """The target variable to store the discrimination result."""
     source: VariableRef
+    """The source variable containing the data to discriminate."""
     threshold: Threshold
+    """The threshold value for discrimination."""
     rotation: Phase = Phase(0)
+    """Phase rotation to apply before discrimination."""
     compare: Annotated[ComparisonMode, PlainSerializer(str)] = ComparisonMode.GreaterEqual
+    """The comparison mode to use."""
     project: Annotated[ComplexToRealProjectionMode, PlainSerializer(str)] = ComplexToRealProjectionMode.RealPart
+    """The projection mode for complex to real conversion."""
 
     if TYPE_CHECKING:
 
@@ -128,6 +143,8 @@ class Discriminate(DataOpBase):
 
 
 class StoreMode(StrEnum):
+    """Storage modes for storing variable data."""
+
     Last = "last"
     Average = "average"
     Count = "count"
@@ -139,10 +156,16 @@ type StoreModeLike = StoreMode | StoreModeLiteral
 
 
 class Store(DataOpBase):
+    """Store operation to save variable data for later retrieval."""
+
     op_type: Literal["store"] = "store"
+    """The type discriminator, always "store"."""
     key: str
+    """The key to identify the stored data."""
     source: VariableRef
+    """The source variable to store."""
     mode: Annotated[StoreMode, PlainSerializer(str)]
+    """The storage mode to use."""
 
     if TYPE_CHECKING:
 

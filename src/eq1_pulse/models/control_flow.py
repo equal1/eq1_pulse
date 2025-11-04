@@ -28,6 +28,7 @@ class SequenceBase[ItemT](NoExtrasModel):
     """
 
     items: list[ItemT]
+    """List of operation sequence items."""
 
     def __len__(self):
         return len(self.items)
@@ -109,8 +110,11 @@ class RepetitionBase[BodyT](OpBase):
     """
 
     op_type: Literal["repeat"] = "repeat"
+    """The type discriminator, always "repeat"."""
     count: int = Field(ge=0)
+    """Number of times to repeat the sequence."""
     body: BodyT
+    """The sequence of operations to repeat."""
 
 
 type NumpyIterableArray = NumpyIntArray1D | NumpyFloatArray1D | NumpyComplexArray1D
@@ -172,5 +176,8 @@ class ConditionalBase[BodyT](OpBase):
     """
 
     op_type: Literal["if"] = "if"
+    """The type discriminator, always "if"."""
     var: VariableRef
+    """The variable reference for the condition."""
     body: BodyT
+    """The sequence of operations to execute if the condition is met."""

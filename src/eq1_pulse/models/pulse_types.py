@@ -1,4 +1,4 @@
-# ruff: noqa: D100, D101, D107
+# ruff: noqa: D100, D107
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Annotated, Any, Literal
@@ -19,9 +19,14 @@ __all__ = ("ArbitrarySampledPulse", "ExternalPulse", "PulseType", "SinePulse", "
 
 
 class PulseBase(_LeanModel):
+    """Base class for all pulse types."""
+
     pulse_type: Any  # str
+    """The type discriminator for pulse types."""
     duration: Duration | VariableRef
+    """The duration of the pulse."""
     amplitude: Amplitude | VariableRef
+    """The amplitude of the pulse."""
 
     if TYPE_CHECKING:
 
@@ -35,9 +40,20 @@ class PulseBase(_LeanModel):
 
 
 class SquarePulse(PulseBase):
+    """Square pulse with optional rise and fall times.
+
+    If rise and fall times are specified, the pulse will
+    have linear ramps at the beginning and end.
+
+    These ramps shorten the flat top duration accordingly.
+    """
+
     pulse_type: Literal["square"] = "square"
+    """The type discriminator, always "square"."""
     rise_time: Duration | VariableRef | None = None
+    """The rise time of the pulse. It's also included in the total duration."""
     fall_time: Duration | VariableRef | None = None
+    """The fall time of the pulse. It's also included in the total duration."""
 
     if TYPE_CHECKING:
 
@@ -53,9 +69,14 @@ class SquarePulse(PulseBase):
 
 
 class SinePulse(PulseBase):
+    """Sine wave pulse with optional frequency sweep."""
+
     pulse_type: Literal["sine"] = "sine"
+    """The type discriminator, always "sine"."""
     frequency: Frequency | VariableRef
+    """The frequency of the sine wave."""
     to_frequency: Frequency | VariableRef | None = None
+    """The target frequency for frequency sweeps."""
 
     if TYPE_CHECKING:
 
@@ -123,7 +144,8 @@ class ArbitrarySampledPulse(PulseBase):
     The amplitude refers to the reference amplitude of the pulse, which is usually the peak amplitude.
     The duration refers to the total duration of the pulse.
     The samples (complex or real) are expected to be normalized between -1 and 1, and will be scaled by the amplitude.
-    The samples are uniformly distributed over the duration of the pulse, with interpolation applied as needed.
+    The samples are distributed over the duration of the pulse (uniformly or according to custom `time_points`),
+    with interpolation applied as needed.
     """
 
     pulse_type: Literal["arbitrary"] = "arbitrary"
