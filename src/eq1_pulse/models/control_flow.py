@@ -23,6 +23,8 @@ class SequenceBase[ItemT](NoExtrasModel):
 
     This class represents an ordered collection of operation sequence items that
     will be serialized as a list when converted to JSON or other formats.
+
+    :ivar items: List of operation sequence items
     """
 
     items: list[ItemT]
@@ -98,7 +100,14 @@ class SequenceBase[ItemT](NoExtrasModel):
 
 
 class RepetitionBase[BodyT](OpBase):
-    """Represents an abstract repeated sequence of operations."""
+    """Represents an abstract repeated sequence of operations.
+
+    :ivar op_type: Operation type, always "repeat"
+    :ivar count: Number of times to repeat the sequence
+    :ivar body: The sequence of operations to repeat
+
+    To be extended with field to contain the operations.
+    """
 
     op_type: Literal["repeat"] = "repeat"
     """The type discriminator, always "repeat"."""
