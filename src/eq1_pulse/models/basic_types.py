@@ -528,9 +528,9 @@ class _StartStopInterval(FrozenModel):
     """Internal base class for intervals defined by start and stop values."""
 
     start: int | float | complex
-    """Start of the interval."""
+    """Start of the interval. It is included in the interval."""
     stop: int | float | complex
-    """Stop of the interval."""
+    """Stop of the interval. It is included in the interval."""
 
     _fields_to_scale_: ClassVar[tuple[str, ...]] = ("start", "stop")
     """Field names which should be scaled by multiplication/division operations."""
