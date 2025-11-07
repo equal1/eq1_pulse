@@ -54,13 +54,38 @@ extensions = [
     "sphinx.ext.inheritance_diagram",
     "autoapi.extension",
     "sphinx.ext.autodoc.typehints",
-    # "matplotlib.sphinxext.plot_directive",
+    "matplotlib.sphinxext.plot_directive",
     "sphinx.ext.mathjax",
     "sphinx.ext.todo",
     "sphinx.ext.githubpages",
     "sphinx_tabs.tabs",
     "myst_parser",
 ]
+
+# -- Options for matplotlib plot directive ----------------------------------
+
+# Generate plots in SVG (300 DPI) for HTML and PDF for LaTeX
+plot_formats = [("svg", 300), ("pdf", 300)]
+
+# Show only SVG in HTML output (True to show all formats)
+plot_html_show_formats = True
+
+# Show link to source code
+plot_html_show_source_link = True
+
+# Base directory for plot directive imports (absolute path)
+plot_basedir = os.path.abspath("_generator")
+
+# Working directory for plot execution (absolute path)
+plot_working_directory = os.path.abspath("_generator")
+
+# Don't apply rcParams - let generator scripts handle their own styling
+plot_apply_rcparams = False
+
+# Include source code in output
+plot_include_source = True
+
+# -- MyST Parser configuration -----------------------------------------------
 
 # these might not be necessary
 myst_enable_extensions = [

@@ -1,6 +1,6 @@
 """Equal 1 Pulse Models"""  # noqa: D400
 
-# ruff: noqa: F403, D104
+# ruff: noqa: F403
 # pyright: reportUnsupportedDunderAll = false
 # -----
 from . import basic_types as _basic_types

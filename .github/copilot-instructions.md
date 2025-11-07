@@ -1,25 +1,97 @@
-When generating (Python) documentation:
-- Use ReST and Sphinx format
-    - replace `Args:` with the `:param:` directive (and so on)
-    - replace `Yields:` with the `:yield:` directive
-    - replace `Returns:` with the `:return:` directive
-    - replace `Raises:` with the `:raises:` directive
-    - etc.
-- don't mention the data types of the params in the docstring (omit `:type:`)
-- replace 'None' with ':obj:`None`'
-- replace 'True' and 'False' with ':obj:`True`' and ':obj:`False`'
-- add an empty line after sections like Examples, Notes, etc.
-- code blocks should be indented by 4 spaces and preceded by the '.. code-block:: python' directive
-    - the directive should not be indented
-    - the directive should be preceded by an empty line and followed by an empty line
+# eq1_pulse Copilot Instructions
 
-- use the `:func:` directive for function name references (e.g. :func:`function_name`)
-- use the `:meth:` directive for method references (e.g. :meth:`method_name`)
-- use the `:attr:` directive for attribute references (e.g. :attr:`attribute_name`)
-- use the `:class:` directive for class references (e.g. :class:`ClassName`)
-- use the `:obj:` directive for object references (e.g. :obj:`object_name`)
-- inline fixed-width text should be enclosed in double backticks (e.g. ``fixed-width text``)
-    - except for code blocks, which should be indented by 4 spaces
+## Project Overview
+**eq1_pulse** is a Python library (Python >=3.12) providing a uniform, portable intermediate representation (IR) for quantum pulse programs. It uses Pydantic models extensively for validation and serialization.
 
-Misc:
-- (UP038) Use `X | Y` in `isinstance` call instead of `(X, Y)`
+### Architecture: Three-Layer Model System
+1. **Models Layer** (`src/eq1_pulse/models/`): Core Pydantic data models defining the pulse program IR
+   - `base_models.py`: Base model hierarchy (`NoExtrasModel`, `FrozenModel`, `LeanModel`, `WrappedValueModel`)
+   - `basic_types.py`: Fundamental types (`Duration`, `Frequency`, `Amplitude`, `Phase`, `Time`)
+   - `pulse_types.py`: Pulse definitions (`SquarePulse`, `SinePulse`, `ArbitrarySampledPulse`, `ExternalPulse`)
+   - `channel_ops.py`: Channel operations (`Play`, `Record`, `Wait`, `Barrier`, `SetFrequency`, `SetPhase`)
+   - `data_ops.py`: Data operations (`VariableDecl`, `PulseDecl`, `Store`, `Discriminate`)
+   - `control_flow.py`: Control structures (`Repetition`, `Iteration`, `Conditional`)
+   - `sequence.py`: Implicit timing via `OpSequence` (earliest-possible-start-time scheduling)
+   - `schedule.py`: Explicit timing via `Schedule` with relative positioning using reference points
+
+2. **Builder Layer** (`src/eq1_pulse/builder/`): Context-manager-based DSL for constructing pulse programs
+   - Global state in `_context_stack` tracks nested contexts (sequences/schedules)
+   - `@contextmanager` decorators: `build_sequence()`, `build_schedule()`, `repeat()`, `for_()`, `if_()`
+   - Operations return `OperationToken` in schedules for reference positioning (e.g., `ref_op=token, ref_pt="end"`)
+   - Functions: `play()`, `record()`, `wait()`, `barrier()`, `measure()`, `set_frequency()`, etc.
+
+3. **Utilities Layer** (`src/eq1_pulse/utilities/`): OpenAPI schema generation, unique naming
+
+### Key Concepts
+- **Sequences vs Schedules**: `OpSequence` has implicit timing; `Schedule` uses explicit relative timing with `RefPt` (start/end/center) and `RelTime`
+- **OperationToken**: Returned by builder operations in schedule contexts; used for relative positioning instead of hardcoded names
+- **Pulse Types**: NO Gaussian/DRAG pulses in models. Use `ArbitrarySampledPulse` or `ExternalPulse` instead
+- **Type Coercion**: Models accept string/dict inputs (e.g., `"10us"`, `{"ns": 100}`) and auto-convert to proper types
+
+## Development Workflow
+
+### Environment Setup
+```bash
+conda activate eq1_pulse-dev  # REQUIRED before running any Python commands
+# Create dev environment:
+./setup/unix/create_dev_env.sh
+```
+
+### Running QA Checks
+```bash
+conda activate eq1_pulse-dev
+./qa/run_all_qa.sh  # Runs pyright, mypy, pytest with coverage
+```
+
+### Individual Tools
+```bash
+conda run -n eq1_pulse-dev pyright src tests
+conda run -n eq1_pulse-dev mypy src tests
+conda run -n eq1_pulse-dev pytest tests  # Coverage in pyproject.toml
+```
+
+### Documentation
+```bash
+conda activate eq1_pulse-dev
+cd docs && ./generate_html.sh  # Builds Sphinx HTML docs
+cd docs && ./generate_pdf.sh   # Builds LaTeX/PDF docs
+```
+
+## Code Conventions
+
+### Documentation (ReST/Sphinx)
+- Use `:param name:` not `Args:`; `:return:` not `Returns:`; `:raises:` not `Raises:`
+- Omit `:type:` directives (types inferred from annotations)
+- Wrap Python keywords: `:obj:`None``, `:obj:`True``, `:obj:`False``
+- Reference style: `:func:`func_name``, `:meth:`method_name``, `:class:`ClassName``, `:attr:`attr_name``
+- Code blocks: Indent 4 spaces, preceded by `.. code-block:: python` with blank lines before/after
+- Add blank line after section headers (Examples, Notes, etc.)
+
+### Python Style
+- Use `X | Y` in `isinstance()` calls, not `(X, Y)` (UP038 Ruff rule)
+- Generic functions should use type parameters (UP047 Ruff rule)  -- instead of TypeVar; ParamSpec etc
+- Strip trailing whitespace (except Makefiles)
+- Line length: 120 chars (Ruff configured)
+- Pydantic models: Inherit from base classes in `base_models.py`
+- Use `TYPE_CHECKING` imports to avoid circular dependencies
+
+### Type Hints
+- Models define `*Like` type aliases for flexible inputs (e.g., `DurationLike = Duration | dict[str, float] | str`)
+- Use `@overload` for multiple constructor signatures in `TYPE_CHECKING` blocks
+- Discriminated unions via `Discriminator("op_type")` or `Discriminator("pulse_type")`
+
+## Testing
+- Tests in `tests/` mirror `src/` structure
+- `pytest.ini_options` in `pyproject.toml`: `pythonpath = "src"`, `addopts = "--cov=src"`
+- Example files in `examples/` demonstrate builder API patterns
+
+## CI/CD
+- GitHub Actions: `.github/workflows/` (ruff, mypy, pyright, pytest, sphinx)
+- Pre-commit hooks: ruff (lint+format), mypy, trailing whitespace, nb-clean
+- Reusable workflow: `common-setup-workflow.yml` sets up Conda environment
+
+## Common Pitfalls
+- **Conda activation**: IDE may not auto-activate `eq1_pulse-dev`; manually activate before terminal commands
+- **Builder context**: Operations must be inside `build_sequence()` or `build_schedule()` context managers
+- **Schedule positioning**: Use `OperationToken` return values as `ref_op`, not hardcoded strings
+- **Pulse types**: Don't assume Gaussian/DRAG exist—use `ArbitrarySampledPulse` or `ExternalPulse`
