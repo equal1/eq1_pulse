@@ -71,7 +71,7 @@ plot_formats = [("svg", 300), ("pdf", 300)]
 plot_html_show_formats = True
 
 # Show link to source code
-plot_html_show_source_link = True
+plot_html_show_source_link = False
 
 # Base directory for plot directive imports (absolute path)
 plot_basedir = os.path.abspath("_generator")
@@ -83,7 +83,7 @@ plot_working_directory = os.path.abspath("_generator")
 plot_apply_rcparams = False
 
 # Include source code in output
-plot_include_source = True
+plot_include_source = False
 
 # -- MyST Parser configuration -----------------------------------------------
 
