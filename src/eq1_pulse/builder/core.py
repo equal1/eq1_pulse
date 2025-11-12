@@ -154,13 +154,20 @@ def _current_context() -> Any:
     return _context_stack[-1]
 
 
-def _add_to_sequence(operation: Any) -> None:
+def _add_to_sequence(operation: Any, schedule_params: ScheduleParams | None = None, operation_name: str = "") -> None:
     """Add an operation to the current sequence context.
 
     :param operation: The operation to add
+    :param schedule_params: Schedule parameters to validate (should be empty)
+    :param operation_name: Name of the operation for error messages
 
     :raises RuntimeError: If current context is not a sequence
+    :raises RuntimeError: If schedule parameters are provided
     """
+    # Reject schedule parameters if any were provided
+    if schedule_params:
+        _reject_schedule_params(schedule_params, operation_name)
+
     context = _current_context()
     if isinstance(context, Repetition | Iteration | Conditional):
         context.body.items.append(operation)
@@ -297,6 +304,27 @@ def _validate_variable_ref(var_ref: VariableRefLike) -> VariableRef:
 
     # Return validated VariableRef
     return var_ref
+
+
+def _reject_schedule_params(schedule_params: ScheduleParams, operation_name: str) -> None:
+    """Reject schedule parameters when adding to sequence.
+
+    Called just before adding an operation to a sequence context to ensure
+    no schedule parameters were provided.
+
+    :param schedule_params: Schedule parameters to check
+    :param operation_name: Name of the operation for error messages
+
+    :raises RuntimeError: If any schedule parameters are provided
+    """
+    provided_params = [key for key, value in schedule_params.items() if value is not None]
+
+    if provided_params:
+        params_str = ", ".join(f"'{p}'" for p in provided_params)
+        raise RuntimeError(
+            f"Schedule parameters ({params_str}) not allowed in sequence context for '{operation_name}'. "
+            f"Use build_schedule() instead of build_sequence()."
+        )
 
 
 def _validate_or_pass_through[T](
@@ -634,6 +662,8 @@ def repeat(count: int, **schedule_params: Unpack[ScheduleParams]) -> Iterator[Re
 
     :yield: The repetition being built
 
+    :raises RuntimeError: If schedule parameters are provided in a sequence context
+
     Examples
 
     .. code-block:: python
@@ -670,6 +700,8 @@ def repeat(count: int, **schedule_params: Unpack[ScheduleParams]) -> Iterator[Re
 
         # Sequence context - create Repetition
         elif isinstance(parent, OpSequence | Repetition | Iteration | Conditional):
+            # Check that no schedule parameters were provided in sequence context
+            _reject_schedule_params(schedule_params, "repeat")
             seq_body = OpSequence(items=[])
             rep = Repetition(count=count, body=seq_body)
             if isinstance(parent, OpSequence):
@@ -685,6 +717,7 @@ def repeat(count: int, **schedule_params: Unpack[ScheduleParams]) -> Iterator[Re
             return
 
     # No parent context - create sequence repetition by default
+    _reject_schedule_params(schedule_params, "repeat")
     seq_body = OpSequence(items=[])
     rep = Repetition(count=count, body=seq_body)
     _context_stack.append(rep)
@@ -709,6 +742,8 @@ def for_(
         Additional scheduling parameters (name, ref_op, ref_pt, etc.) - only used in schedule context
 
     :yield: The iteration being built
+
+    :raises RuntimeError: If schedule parameters are provided in a sequence context
 
     Examples
 
@@ -740,8 +775,10 @@ def for_(
     if _context_stack:
         parent = _current_context()
         if isinstance(parent, OpSequence):
+            _reject_schedule_params(schedule_params, "for_")
             parent.items.append(iter_obj)
         elif isinstance(parent, Repetition | Iteration | Conditional):
+            _reject_schedule_params(schedule_params, "for_")
             parent.body.items.append(iter_obj)
         elif isinstance(parent, Schedule | SchedRepetition | SchedIteration | SchedConditional):
             # For schedules, we need SchedIteration not Iteration
@@ -755,6 +792,7 @@ def for_(
                 _cleanup_context_variables(sched_iter)
             return
 
+    _reject_schedule_params(schedule_params, "for_")
     _context_stack.append(iter_obj)
     try:
         yield iter_obj
@@ -772,6 +810,8 @@ def if_(var: VariableRefLike, **schedule_params: Unpack[ScheduleParams]) -> Iter
         Additional scheduling parameters (name, ref_op, ref_pt, etc.) - only used in schedule context
 
     :yield: The conditional being built
+
+    :raises RuntimeError: If schedule parameters are provided in a sequence context
 
     Examples
 
@@ -802,8 +842,10 @@ def if_(var: VariableRefLike, **schedule_params: Unpack[ScheduleParams]) -> Iter
     if _context_stack:
         parent = _current_context()
         if isinstance(parent, OpSequence):
+            _reject_schedule_params(schedule_params, "if_")
             parent.items.append(cond)
         elif isinstance(parent, Repetition | Iteration | Conditional):
+            _reject_schedule_params(schedule_params, "if_")
             parent.body.items.append(cond)
         elif isinstance(parent, Schedule | SchedRepetition | SchedIteration | SchedConditional):
             # For schedules, we need SchedConditional not Conditional
@@ -817,6 +859,7 @@ def if_(var: VariableRefLike, **schedule_params: Unpack[ScheduleParams]) -> Iter
                 _cleanup_context_variables(sched_cond)
             return
 
+    _reject_schedule_params(schedule_params, "if_")
     _context_stack.append(cond)
     try:
         yield cond
@@ -1191,6 +1234,8 @@ def var_decl(
 
     :return: Operation token if in schedule context, :obj:`None` if in sequence context
 
+    :raises RuntimeError: If schedule parameters are provided in a sequence context
+
     Examples
 
     .. code-block:: python
@@ -1221,7 +1266,7 @@ def var_decl(
     if isinstance(context, Schedule | SchedRepetition | SchedIteration | SchedConditional):
         return _add_to_schedule(var_decl_obj, **kwargs)
     else:
-        _add_to_sequence(var_decl_obj)
+        _add_to_sequence(var_decl_obj, kwargs, "var_decl")
         return None
 
 
@@ -1245,6 +1290,8 @@ def pulse_decl(
     :param ref_pt_new: Reference point on the new operation (schedules only)
 
     :return: Operation token if in schedule context, :obj:`None` if in sequence context
+
+    :raises RuntimeError: If schedule parameters are provided in a sequence context
 
     Examples
 
@@ -1271,7 +1318,7 @@ def pulse_decl(
     if isinstance(context, Schedule | SchedRepetition | SchedIteration | SchedConditional):
         return _add_to_schedule(pulse_decl_obj, **kwargs)
     else:
-        _add_to_sequence(pulse_decl_obj)
+        _add_to_sequence(pulse_decl_obj, kwargs, "pulse_decl")
         return None
 
 
@@ -1515,6 +1562,8 @@ def play(
 
     :return: Operation token if in schedule context, :obj:`None` if in sequence context
 
+    :raises RuntimeError: If schedule parameters are provided in a sequence context
+
     Examples
 
     .. code-block:: python
@@ -1542,7 +1591,7 @@ def play(
     if isinstance(context, Schedule | SchedRepetition | SchedIteration | SchedConditional):
         return _add_to_schedule(op, **schedule_params)
     else:
-        _add_to_sequence(op)
+        _add_to_sequence(op, schedule_params, "play")
         return None
 
 
@@ -1568,6 +1617,7 @@ def wait(
     :return: Operation token if in schedule context, :obj:`None` if in sequence context
 
     :raises RuntimeError: If multiple channels specified in a schedule context
+    :raises RuntimeError: If schedule parameters are provided in a sequence context
 
     Examples
 
@@ -1600,7 +1650,7 @@ def wait(
     if isinstance(context, Schedule | SchedRepetition | SchedIteration | SchedConditional):
         return _add_to_schedule(op, **schedule_params)
     else:
-        _add_to_sequence(op)
+        _add_to_sequence(op, schedule_params, "wait")
         return None
 
 
@@ -1662,6 +1712,8 @@ def set_frequency(
 
     :return: Operation token if in schedule context, :obj:`None` if in sequence context
 
+    :raises RuntimeError: If schedule parameters are provided in a sequence context
+
     Examples
 
     .. code-block:: python
@@ -1678,7 +1730,7 @@ def set_frequency(
     if isinstance(context, Schedule):
         return _add_to_schedule(op, **schedule_params)
     else:
-        _add_to_sequence(op)
+        _add_to_sequence(op, schedule_params, "set_frequency")
         return None
 
 
@@ -1694,6 +1746,8 @@ def shift_frequency(
     :param schedule_params: Additional scheduling parameters (for schedules)
 
     :return: Operation token if in schedule context, :obj:`None` if in sequence context
+
+    :raises RuntimeError: If schedule parameters are provided in a sequence context
 
     Examples
 
@@ -1711,7 +1765,7 @@ def shift_frequency(
     if isinstance(context, Schedule):
         return _add_to_schedule(op, **schedule_params)
     else:
-        _add_to_sequence(op)
+        _add_to_sequence(op, schedule_params, "set_frequency")
         return None
 
 
@@ -1727,6 +1781,8 @@ def set_phase(
     :param schedule_params: Additional scheduling parameters (for schedules)
 
     :return: Operation token if in schedule context, :obj:`None` if in sequence context
+
+    :raises RuntimeError: If schedule parameters are provided in a sequence context
 
     Examples
 
@@ -1744,7 +1800,7 @@ def set_phase(
     if isinstance(context, Schedule):
         return _add_to_schedule(op, **schedule_params)
     else:
-        _add_to_sequence(op)
+        _add_to_sequence(op, schedule_params, "set_frequency")
         return None
 
 
@@ -1760,6 +1816,8 @@ def shift_phase(
     :param schedule_params: Additional scheduling parameters (for schedules)
 
     :return: Operation token if in schedule context, :obj:`None` if in sequence context
+
+    :raises RuntimeError: If schedule parameters are provided in a sequence context
 
     Examples
 
@@ -1777,7 +1835,7 @@ def shift_phase(
     if isinstance(context, Schedule):
         return _add_to_schedule(op, **schedule_params)
     else:
-        _add_to_sequence(op)
+        _add_to_sequence(op, schedule_params, "set_frequency")
         return None
 
 
@@ -1798,6 +1856,8 @@ def record(
     :param schedule_params: Additional scheduling parameters (for schedules)
 
     :return: Operation token if in schedule context, :obj:`None` if in sequence context
+
+    :raises RuntimeError: If schedule parameters are provided in a sequence context
 
     Examples
 
@@ -1827,7 +1887,7 @@ def record(
     if isinstance(context, Schedule):
         return _add_to_schedule(op, **schedule_params)
     else:
-        _add_to_sequence(op)
+        _add_to_sequence(op, schedule_params, "set_frequency")
         return None
 
 
@@ -1855,6 +1915,8 @@ def discriminate(
     :param schedule_params: Additional scheduling parameters (for schedules)
 
     :return: Operation token if in schedule context, :obj:`None` if in sequence context
+
+    :raises RuntimeError: If schedule parameters are provided in a sequence context
 
     Examples
 
@@ -1886,7 +1948,7 @@ def discriminate(
     if isinstance(context, Schedule):
         return _add_to_schedule(op, **schedule_params)
     else:
-        _add_to_sequence(op)
+        _add_to_sequence(op, schedule_params, "set_frequency")
         return None
 
 
@@ -1909,6 +1971,8 @@ def store(
     :param schedule_params: Additional scheduling parameters (for schedules)
 
     :return: Operation token if in schedule context, :obj:`None` if in sequence context
+
+    :raises RuntimeError: If schedule parameters are provided in a sequence context
 
     Examples
 
@@ -1942,7 +2006,7 @@ def store(
     if isinstance(context, Schedule):
         return _add_to_schedule(op, **schedule_params)
     else:
-        _add_to_sequence(op)
+        _add_to_sequence(op, schedule_params, "set_frequency")
         return None
 
 
@@ -1970,6 +2034,8 @@ def measure(
 
     :return: Operation token if in schedule context, :obj:`None` if in sequence context
 
+    :raises RuntimeError: If schedule parameters are provided in a sequence context
+
     Examples
 
     .. code-block:: python
@@ -1991,6 +2057,12 @@ def measure(
                     duration="1us", amplitude="50mV",
                     integration=demod_integration(phase="0deg"))
     """
+    context = _current_context()
+
+    # Check if schedule params provided in sequence context
+    if isinstance(context, OpSequence | Repetition | Iteration | Conditional):
+        _reject_schedule_params(schedule_params, "measure")
+
     # Parse channel parameter
     if isinstance(channel, tuple):
         drive_channel, readout_channel = channel
@@ -2000,9 +2072,7 @@ def measure(
     # Create measurement pulse
     meas_pulse = square_pulse(duration=duration, amplitude=amplitude)
 
-    context = _current_context()
-
-    if isinstance(context, Schedule):
+    if isinstance(context, Schedule | SchedRepetition | SchedIteration | SchedConditional):
         # In schedule: create both operations with same timing
         play_token = play(drive_channel, meas_pulse, **schedule_params)
 
