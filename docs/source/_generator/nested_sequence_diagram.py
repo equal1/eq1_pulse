@@ -56,7 +56,8 @@ def create_nested_sequence_diagram():
             edgecolor=gate_color,
             facecolor=gate_color,
             linewidth=2,
-            alpha=0.7,
+            alpha=0.9,
+            zorder=2,  # Place boxes above lines
         )
         ax.add_patch(rect)
         ax.text(

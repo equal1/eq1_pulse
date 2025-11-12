@@ -1,20 +1,8 @@
 #!/usr/bin/env python3
-"""
-Generate pulse schedule diagram with barrier for the basic usage example.
-
-This script creates a schedule diagram showing parallel pulses synchronized with a barrier.
-Outputs PDF (for LaTeX), PNG (compatibility), and SVG (for HTML) formats.
-"""
-
-from pathlib import Path
+"""Generate pulse schedule diagram with barrier for the basic usage example."""
 
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
-
-# Get the directory where this script is located
-SCRIPT_DIR = Path(__file__).parent
-output_dir = Path(__file__).parents[1] / "_static" / "generated"
-OUTPUT_FILE = output_dir / "schedule_barrier_diagram"
 
 
 def create_schedule_diagram():
@@ -87,22 +75,10 @@ def create_schedule_diagram():
     plt.tight_layout()
     fig.subplots_adjust(top=0.92, hspace=0.3)
 
-    # Save in multiple formats
-    output_pdf = OUTPUT_FILE.with_suffix(".pdf")
-    output_png = OUTPUT_FILE.with_suffix(".png")
-    output_svg = OUTPUT_FILE.with_suffix(".svg")
-
-    fig.savefig(output_pdf, format="pdf", bbox_inches="tight", dpi=150)
-    print(f"PDF saved to: {output_pdf}")
-
-    fig.savefig(output_png, format="png", bbox_inches="tight", dpi=150)
-    print(f"PNG saved to: {output_png}")
-
-    fig.savefig(output_svg, format="svg", bbox_inches="tight")
-    print(f"SVG saved to: {output_svg}")
-
-    plt.close()
+    return fig
 
 
 if __name__ == "__main__":
+    # Standalone mode: show the plot
     create_schedule_diagram()
+    plt.show()

@@ -59,7 +59,7 @@ def create_nested_schedule_diagram():
         edgecolor=block_colors[0],
         facecolor=block_colors[0],
         linewidth=2,
-        alpha=0.7,
+        alpha=0.9,
     )
     ax.add_patch(block1)
     ax.text(
@@ -106,7 +106,7 @@ def create_nested_schedule_diagram():
         edgecolor=block_colors[1],
         facecolor=block_colors[1],
         linewidth=2,
-        alpha=0.7,
+        alpha=0.9,
     )
     ax.add_patch(block2)
     ax.text(
@@ -153,7 +153,7 @@ def create_nested_schedule_diagram():
         edgecolor=block_colors[2],
         facecolor=block_colors[2],
         linewidth=2,
-        alpha=0.7,
+        alpha=0.9,
     )
     ax.add_patch(block3)
     ax.text(
