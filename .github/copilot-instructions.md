@@ -70,7 +70,10 @@ cd docs && ./generate_pdf.sh   # Builds LaTeX/PDF docs
 ### Python Style
 - Use `X | Y` in `isinstance()` calls, not `(X, Y)` (UP038 Ruff rule)
 - Generic functions should use type parameters (UP047 Ruff rule)  -- instead of TypeVar; ParamSpec etc
-- Strip trailing whitespace (except Makefiles)
+- **CRITICAL: Blank lines MUST be completely empty** - NO spaces, tabs, or any whitespace on blank lines
+   - ALSO STRIP ALL trailing whitespace
+   - EXCEPT for Makefiles where it has semantic meaning
+- **NO excessive blank lines**: Maximum 2 consecutive blank lines between top-level definitions; 1 blank line within functions/methods
 - Line length: 120 chars (Ruff configured)
 - Pydantic models: Inherit from base classes in `base_models.py`
 - Use `TYPE_CHECKING` imports to avoid circular dependencies

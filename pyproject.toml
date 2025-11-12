@@ -117,6 +117,8 @@ select = [
     "D",
     # ruff-specific rules
     "RUF",
+    # pycodestyle whitespace (E3xx)
+    "W",
     # pydoclint
     # "DOC",
 ]
