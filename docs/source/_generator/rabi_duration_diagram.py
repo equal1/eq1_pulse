@@ -4,18 +4,10 @@ Generate pulse sequence diagram for duration Rabi oscillation.
 
 This script creates a timing diagram showing variable duration drive pulse
 followed by readout.
-Outputs PDF (for LaTeX), PNG (compatibility), and SVG (for HTML) formats.
 """
-
-from pathlib import Path
 
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
-
-# Get the directory where this script is located
-SCRIPT_DIR = Path(__file__).parent
-output_dir = Path(__file__).parents[1] / "_static" / "generated"
-OUTPUT_FILE = output_dir / "rabi_duration_diagram"
 
 
 def create_duration_rabi_diagram():
@@ -98,23 +90,10 @@ def create_duration_rabi_diagram():
 
     plt.tight_layout()
     fig.subplots_adjust(top=0.90, bottom=0.15)
-
-    # Save in multiple formats
-    output_pdf = OUTPUT_FILE.with_suffix(".pdf")
-    output_png = OUTPUT_FILE.with_suffix(".png")
-    output_svg = OUTPUT_FILE.with_suffix(".svg")
-
-    fig.savefig(output_pdf, format="pdf", bbox_inches="tight", dpi=150)
-    print(f"PDF saved to: {output_pdf}")
-
-    fig.savefig(output_png, format="png", bbox_inches="tight", dpi=150)
-    print(f"PNG saved to: {output_png}")
-
-    fig.savefig(output_svg, format="svg", bbox_inches="tight")
-    print(f"SVG saved to: {output_svg}")
-
-    plt.close()
+    return fig
 
 
 if __name__ == "__main__":
+    # Standalone mode: show the plot
     create_duration_rabi_diagram()
+    plt.show()
