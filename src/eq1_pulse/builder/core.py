@@ -44,6 +44,8 @@ import traceback
 from collections import defaultdict
 from collections.abc import Callable
 from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, Unpack, overload
 
 from eq1_pulse.models import Phase
@@ -117,17 +119,49 @@ __all__ = (
     "wait",
 )
 
-# Module-level state for building context
-_context_stack: list[
-    OpSequence | Schedule | Repetition | Iteration | Conditional | SchedRepetition | SchedIteration | SchedConditional
-] = []
-_op_counter = 0
-# Track unconsumed schedule blocks per context using defaultdict
-# Key is id(context), value is list of unconsumed blocks
-_unconsumed_blocks: defaultdict[int, list[ScheduleBlock]] = defaultdict(list)
-# Track declared variables per context using defaultdict
-# Key is id(context), value is set of declared variable names
-_declared_variables: defaultdict[int, set[str]] = defaultdict(set)
+
+@dataclass
+class BuilderState:
+    """State for the pulse builder.
+
+    This class encapsulates all module-level state for the builder interface,
+    allowing it to be stored in a ContextVar for thread and async safety.
+    """
+
+    context_stack: list[
+        OpSequence
+        | Schedule
+        | Repetition
+        | Iteration
+        | Conditional
+        | SchedRepetition
+        | SchedIteration
+        | SchedConditional
+    ] = field(default_factory=list)
+    op_counter: int = 0
+    # Track unconsumed schedule blocks per context using defaultdict
+    # Key is id(context), value is list of unconsumed blocks
+    unconsumed_blocks: defaultdict[int, list[ScheduleBlock]] = field(default_factory=lambda: defaultdict(list))
+    # Track declared variables per context using defaultdict
+    # Key is id(context), value is set of declared variable names
+    declared_variables: defaultdict[int, set[str]] = field(default_factory=lambda: defaultdict(set))
+
+
+_state: ContextVar[BuilderState | None] = ContextVar("builder_state", default=None)
+
+
+def _get_state() -> BuilderState:
+    """Get the current builder state from context storage.
+
+    If no state exists for the current context, a new state is initialized and set.
+
+    :return: The current builder state
+    """
+    state = _state.get()
+    if state is None:
+        state = BuilderState()
+        _state.set(state)
+    return state
 
 
 def _generate_op_name() -> str:
@@ -135,9 +169,9 @@ def _generate_op_name() -> str:
 
     :return: Unique operation name
     """
-    global _op_counter
-    _op_counter += 1
-    return f"op_{_op_counter}"
+    state = _get_state()
+    state.op_counter += 1
+    return f"op_{state.op_counter}"
 
 
 def _current_context() -> Any:
@@ -147,11 +181,12 @@ def _current_context() -> Any:
 
     :raises RuntimeError: If no context is active
     """
-    if not _context_stack:
+    state = _get_state()
+    if not state.context_stack:
         raise RuntimeError(
             "No active building context. Use build_sequence() or build_schedule() context manager first."
         )
-    return _context_stack[-1]
+    return state.context_stack[-1]
 
 
 def _add_to_sequence(operation: Any, schedule_params: ScheduleParams | None = None, operation_name: str = "") -> None:
@@ -220,19 +255,20 @@ def _register_variable(name: str) -> None:
 
     :raises RuntimeError: If variable is already declared in the current context
     """
-    if not _context_stack:
+    state = _get_state()
+    if not state.context_stack:
         return  # No context active, skip registration
 
     # Check if already declared in current context (not parent contexts)
     context_id = id(_current_context())
-    if name in _declared_variables[context_id]:
+    if name in state.declared_variables[context_id]:
         raise RuntimeError(
             f"Variable '{name}' is already declared in the current context. "
             f"Each variable can only be declared once per context."
         )
 
     # Register in current context
-    _declared_variables[context_id].add(name)
+    state.declared_variables[context_id].add(name)
 
 
 def _is_variable_declared(name: str) -> bool:
@@ -244,13 +280,14 @@ def _is_variable_declared(name: str) -> bool:
 
     :return: :obj:`True` if variable is declared, :obj:`False` otherwise
     """
-    if not _context_stack:
+    state = _get_state()
+    if not state.context_stack:
         return False  # No context active
 
     # Check from innermost to outermost context
-    for context in reversed(_context_stack):
+    for context in reversed(state.context_stack):
         context_id = id(context)
-        if name in _declared_variables[context_id]:
+        if name in state.declared_variables[context_id]:
             return True
 
     return False
@@ -275,9 +312,10 @@ def _cleanup_context_variables(context: Any) -> None:
 
     :param context: The context to clean up
     """
+    state = _get_state()
     context_id = id(context)
-    if context_id in _declared_variables:
-        del _declared_variables[context_id]
+    if context_id in state.declared_variables:
+        del state.declared_variables[context_id]
 
 
 def _validate_variable_ref(var_ref: VariableRefLike) -> VariableRef:
@@ -455,11 +493,12 @@ def build_sequence() -> Iterator[OpSequence]:
             wait("ch1", "5us")
     """
     seq = OpSequence(items=[])
-    _context_stack.append(seq)
+    state = _get_state()
+    state.context_stack.append(seq)
     try:
         yield seq
     finally:
-        _context_stack.pop()
+        state.context_stack.pop()
         _cleanup_context_variables(seq)
 
 
@@ -495,7 +534,8 @@ def sub_sequence() -> Iterator[OpSequence]:
                 record("readout", var="result", duration="1us")
     """
     # Must be called within a sequence context
-    if not _context_stack:
+    state = _get_state()
+    if not state.context_stack:
         raise RuntimeError("sub_sequence can only be used within a build_sequence() context")
 
     context = _current_context()
@@ -509,11 +549,11 @@ def sub_sequence() -> Iterator[OpSequence]:
     _add_to_sequence(nested_seq)
 
     # Push nested sequence as current context for operations inside it
-    _context_stack.append(nested_seq)
+    state.context_stack.append(nested_seq)
     try:
         yield nested_seq
     finally:
-        _context_stack.pop()
+        state.context_stack.pop()
         _cleanup_context_variables(nested_seq)
 
 
@@ -535,13 +575,14 @@ def build_schedule() -> Iterator[Schedule]:
                             ref_op=op1, ref_pt="start", rel_time="5us")
     """
     sched = Schedule(items=[])
-    _context_stack.append(sched)
+    state = _get_state()
+    state.context_stack.append(sched)
     sched_id = id(sched)
     try:
         yield sched
     finally:
         # Check for unconsumed schedule blocks before popping context
-        unconsumed = _unconsumed_blocks[sched_id]
+        unconsumed = state.unconsumed_blocks[sched_id]
         if unconsumed:
             count = len(unconsumed)
             # Build detailed error message with traceback info
@@ -557,14 +598,14 @@ def build_schedule() -> Iterator[Schedule]:
                 error_parts.append(block._get_creation_info())
 
             # Clean up before raising
-            del _unconsumed_blocks[sched_id]
-            _context_stack.pop()
+            del state.unconsumed_blocks[sched_id]
+            state.context_stack.pop()
             _cleanup_context_variables(sched)
             raise RuntimeError("".join(error_parts))
         # Clean up empty list
-        if sched_id in _unconsumed_blocks:
-            del _unconsumed_blocks[sched_id]
-        _context_stack.pop()
+        if sched_id in state.unconsumed_blocks:
+            del state.unconsumed_blocks[sched_id]
+        state.context_stack.pop()
         _cleanup_context_variables(sched)
 
 
@@ -603,7 +644,8 @@ def sub_schedule(**schedule_params: Unpack[ScheduleParams]) -> Iterator[Schedule
                 record("readout", var="result", duration="1us")
     """
     # Must be called within a schedule context
-    if not _context_stack or not isinstance(_current_context(), Schedule):
+    state = _get_state()
+    if not state.context_stack or not isinstance(_current_context(), Schedule):
         raise RuntimeError("sub_schedule can only be used within a build_schedule() context")
 
     # Create the nested schedule
@@ -613,13 +655,13 @@ def sub_schedule(**schedule_params: Unpack[ScheduleParams]) -> Iterator[Schedule
     token = _add_to_schedule(nested_sched, **schedule_params)
 
     # Push nested schedule as current context for operations inside it
-    _context_stack.append(nested_sched)
+    state.context_stack.append(nested_sched)
     sched_id = id(nested_sched)
     try:
         yield nested_sched
     finally:
         # Check for unconsumed schedule blocks before popping context
-        unconsumed = _unconsumed_blocks[sched_id]
+        unconsumed = state.unconsumed_blocks[sched_id]
         if unconsumed:
             count = len(unconsumed)
             # Build detailed error message with traceback info
@@ -635,14 +677,14 @@ def sub_schedule(**schedule_params: Unpack[ScheduleParams]) -> Iterator[Schedule
                 error_parts.append(block._get_creation_info())
 
             # Clean up before raising
-            del _unconsumed_blocks[sched_id]
-            _context_stack.pop()
+            del state.unconsumed_blocks[sched_id]
+            state.context_stack.pop()
             _cleanup_context_variables(nested_sched)
             raise RuntimeError("".join(error_parts))
         # Clean up empty list
-        if sched_id in _unconsumed_blocks:
-            del _unconsumed_blocks[sched_id]
-        _context_stack.pop()
+        if sched_id in state.unconsumed_blocks:
+            del state.unconsumed_blocks[sched_id]
+        state.context_stack.pop()
         _cleanup_context_variables(nested_sched)
 
     # Return the token so it can be used for further references
@@ -682,7 +724,8 @@ def repeat(count: int, **schedule_params: Unpack[ScheduleParams]) -> Iterator[Re
                 play("qubit", square_pulse(duration="50ns", amplitude="100mV"))
     """
     # Add to parent context if it exists
-    if _context_stack:
+    state = _get_state()
+    if state.context_stack:
         parent = _current_context()
 
         # Schedule context - create SchedRepetition
@@ -690,11 +733,11 @@ def repeat(count: int, **schedule_params: Unpack[ScheduleParams]) -> Iterator[Re
             sched_body = Schedule(items=[])
             sched_rep = SchedRepetition(count=count, body=sched_body)
             _add_to_schedule(sched_rep, **schedule_params)
-            _context_stack.append(sched_rep)
+            state.context_stack.append(sched_rep)
             try:
                 yield sched_rep  # type: ignore[misc]
             finally:
-                _context_stack.pop()
+                state.context_stack.pop()
                 _cleanup_context_variables(sched_rep)
             return
 
@@ -708,11 +751,11 @@ def repeat(count: int, **schedule_params: Unpack[ScheduleParams]) -> Iterator[Re
                 parent.items.append(rep)
             else:
                 parent.body.items.append(rep)
-            _context_stack.append(rep)
+            state.context_stack.append(rep)
             try:
                 yield rep  # type: ignore[misc]
             finally:
-                _context_stack.pop()
+                state.context_stack.pop()
                 _cleanup_context_variables(rep)
             return
 
@@ -720,11 +763,11 @@ def repeat(count: int, **schedule_params: Unpack[ScheduleParams]) -> Iterator[Re
     _reject_schedule_params(schedule_params, "repeat")
     seq_body = OpSequence(items=[])
     rep = Repetition(count=count, body=seq_body)
-    _context_stack.append(rep)
+    state.context_stack.append(rep)
     try:
         yield rep  # type: ignore[misc]
     finally:
-        _context_stack.pop()
+        state.context_stack.pop()
         _cleanup_context_variables(rep)
 
 
@@ -772,7 +815,8 @@ def for_(
     iter_obj = Iteration(var=validated_vars, items=items, body=body)
 
     # Add to parent context if it exists
-    if _context_stack:
+    state = _get_state()
+    if state.context_stack:
         parent = _current_context()
         if isinstance(parent, OpSequence):
             _reject_schedule_params(schedule_params, "for_")
@@ -784,20 +828,20 @@ def for_(
             # For schedules, we need SchedIteration not Iteration
             sched_iter = SchedIteration(var=validated_vars, items=items, body=Schedule(items=[]))
             _add_to_schedule(sched_iter, **schedule_params)
-            _context_stack.append(sched_iter)
+            state.context_stack.append(sched_iter)
             try:
                 yield sched_iter  # type: ignore[misc]
             finally:
-                _context_stack.pop()
+                state.context_stack.pop()
                 _cleanup_context_variables(sched_iter)
             return
 
     _reject_schedule_params(schedule_params, "for_")
-    _context_stack.append(iter_obj)
+    state.context_stack.append(iter_obj)
     try:
         yield iter_obj
     finally:
-        _context_stack.pop()
+        state.context_stack.pop()
         _cleanup_context_variables(iter_obj)
 
 
@@ -839,7 +883,8 @@ def if_(var: VariableRefLike, **schedule_params: Unpack[ScheduleParams]) -> Iter
     cond = Conditional(var=validated_var, body=body)
 
     # Add to parent context if it exists
-    if _context_stack:
+    state = _get_state()
+    if state.context_stack:
         parent = _current_context()
         if isinstance(parent, OpSequence):
             _reject_schedule_params(schedule_params, "if_")
@@ -851,20 +896,20 @@ def if_(var: VariableRefLike, **schedule_params: Unpack[ScheduleParams]) -> Iter
             # For schedules, we need SchedConditional not Conditional
             sched_cond = SchedConditional(var=validated_var, body=Schedule(items=[]))
             _add_to_schedule(sched_cond, **schedule_params)
-            _context_stack.append(sched_cond)
+            state.context_stack.append(sched_cond)
             try:
                 yield sched_cond  # type: ignore[misc]
             finally:
-                _context_stack.pop()
+                state.context_stack.pop()
                 _cleanup_context_variables(sched_cond)
             return
 
     _reject_schedule_params(schedule_params, "if_")
-    _context_stack.append(cond)
+    state.context_stack.append(cond)
     try:
         yield cond
     finally:
-        _context_stack.pop()
+        state.context_stack.pop()
         _cleanup_context_variables(cond)
 
 
@@ -1351,13 +1396,15 @@ class ScheduleBlock:
         self._creation_traceback = traceback.format_stack()[:-1]  # Exclude this __init__ frame
 
         # Register this block with the current context
+        state = _get_state()
         context = _current_context()
-        _unconsumed_blocks[id(context)].append(self)
+        state.unconsumed_blocks[id(context)].append(self)
 
     def _execute(self) -> None:
         """Execute the block's function and mark as consumed."""
         # Remove from unconsumed list (find the context this belongs to)
-        for blocks in _unconsumed_blocks.values():
+        state = _get_state()
+        for blocks in state.unconsumed_blocks.values():
             if self in blocks:
                 blocks.remove(self)
                 break
@@ -1462,7 +1509,8 @@ def nested_sequence[R, **P](func: Callable[P, R]) -> Callable[P, R]:
     @wraps(func)
     def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
         # Check if we're in a context
-        if _context_stack:
+        state = _get_state()
+        if state.context_stack:
             context = _current_context()
 
             # In sequence context (OpSequence or control flow)
