@@ -888,13 +888,39 @@ class TestErrorHandling:
 
     def test_operation_outside_context_raises_error(self):
         """Test that operations outside context raise error."""
-        with pytest.raises(RuntimeError, match="No active building context"):
+        with pytest.raises(RuntimeError, match="No active building context for play\\(\\)"):
             play("ch1", square_pulse(duration="10us", amplitude="100mV"))
 
     def test_barrier_in_schedule_raises_error(self):
         """Test that barrier in schedule raises error."""
         with pytest.raises(RuntimeError, match="not supported in schedule"), build_schedule():
             barrier("ch1")
+
+    def test_repeat_without_context_raises_error(self):
+        """Test that repeat outside context raises error."""
+        with pytest.raises(RuntimeError, match="No active building context for repeat\\(\\)"):
+            with repeat(5):
+                pass
+
+    def test_for_without_context_raises_error(self):
+        """Test that for_ outside context raises error.
+
+        Note: for_ validates variables first, so it fails on undeclared variable
+        before checking for context. This is acceptable behavior.
+        """
+        with pytest.raises(RuntimeError, match="Variable 'i' has not been declared"):
+            with for_("i", range(5)):
+                pass
+
+    def test_if_without_context_raises_error(self):
+        """Test that if_ outside context raises error.
+
+        Note: if_ validates variables first, so it fails on undeclared variable
+        before checking for context. This is acceptable behavior.
+        """
+        with pytest.raises(RuntimeError, match="Variable 'result' has not been declared"):
+            with if_("result"):
+                pass
 
 
 class TestComplexScenarios:

@@ -174,8 +174,10 @@ def _generate_op_name() -> str:
     return f"op_{state.op_counter}"
 
 
-def _current_context() -> Any:
+def _current_context(operation_name: str = "") -> Any:
     """Get the current building context.
+
+    :param operation_name: Optional operation name for more specific error messages
 
     :return: The current sequence or schedule being built
 
@@ -183,27 +185,37 @@ def _current_context() -> Any:
     """
     state = _get_state()
     if not state.context_stack:
-        raise RuntimeError(
-            "No active building context. Use build_sequence() or build_schedule() context manager first."
-        )
+        if operation_name:
+            msg = (
+                f"No active building context for {operation_name}. "
+                "Use build_sequence() or build_schedule() context manager first."
+            )
+        else:
+            msg = "No active building context. Use build_sequence() or build_schedule() context manager first."
+        raise RuntimeError(msg)
     return state.context_stack[-1]
 
 
-def _add_to_sequence(operation: Any, schedule_params: ScheduleParams | None = None, operation_name: str = "") -> None:
-    """Add an operation to the current sequence context.
+def _add_to_sequence(
+    context: OpSequence | Repetition | Iteration | Conditional,
+    operation: Any,
+    schedule_params: ScheduleParams | None = None,
+    operation_name: str = "",
+) -> None:
+    """Add an operation to a sequence context.
 
+    :param context: The sequence context to add to
     :param operation: The operation to add
     :param schedule_params: Schedule parameters to validate (should be empty)
     :param operation_name: Name of the operation for error messages
 
-    :raises RuntimeError: If current context is not a sequence
+    :raises RuntimeError: If context is not a sequence
     :raises RuntimeError: If schedule parameters are provided
     """
     # Reject schedule parameters if any were provided
     if schedule_params:
         _reject_schedule_params(schedule_params, operation_name)
 
-    context = _current_context()
     if isinstance(context, Repetition | Iteration | Conditional):
         context.body.items.append(operation)
     elif isinstance(context, OpSequence):
@@ -212,18 +224,21 @@ def _add_to_sequence(operation: Any, schedule_params: ScheduleParams | None = No
         raise RuntimeError(f"Cannot add sequence operation to {type(context).__name__} context")
 
 
-def _add_to_schedule(operation: Any, **schedule_params: Unpack[ScheduleParams]) -> OperationToken:
-    """Add an operation to the current schedule context.
+def _add_to_schedule(
+    context: Schedule | SchedRepetition | SchedIteration | SchedConditional,
+    operation: Any,
+    **schedule_params: Unpack[ScheduleParams],
+) -> OperationToken:
+    """Add an operation to a schedule context.
 
+    :param context: The schedule context to add to
     :param operation: The operation to add
     :param schedule_params: Additional scheduling parameters
 
     :return: Token for referencing this operation
 
-    :raises RuntimeError: If current context is not a schedule
+    :raises RuntimeError: If context is not a schedule
     """
-    context = _current_context()
-
     # Resolve any operation tokens to names
     resolved_params = resolve_schedule_params(schedule_params)  # type: ignore[arg-type]
 
@@ -546,7 +561,7 @@ def sub_sequence() -> Iterator[OpSequence]:
     nested_seq = OpSequence(items=[])
 
     # Add it to the parent sequence
-    _add_to_sequence(nested_seq)
+    _add_to_sequence(context, nested_seq)
 
     # Push nested sequence as current context for operations inside it
     state.context_stack.append(nested_seq)
@@ -645,14 +660,15 @@ def sub_schedule(**schedule_params: Unpack[ScheduleParams]) -> Iterator[Schedule
     """
     # Must be called within a schedule context
     state = _get_state()
-    if not state.context_stack or not isinstance(_current_context(), Schedule):
+    context = _current_context("sub_schedule()") if state.context_stack else None
+    if not context or not isinstance(context, Schedule):
         raise RuntimeError("sub_schedule can only be used within a build_schedule() context")
 
     # Create the nested schedule
     nested_sched = Schedule(items=[])
 
     # Add it to the parent schedule with timing parameters
-    token = _add_to_schedule(nested_sched, **schedule_params)
+    token = _add_to_schedule(context, nested_sched, **schedule_params)
 
     # Push nested schedule as current context for operations inside it
     state.context_stack.append(nested_sched)
@@ -723,52 +739,42 @@ def repeat(count: int, **schedule_params: Unpack[ScheduleParams]) -> Iterator[Re
             with repeat(10, ref_op=op1, ref_pt="end"):
                 play("qubit", square_pulse(duration="50ns", amplitude="100mV"))
     """
-    # Add to parent context if it exists
     state = _get_state()
-    if state.context_stack:
-        parent = _current_context()
+    parent = _current_context("repeat()")
 
-        # Schedule context - create SchedRepetition
-        if isinstance(parent, Schedule | SchedRepetition | SchedIteration | SchedConditional):
-            sched_body = Schedule(items=[])
-            sched_rep = SchedRepetition(count=count, body=sched_body)
-            _add_to_schedule(sched_rep, **schedule_params)
-            state.context_stack.append(sched_rep)
-            try:
-                yield sched_rep  # type: ignore[misc]
-            finally:
-                state.context_stack.pop()
-                _cleanup_context_variables(sched_rep)
-            return
+    # Schedule context - create SchedRepetition
+    if isinstance(parent, Schedule | SchedRepetition | SchedIteration | SchedConditional):
+        sched_body = Schedule(items=[])
+        sched_rep = SchedRepetition(count=count, body=sched_body)
+        _add_to_schedule(parent, sched_rep, **schedule_params)
+        state.context_stack.append(sched_rep)
+        try:
+            yield sched_rep  # type: ignore[misc]
+        finally:
+            state.context_stack.pop()
+            _cleanup_context_variables(sched_rep)
+        return
 
-        # Sequence context - create Repetition
-        elif isinstance(parent, OpSequence | Repetition | Iteration | Conditional):
-            # Check that no schedule parameters were provided in sequence context
-            _reject_schedule_params(schedule_params, "repeat")
-            seq_body = OpSequence(items=[])
-            rep = Repetition(count=count, body=seq_body)
-            if isinstance(parent, OpSequence):
-                parent.items.append(rep)
-            else:
-                parent.body.items.append(rep)
-            state.context_stack.append(rep)
-            try:
-                yield rep  # type: ignore[misc]
-            finally:
-                state.context_stack.pop()
-                _cleanup_context_variables(rep)
-            return
+    # Sequence context - create Repetition
+    if isinstance(parent, OpSequence | Repetition | Iteration | Conditional):
+        # Check that no schedule parameters were provided in sequence context
+        _reject_schedule_params(schedule_params, "repeat")
+        seq_body = OpSequence(items=[])
+        rep = Repetition(count=count, body=seq_body)
+        if isinstance(parent, OpSequence):
+            parent.items.append(rep)
+        else:
+            parent.body.items.append(rep)
+        state.context_stack.append(rep)
+        try:
+            yield rep  # type: ignore[misc]
+        finally:
+            state.context_stack.pop()
+            _cleanup_context_variables(rep)
+        return
 
-    # No parent context - create sequence repetition by default
-    _reject_schedule_params(schedule_params, "repeat")
-    seq_body = OpSequence(items=[])
-    rep = Repetition(count=count, body=seq_body)
-    state.context_stack.append(rep)
-    try:
-        yield rep  # type: ignore[misc]
-    finally:
-        state.context_stack.pop()
-        _cleanup_context_variables(rep)
+    msg = f"repeat() cannot be used in context of type {type(parent).__name__}"
+    raise RuntimeError(msg)
 
 
 @contextmanager
@@ -811,32 +817,32 @@ def for_(
         [_validate_variable_ref(v) for v in var] if isinstance(var, list) else _validate_variable_ref(var)
     )
 
+    parent = _current_context("for_()")
     body = OpSequence(items=[])
     iter_obj = Iteration(var=validated_vars, items=items, body=body)
 
-    # Add to parent context if it exists
     state = _get_state()
-    if state.context_stack:
-        parent = _current_context()
-        if isinstance(parent, OpSequence):
-            _reject_schedule_params(schedule_params, "for_")
-            parent.items.append(iter_obj)
-        elif isinstance(parent, Repetition | Iteration | Conditional):
-            _reject_schedule_params(schedule_params, "for_")
-            parent.body.items.append(iter_obj)
-        elif isinstance(parent, Schedule | SchedRepetition | SchedIteration | SchedConditional):
-            # For schedules, we need SchedIteration not Iteration
-            sched_iter = SchedIteration(var=validated_vars, items=items, body=Schedule(items=[]))
-            _add_to_schedule(sched_iter, **schedule_params)
-            state.context_stack.append(sched_iter)
-            try:
-                yield sched_iter  # type: ignore[misc]
-            finally:
-                state.context_stack.pop()
-                _cleanup_context_variables(sched_iter)
-            return
+    if isinstance(parent, OpSequence):
+        _reject_schedule_params(schedule_params, "for_")
+        parent.items.append(iter_obj)
+    elif isinstance(parent, Repetition | Iteration | Conditional):
+        _reject_schedule_params(schedule_params, "for_")
+        parent.body.items.append(iter_obj)
+    elif isinstance(parent, Schedule | SchedRepetition | SchedIteration | SchedConditional):
+        # For schedules, we need SchedIteration not Iteration
+        sched_iter = SchedIteration(var=validated_vars, items=items, body=Schedule(items=[]))
+        _add_to_schedule(parent, sched_iter, **schedule_params)
+        state.context_stack.append(sched_iter)
+        try:
+            yield sched_iter  # type: ignore[misc]
+        finally:
+            state.context_stack.pop()
+            _cleanup_context_variables(sched_iter)
+        return
+    else:
+        msg = f"for_() cannot be used in context of type {type(parent).__name__}"
+        raise RuntimeError(msg)
 
-    _reject_schedule_params(schedule_params, "for_")
     state.context_stack.append(iter_obj)
     try:
         yield iter_obj
@@ -879,32 +885,32 @@ def if_(var: VariableRefLike, **schedule_params: Unpack[ScheduleParams]) -> Iter
     # Validate variable reference
     validated_var = _validate_variable_ref(var)
 
+    parent = _current_context("if_()")
     body = OpSequence(items=[])
     cond = Conditional(var=validated_var, body=body)
 
-    # Add to parent context if it exists
     state = _get_state()
-    if state.context_stack:
-        parent = _current_context()
-        if isinstance(parent, OpSequence):
-            _reject_schedule_params(schedule_params, "if_")
-            parent.items.append(cond)
-        elif isinstance(parent, Repetition | Iteration | Conditional):
-            _reject_schedule_params(schedule_params, "if_")
-            parent.body.items.append(cond)
-        elif isinstance(parent, Schedule | SchedRepetition | SchedIteration | SchedConditional):
-            # For schedules, we need SchedConditional not Conditional
-            sched_cond = SchedConditional(var=validated_var, body=Schedule(items=[]))
-            _add_to_schedule(sched_cond, **schedule_params)
-            state.context_stack.append(sched_cond)
-            try:
-                yield sched_cond  # type: ignore[misc]
-            finally:
-                state.context_stack.pop()
-                _cleanup_context_variables(sched_cond)
-            return
+    if isinstance(parent, OpSequence):
+        _reject_schedule_params(schedule_params, "if_")
+        parent.items.append(cond)
+    elif isinstance(parent, Repetition | Iteration | Conditional):
+        _reject_schedule_params(schedule_params, "if_")
+        parent.body.items.append(cond)
+    elif isinstance(parent, Schedule | SchedRepetition | SchedIteration | SchedConditional):
+        # For schedules, we need SchedConditional not Conditional
+        sched_cond = SchedConditional(var=validated_var, body=Schedule(items=[]))
+        _add_to_schedule(parent, sched_cond, **schedule_params)
+        state.context_stack.append(sched_cond)
+        try:
+            yield sched_cond  # type: ignore[misc]
+        finally:
+            state.context_stack.pop()
+            _cleanup_context_variables(sched_cond)
+        return
+    else:
+        msg = f"if_() cannot be used in context of type {type(parent).__name__}"
+        raise RuntimeError(msg)
 
-    _reject_schedule_params(schedule_params, "if_")
     state.context_stack.append(cond)
     try:
         yield cond
@@ -1307,11 +1313,11 @@ def var_decl(
     # Register the variable as declared in the current context
     _register_variable(name)
 
-    context = _current_context()
+    context = _current_context("var_decl()")
     if isinstance(context, Schedule | SchedRepetition | SchedIteration | SchedConditional):
-        return _add_to_schedule(var_decl_obj, **kwargs)
+        return _add_to_schedule(context, var_decl_obj, **kwargs)
     else:
-        _add_to_sequence(var_decl_obj, kwargs, "var_decl")
+        _add_to_sequence(context, var_decl_obj, kwargs, "var_decl")
         return None
 
 
@@ -1359,11 +1365,11 @@ def pulse_decl(
     """
     pulse_decl_obj = PulseDecl(name=name, pulse=pulse)
 
-    context = _current_context()
+    context = _current_context("pulse_decl()")
     if isinstance(context, Schedule | SchedRepetition | SchedIteration | SchedConditional):
-        return _add_to_schedule(pulse_decl_obj, **kwargs)
+        return _add_to_schedule(context, pulse_decl_obj, **kwargs)
     else:
-        _add_to_sequence(pulse_decl_obj, kwargs, "pulse_decl")
+        _add_to_sequence(context, pulse_decl_obj, kwargs, "pulse_decl")
         return None
 
 
@@ -1635,11 +1641,11 @@ def play(
 
     op = Play(channel=channel, pulse=pulse, scale_amp=scale_amp, cond=cond)
 
-    context = _current_context()
+    context = _current_context("play()")
     if isinstance(context, Schedule | SchedRepetition | SchedIteration | SchedConditional):
-        return _add_to_schedule(op, **schedule_params)
+        return _add_to_schedule(context, op, **schedule_params)
     else:
-        _add_to_sequence(op, schedule_params, "play")
+        _add_to_sequence(context, op, schedule_params, "play")
         return None
 
 
@@ -1680,7 +1686,7 @@ def wait(
         with build_sequence():
             wait("ch1", "ch2", duration="10us")
     """
-    context = _current_context()
+    context = _current_context("wait()")
 
     # Validate multi-channel wait in schedules
     if isinstance(context, Schedule | SchedRepetition | SchedIteration | SchedConditional) and len(channels) > 1:
@@ -1696,9 +1702,9 @@ def wait(
     op = Wait(*channels, duration=duration)  # type: ignore[arg-type]
 
     if isinstance(context, Schedule | SchedRepetition | SchedIteration | SchedConditional):
-        return _add_to_schedule(op, **schedule_params)
+        return _add_to_schedule(context, op, **schedule_params)
     else:
-        _add_to_sequence(op, schedule_params, "wait")
+        _add_to_sequence(context, op, schedule_params, "wait")
         return None
 
 
@@ -1736,7 +1742,7 @@ def barrier(
     """
     op = Barrier(*channels)
 
-    context = _current_context()
+    context = _current_context("barrier()")
     if isinstance(context, Schedule):
         raise RuntimeError(
             "Barrier operations are not supported in schedule contexts. "
@@ -1744,7 +1750,7 @@ def barrier(
             "Use sequence context instead."
         )
     else:
-        _add_to_sequence(op)
+        _add_to_sequence(context, op)
 
 
 def set_frequency(
@@ -1774,11 +1780,11 @@ def set_frequency(
 
     op = SetFrequency(channel=channel, frequency=frequency)
 
-    context = _current_context()
+    context = _current_context("set_frequency()")
     if isinstance(context, Schedule):
-        return _add_to_schedule(op, **schedule_params)
+        return _add_to_schedule(context, op, **schedule_params)
     else:
-        _add_to_sequence(op, schedule_params, "set_frequency")
+        _add_to_sequence(context, op, schedule_params, "set_frequency")
         return None
 
 
@@ -1811,9 +1817,9 @@ def shift_frequency(
 
     context = _current_context()
     if isinstance(context, Schedule):
-        return _add_to_schedule(op, **schedule_params)
+        return _add_to_schedule(context, op, **schedule_params)
     else:
-        _add_to_sequence(op, schedule_params, "set_frequency")
+        _add_to_sequence(context, op, schedule_params, "set_frequency")
         return None
 
 
@@ -1846,9 +1852,9 @@ def set_phase(
 
     context = _current_context()
     if isinstance(context, Schedule):
-        return _add_to_schedule(op, **schedule_params)
+        return _add_to_schedule(context, op, **schedule_params)
     else:
-        _add_to_sequence(op, schedule_params, "set_frequency")
+        _add_to_sequence(context, op, schedule_params, "set_frequency")
         return None
 
 
@@ -1881,9 +1887,9 @@ def shift_phase(
 
     context = _current_context()
     if isinstance(context, Schedule):
-        return _add_to_schedule(op, **schedule_params)
+        return _add_to_schedule(context, op, **schedule_params)
     else:
-        _add_to_sequence(op, schedule_params, "set_frequency")
+        _add_to_sequence(context, op, schedule_params, "set_frequency")
         return None
 
 
@@ -1933,9 +1939,9 @@ def record(
 
     context = _current_context()
     if isinstance(context, Schedule):
-        return _add_to_schedule(op, **schedule_params)
+        return _add_to_schedule(context, op, **schedule_params)
     else:
-        _add_to_sequence(op, schedule_params, "set_frequency")
+        _add_to_sequence(context, op, schedule_params, "set_frequency")
         return None
 
 
@@ -1994,9 +2000,9 @@ def discriminate(
 
     context = _current_context()
     if isinstance(context, Schedule):
-        return _add_to_schedule(op, **schedule_params)
+        return _add_to_schedule(context, op, **schedule_params)
     else:
-        _add_to_sequence(op, schedule_params, "set_frequency")
+        _add_to_sequence(context, op, schedule_params, "set_frequency")
         return None
 
 
@@ -2052,9 +2058,9 @@ def store(
 
     context = _current_context()
     if isinstance(context, Schedule):
-        return _add_to_schedule(op, **schedule_params)
+        return _add_to_schedule(context, op, **schedule_params)
     else:
-        _add_to_sequence(op, schedule_params, "set_frequency")
+        _add_to_sequence(context, op, schedule_params, "set_frequency")
         return None
 
 
