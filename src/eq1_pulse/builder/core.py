@@ -661,7 +661,7 @@ def sub_schedule(**schedule_params: Unpack[ScheduleParams]) -> Iterator[Schedule
     # Must be called within a schedule context
     state = _get_state()
     context = _current_context("sub_schedule()") if state.context_stack else None
-    if not context or not isinstance(context, Schedule):
+    if context is None or not isinstance(context, Schedule):
         raise RuntimeError("sub_schedule can only be used within a build_schedule() context")
 
     # Create the nested schedule

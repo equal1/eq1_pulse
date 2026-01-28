@@ -95,6 +95,7 @@ cd docs && ./generate_pdf.sh   # Builds LaTeX/PDF docs
 
 ## Common Pitfalls
 - **Conda activation**: IDE may not auto-activate `eq1_pulse-dev`; manually activate before terminal commands
+   - ***use `conda activate eq1_pulse-dev` if the prompt does not show `(eq1_pulse-dev)`***
 - **Builder context**: Operations must be inside `build_sequence()` or `build_schedule()` context managers
 - **Schedule positioning**: Use `OperationToken` return values as `ref_op`, not hardcoded strings
 - **Pulse types**: Don't assume Gaussian/DRAG exist—use `ArbitrarySampledPulse` or `ExternalPulse`
