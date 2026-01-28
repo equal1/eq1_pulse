@@ -78,6 +78,9 @@ cd docs && ./generate_pdf.sh   # Builds LaTeX/PDF docs
 - Pydantic models: Inherit from base classes in `base_models.py`
 - Use `TYPE_CHECKING` imports to avoid circular dependencies
 
+## Markdown Conventions:
+- When generating tables, please make sure the pipes (`|`) are aligned for better readability in raw markdown. Thank you please.
+
 ### Type Hints
 - Models define `*Like` type aliases for flexible inputs (e.g., `DurationLike = Duration | dict[str, float] | str`)
 - Use `@overload` for multiple constructor signatures in `TYPE_CHECKING` blocks
