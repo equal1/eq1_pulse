@@ -849,7 +849,7 @@ class Range(LeanModel, _StartStopInterval):
     In case of complex numbers, the the difference must be an integral multiple of the step.
     The sign of the step is adjusted to ensure the stop value is reached.
 
-    The stop point is always included in the range.
+    **The stop point is always included in the range.**
 
     :ivar start: Starting value (can be real or complex)
     :ivar stop: Ending value (can be real or complex) included in the range

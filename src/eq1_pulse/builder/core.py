@@ -777,22 +777,106 @@ def repeat(count: int, **schedule_params: Unpack[ScheduleParams]) -> Iterator[Re
     raise RuntimeError(msg)
 
 
+def _convert_range_to_model(iterable: Any) -> Range | list[Any] | Any:
+    """Convert Python range objects to Range model or list.
+
+    This function handles the semantic differences between Python's built-in range
+    and the eq1_pulse Range model:
+
+    - Python range excludes the stop point, Range includes it
+    - Python range can be empty if step has wrong direction, Range adjusts step sign
+    - Range requires step to divide the distance evenly
+
+    :param iterable: An iterable, potentially a Python range object
+
+    :return: Range model, list, or the original iterable unchanged
+
+    Conversion rules:
+
+    - Empty range → empty list
+    - Single-element range → single-element list
+    - Multi-element range → Range model (if valid) or list
+
+    Examples
+
+    .. code-block:: python
+
+        _convert_range_to_model(range(0, 10, 2))  # Range(start=0, stop=8, step=2)
+        _convert_range_to_model(range(10, 0, 2))  # [] (wrong step direction)
+        _convert_range_to_model(range(5, 6))      # [5] (single element)
+    """
+    # Only process Python range objects
+    if not isinstance(iterable, range):
+        return iterable
+
+    # Convert to list to get actual elements
+    range_list = list(iterable)
+
+    # Handle empty range (wrong step direction or step too large)
+    if len(range_list) == 0:
+        return []
+
+    # Handle single-element range
+    if len(range_list) == 1:
+        return range_list
+
+    # Multi-element range: convert to Range model
+    # Range includes the stop point, so we use the last element as stop
+    start = range_list[0]
+    stop = range_list[-1]
+    step = iterable.step
+
+    # Create Range with adjusted stop point to include the last element
+    try:
+        return Range(start=start, stop=stop, step=step)
+    except ValueError:
+        # If Range validation fails (step doesn't divide evenly), fall back to list
+        return range_list
+
+
+@overload
+@contextmanager
+def for_(
+    var: VariableRefLike,
+    items: Iterable[Any] | Range | LinSpace,
+    **schedule_params: Unpack[ScheduleParams],
+) -> Iterator[Iteration | SchedIteration]: ...
+
+
+@overload
+@contextmanager
+def for_(
+    var: list[VariableRefLike],
+    items: list[Iterable[Any] | Range | LinSpace],
+    **schedule_params: Unpack[ScheduleParams],
+) -> Iterator[Iteration | SchedIteration]: ...
+
+
 @contextmanager
 def for_(
     var: VariableRefLike | list[VariableRefLike],
-    items: Iterable[Any] | Range | LinSpace,
+    items: Iterable[Any] | Range | LinSpace | list[Iterable[Any] | Range | LinSpace],
     **schedule_params: Unpack[ScheduleParams],
-) -> Iterator[Iteration]:
+) -> Iterator[Iteration | SchedIteration]:
     """Context manager for building an iteration (for loop).
 
-    :param var: Variable reference(s) for the loop variable(s)
-    :param items: Range, LinSpace, or iterable to iterate over
+    Supports both single and zipped iteration:
+
+    - Single iteration: single variable over single iterable
+    - Zipped iteration: multiple variables over corresponding iterables (like Python's zip())
+
+    :param var: Variable reference(s) for the loop variable(s).
+        Can be a single variable or list of variables for zipped iteration.
+    :param items: Iterable(s) to iterate over.
+        - For single iteration: Range, LinSpace, or any iterable
+        - For zipped iteration: list of iterables (same length as var list)
     :param schedule_params:
         Additional scheduling parameters (name, ref_op, ref_pt, etc.) - only used in schedule context
 
     :yield: The iteration being built
 
     :raises RuntimeError: If schedule parameters are provided in a sequence context
+    :raises ValueError: If var/items length mismatch in zipped iteration
 
     Examples
 
@@ -800,11 +884,25 @@ def for_(
 
         from eq1_pulse.builder import *
 
-        # In sequence context
+        # Single iteration in sequence context
         with build_sequence():
             var_decl("i", "int", unit="MHz")
             with for_("i", range(0, 100, 10)):
                 set_frequency("qubit", var("i"))
+
+        # Zipped iteration over multiple variables
+        with build_sequence():
+            var_decl("freq", "float", unit="MHz")
+            var_decl("amp", "float", unit="mV")
+            with for_(
+                ["freq", "amp"],
+                [range(4000, 6000, 100), LinSpace(start=10, stop=100, num=100)]
+            ):
+                set_frequency("qubit", var("freq"))
+                play("qubit", square_pulse(
+                    duration="100ns",
+                    amplitude=var("amp")
+                ))
 
         # In schedule context with timing
         with build_schedule():
@@ -813,13 +911,30 @@ def for_(
                 play("qubit", square_pulse(duration="20ns", amplitude="100mV"))
     """
     # Validate variable reference(s)
-    validated_vars: list[VariableRefLike] | VariableRefLike = (
-        [_validate_variable_ref(v) for v in var] if isinstance(var, list) else _validate_variable_ref(var)
-    )
+    if isinstance(var, list):
+        validated_vars: list[VariableRefLike] | VariableRefLike = [_validate_variable_ref(v) for v in var]
+    else:
+        validated_vars = _validate_variable_ref(var)
+
+    # Handle both single and zipped iteration items
+    # For zipped iteration, items should be a list; convert single iterable to list
+    validated_items: list[Iterable[Any] | Range | LinSpace] | Iterable[Any] | Range | LinSpace
+    if isinstance(validated_vars, list):
+        # Multiple variables - items must be a list of iterables (zipped iteration)
+        if not isinstance(items, list):
+            # Single iterable provided for multiple variables - wrap in list
+            # This allows for_(["i", "j"], range(10)) to iterate same range for both
+            validated_items = [_convert_range_to_model(items)]
+        else:
+            # Convert any range objects in the list
+            validated_items = [_convert_range_to_model(item) for item in items]
+    else:
+        # Single variable - items can be single iterable
+        validated_items = _convert_range_to_model(items)
 
     parent = _current_context("for_()")
     body = OpSequence(items=[])
-    iter_obj = Iteration(var=validated_vars, items=items, body=body)
+    iter_obj = Iteration(var=validated_vars, items=validated_items, body=body)
 
     state = _get_state()
     if isinstance(parent, OpSequence):
@@ -830,7 +945,7 @@ def for_(
         parent.body.items.append(iter_obj)
     elif isinstance(parent, Schedule | SchedRepetition | SchedIteration | SchedConditional):
         # For schedules, we need SchedIteration not Iteration
-        sched_iter = SchedIteration(var=validated_vars, items=items, body=Schedule(items=[]))
+        sched_iter = SchedIteration(var=validated_vars, items=validated_items, body=Schedule(items=[]))
         _add_to_schedule(parent, sched_iter, **schedule_params)
         state.context_stack.append(sched_iter)
         try:
