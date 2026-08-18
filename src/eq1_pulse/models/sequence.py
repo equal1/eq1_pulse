@@ -7,6 +7,13 @@ The timing of the operations in a sequence is implicit, scheduling is done by
 earliest possible start time.
 The same channel can not execute two Play/Record/Barrier operations at the same time, the only
 exception being a Play and its corresponding Record (constituting a Measurement operation).
+
+Because scheduling is per-channel, operations on different channels already have
+independent timelines; a Play and Record on different channels are never "linked" by
+the model, and nothing in a sequence guarantees they start in lock-step. This only
+becomes an actual concern for the same-channel Play/Record exception above, where the
+two operations must be treated as one atomic measurement rather than two ops that
+happen to share a channel and start time.
 """
 
 # ruff: noqa: D107
