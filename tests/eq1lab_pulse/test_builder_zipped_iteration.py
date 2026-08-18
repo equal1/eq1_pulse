@@ -159,7 +159,7 @@ class TestZippedIterationBasics:
 
     def test_mismatched_lengths_raises(self):
         """Test that mismatched variable/iterable lengths raise error."""
-        with pytest.raises(ValueError, match="same length"):
+        with pytest.raises(ValueError, match="one iterable per variable"):
             with build_sequence():
                 var_decl("i", "int")
                 var_decl("j", "int")
@@ -167,6 +167,23 @@ class TestZippedIterationBasics:
                 # 2 variables but 3 iterables
                 with for_(["i", "j"], [range(5), range(5), range(5)]):
                     play("ch1", square_pulse(duration="100ns", amplitude="50mV"))
+
+    def test_single_iterable_is_broadcast_over_variables(self):
+        """Test that one iterable given for several variables is used for each of them."""
+        with build_sequence() as seq:
+            var_decl("i", "int")
+            var_decl("j", "int")
+
+            with for_(["i", "j"], range(0, 10, 2)):
+                play("ch1", square_pulse(duration="100ns", amplitude="50mV"))
+
+        iter_obj = seq.items[2]
+        assert isinstance(iter_obj, Iteration)
+        assert isinstance(iter_obj.var, list)
+        assert isinstance(iter_obj.items, list)
+        assert len(iter_obj.var) == 2
+        assert len(iter_obj.items) == 2
+        assert iter_obj.items[0] == iter_obj.items[1]
 
     def test_zipped_iteration_in_nested_context(self):
         """Test zipped iteration inside repeat."""

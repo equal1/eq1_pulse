@@ -80,7 +80,7 @@ The ``play()`` function sends a pulse to a channel:
 
 .. code-block:: python
 
-    play(channel, pulse, scale_amp=None, cond=None, **kwargs)
+    play(channel, pulse, *, scale_amp=None, cond=None, **schedule_params)
 
 Parameters:
 
@@ -119,7 +119,7 @@ The ``wait()`` function creates a delay on a channel:
 
 .. code-block:: python
 
-    wait(channel, duration, **kwargs)
+    wait(*channels, duration, **schedule_params)
 
 Example:
 
@@ -134,7 +134,7 @@ The ``set_frequency()`` function changes the oscillator frequency for a channel:
 
 .. code-block:: python
 
-    set_frequency(channel, frequency, **kwargs)
+    set_frequency(channel, frequency, **schedule_params)
 
 Example:
 
@@ -152,7 +152,7 @@ The ``set_phase()`` function updates the phase of a channel:
 
 .. code-block:: python
 
-    set_phase(channel, phase, **kwargs)
+    set_phase(channel, phase, **schedule_params)
 
 Example:
 
@@ -167,7 +167,7 @@ The ``shift_phase()`` function adds an offset to the current phase:
 
 .. code-block:: python
 
-    shift_phase(channel, phase, **kwargs)
+    shift_phase(channel, phase, **schedule_params)
 
 Example:
 
@@ -216,7 +216,7 @@ A constant-amplitude rectangular pulse:
 
 .. code-block:: python
 
-    square_pulse(duration, amplitude, rise_time=None, fall_time=None)
+    square_pulse(*, duration, amplitude, rise_time=None, fall_time=None)
 
 The ``rise_time`` and ``fall_time`` parameters define linear ramps at the beginning and end of the pulse,
 enabling trapezoidal or ramp-shaped pulses. These times are included in the total pulse duration.
@@ -257,7 +257,7 @@ A sinusoidal waveform:
 
 .. code-block:: python
 
-    sine_pulse(duration, amplitude, frequency, to_frequency=None)
+    sine_pulse(*, duration, amplitude, frequency, to_frequency=None)
 
 The ``to_frequency`` parameter enables frequency-swept (chirp) pulses. When specified, the frequency
 linearly sweeps from ``frequency`` to ``to_frequency`` over the pulse duration.
@@ -302,7 +302,7 @@ Reference a pulse shape defined in an external library or function:
 
 .. code-block:: python
 
-    external_pulse(function, duration, amplitude, params=None)
+    external_pulse(function, *, duration, amplitude, params=None)
 
 The ``function`` parameter should be a fully qualified name (e.g., ``"my_lib.gaussian"``).
 The external function is expected to generate the pulse waveform.
@@ -337,7 +337,7 @@ Define a custom pulse using explicit sample points:
 
 .. code-block:: python
 
-    arbitrary_pulse(samples, duration, amplitude, interpolation=None, time_points=None)
+    arbitrary_pulse(samples, *, duration, amplitude, interpolation=None, time_points=None)
 
 Samples should be normalized (peak value of 1.0) and will be scaled by the amplitude.
 
@@ -467,7 +467,7 @@ Use ``var_decl()`` to declare a variable before using it:
 
 .. code-block:: python
 
-    var_decl(name, dtype, shape=None, unit=None)
+    var_decl(name, dtype, *, shape=None, unit=None, **schedule_params)
 
 Data types (``dtype``) can be:
 
@@ -615,7 +615,7 @@ The ``store()`` function saves measurement results:
 
 .. code-block:: python
 
-    store(key, source, mode="last")
+    store(key, source, *, mode="last", **schedule_params)
 
 Modes:
 
@@ -910,7 +910,7 @@ Use ``@nested_sequence`` to create reusable operation blocks in sequence context
     def readout_sequence(drive_ch: str, readout_ch: str, result_var: str):
         """Perform readout measurement."""
         play(drive_ch, square_pulse(duration="1us", amplitude="50mV"))
-        record(readout_ch, var=result_var, duration="1us")
+        record(readout_ch, result_var, duration="1us", integration=full_integration())
 
     # Use the building blocks in a sequence
     with build_sequence() as seq:
@@ -991,17 +991,17 @@ Use ``@nested_schedule`` to create reusable schedule blocks that need explicit t
     def measure_qubit(drive_ch: str, readout_ch: str, result_var: str):
         """Measure a qubit."""
         play(drive_ch, square_pulse(duration="1us", amplitude="50mV"))
-        record(readout_ch, var=result_var, duration="1us")
+        record(readout_ch, result_var, duration="1us", integration=full_integration())
 
     # Use the building blocks in a schedule
     with build_schedule() as sched:
         # Call the function to create a block, then add it with timing
-        init_token = add_block(initialize_qubit("qubit0"), name="init")
+        init_token = add_block(initialize_qubit("qubit0"), op_name="init")
 
         # Position subsequent blocks relative to previous operations
         rabi_token = add_block(
             rabi_drive("qubit0", "150mV"),
-            name="rabi",
+            op_name="rabi",
             ref_op=init_token,
             ref_pt="end",
             rel_time="10ns"
@@ -1009,7 +1009,7 @@ Use ``@nested_schedule`` to create reusable schedule blocks that need explicit t
 
         add_block(
             measure_qubit("drive0", "readout0", "result"),
-            name="measure",
+            op_name="measure",
             ref_op=rabi_token,
             ref_pt="end",
             rel_time="50ns"
@@ -1054,7 +1054,7 @@ The builder tracks all :class:`ScheduleBlock` objects and ensures they are consu
 
     # Correct usage:
     with build_schedule() as sched:
-        add_block(initialize_qubit("qubit0"), name="init")  # ✓
+        add_block(initialize_qubit("qubit0"), op_name="init")  # ✓
 
 Parallel Operations with Schedules
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1072,10 +1072,10 @@ Schedule building blocks shine when you need parallel execution:
 
     with build_schedule() as sched:
         # Initialize both qubits in parallel (same start time)
-        init0 = add_block(initialize_qubit("qubit0"), name="init0")
+        init0 = add_block(initialize_qubit("qubit0"), op_name="init0")
         add_block(
             initialize_qubit("qubit1"),
-            name="init1",
+            op_name="init1",
             ref_op=init0,
             ref_pt="start"  # Start at same time as init0
         )
@@ -1083,7 +1083,7 @@ Schedule building blocks shine when you need parallel execution:
         # Apply gates with precise timing
         gate0 = add_block(
             rabi_drive("qubit0", "140mV"),
-            name="gate0",
+            op_name="gate0",
             ref_op=init0,
             ref_pt="end",
             rel_time="20ns"
@@ -1091,7 +1091,7 @@ Schedule building blocks shine when you need parallel execution:
 
         gate1 = add_block(
             two_qubit_gate("qubit0", "qubit1", "45deg"),
-            name="cnot",
+            op_name="cnot",
             ref_op=gate0,
             ref_pt="start"  # Start at same time as gate0
         )
@@ -1243,7 +1243,7 @@ Best Practices
        with build_schedule():
            add_block(
                measure_qubit("drive", "readout", "result"),
-               name="measure"
+               op_name="measure"
            )
 
 6. **Don't mix sequence and schedule decorators**:
@@ -1264,14 +1264,14 @@ Best Practices
 
        # WRONG - schedule decorator in sequence context
        with build_sequence():
-           add_block(calibration_block("q0"), name="cal")  # RuntimeError!
+           add_block(calibration_block("q0"), op_name="cal")  # RuntimeError!
 
        # CORRECT - match decorator to context
        with build_sequence():
            gate_sequence("q0")  # ✓
 
        with build_schedule():
-           add_block(calibration_block("q0"), name="cal")  # ✓
+           add_block(calibration_block("q0"), op_name="cal")  # ✓
 
 Complete Example
 ~~~~~~~~~~~~~~~~
@@ -1313,7 +1313,7 @@ Here's a complete example combining both decorators for a multi-qubit experiment
     def dispersive_readout(drive: str, readout: str, result: str):
         """Standard dispersive readout."""
         play(drive, square_pulse(duration="2us", amplitude="40mV"))
-        record(readout, var=result, duration="2us", integration="full")
+        record(readout, result, duration="2us", integration=full_integration())
 
     # ========== Use in sequence context ==========
 
@@ -1328,7 +1328,7 @@ Here's a complete example combining both decorators for a multi-qubit experiment
 
         # Manual readout (sequence context)
         play("drive0", square_pulse(duration="2us", amplitude="40mV"))
-        record("readout0", var="state", duration="2us")
+        record("readout0", "state", duration="2us", integration=full_integration())
 
     # ========== Use in schedule context ==========
 
@@ -1352,7 +1352,7 @@ Here's a complete example combining both decorators for a multi-qubit experiment
         # Simultaneous readout
         add_block(
             dispersive_readout("drive1", "readout1", "r1"),
-            name="readout1",
+            op_name="readout1",
             ref_op=gate,
             ref_pt="start"
         )

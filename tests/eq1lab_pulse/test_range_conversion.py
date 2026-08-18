@@ -1,5 +1,7 @@
 """Tests for automatic conversion of Python range to Range model in builder."""
 
+import pytest
+
 from eq1_pulse.builder import build_sequence, for_, play, square_pulse, var_decl
 from eq1_pulse.models import Iteration, Range
 
@@ -43,19 +45,15 @@ class TestRangeConversion:
         assert iter_obj.items.step == -2
         assert len(iter_obj.items) == 5  # 10, 8, 6, 4, 2
 
-    def test_empty_range_converts_to_empty_list(self):
-        """Test that empty range (wrong step direction) converts to empty list."""
-        with build_sequence() as seq:
-            var_decl("i", "int")
+    def test_empty_range_raises(self):
+        """Test that an empty range (wrong step direction) is rejected."""
+        with pytest.raises(ValueError, match="would never execute"):
+            with build_sequence():
+                var_decl("i", "int")
 
-            # range(0, 10, -1) is empty (wrong step direction)
-            with for_("i", range(0, 10, -1)):
-                play("ch1", square_pulse(duration="100ns", amplitude="50mV"))
-
-        iter_obj = seq.items[1]
-        assert isinstance(iter_obj, Iteration)
-        assert isinstance(iter_obj.items, list)
-        assert len(iter_obj.items) == 0
+                # range(0, 10, -1) is empty (wrong step direction)
+                with for_("i", range(0, 10, -1)):
+                    play("ch1", square_pulse(duration="100ns", amplitude="50mV"))
 
     def test_single_element_range_converts_to_list(self):
         """Test that single-element range converts to list (which becomes numpy array in model)."""

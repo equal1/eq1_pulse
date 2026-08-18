@@ -68,7 +68,8 @@ Quick Example
 
         # Measure
         var_decl("result", "complex", unit="mV")
-        measure("qubit", result_var="result", duration="1us", amplitude="30mV")
+        measure("qubit", result_var="result", duration="1us", amplitude="30mV",
+                integration=full_integration())
 
     # Export to JSON
     print(seq.model_dump_json(indent=2))

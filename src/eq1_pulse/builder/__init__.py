@@ -20,7 +20,7 @@ Examples
     # Building a sequence
     with build_sequence() as seq:
         play("ch1", square_pulse(duration="10us", amplitude="100mV"))
-        wait("ch1", "5us")
+        wait("ch1", duration="5us")
         play("ch1", sine_pulse(duration="20us", amplitude="50mV", frequency="5GHz"))
 
     # Building a schedule with relative positioning
@@ -33,7 +33,8 @@ Examples
     with build_sequence() as seq:
         with repeat(10):
             play("qubit", square_pulse(duration="50ns", amplitude="100mV"))
-            measure("qubit", result_var="readout", duration="1us", amplitude="50mV")
+            measure("qubit", result_var="readout", duration="1us", amplitude="50mV",
+                    integration=full_integration())
 
         var_decl("i", "int", unit="MHz")
         with for_("i", LinSpace(0, 100, 10)):
@@ -70,7 +71,7 @@ Examples
         # Measurement block positioned after gate
         with sub_schedule(op_name="measure", ref_op=gate, ref_pt="end", rel_time="50ns"):
             play("drive", square_pulse(duration="1us", amplitude="50mV"))
-            record("readout", var="result", duration="1us")
+            record("readout", "result", duration="1us", integration=full_integration())
 """
 
 from .core import (

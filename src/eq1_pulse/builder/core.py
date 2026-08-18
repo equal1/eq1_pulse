@@ -17,7 +17,7 @@ Examples
     # Building a sequence
     with build_sequence() as seq:
         play("ch1", square_pulse(duration="10us", amplitude="100mV"))
-        wait("ch1", "5us")
+        wait("ch1", duration="5us")
         play("ch1", sine_pulse(duration="20us", amplitude="50mV", frequency="5GHz"))
 
     # Building a schedule with relative positioning
@@ -30,7 +30,8 @@ Examples
     with build_sequence() as seq:
         with repeat(10):
             play("qubit", square_pulse(duration="50ns", amplitude="100mV"))
-            measure("qubit", result_var="readout", duration="1us", amplitude="50mV")
+            measure("qubit", result_var="readout", duration="1us", amplitude="50mV",
+                    integration=full_integration())
 
         var_decl("i", "int", unit="MHz")
         with for_("i", range(0, 100, 10)):
@@ -41,12 +42,11 @@ Examples
 from __future__ import annotations
 
 import traceback
-from collections import defaultdict
 from collections.abc import Callable
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal, Unpack, overload
+from typing import TYPE_CHECKING, Any, Final, Literal, TypeGuard, Unpack, cast, overload
 
 from eq1_pulse.models import Phase
 
@@ -120,6 +120,48 @@ __all__ = (
 )
 
 
+type SequenceContext = OpSequence | Repetition | Iteration | Conditional
+"""Contexts in which operations are ordered implicitly (sequence semantics)."""
+
+type ScheduleContext = Schedule | SchedRepetition | SchedIteration | SchedConditional
+"""Contexts in which operations carry explicit timing parameters (schedule semantics)."""
+
+type BuilderContext = SequenceContext | ScheduleContext
+"""Any context the builder can be inside of."""
+
+_SEQUENCE_CONTEXT_TYPES: Final = (OpSequence, Repetition, Iteration, Conditional)
+_SCHEDULE_CONTEXT_TYPES: Final = (Schedule, SchedRepetition, SchedIteration, SchedConditional)
+
+
+def _in_schedule(context: Any) -> TypeGuard[ScheduleContext]:
+    """Check whether a context has schedule semantics.
+
+    This covers the top-level :class:`~eq1_pulse.models.schedule.Schedule` as well as the
+    bodies of schedule-side control flow (``repeat``/``for_``/``if_``), which are
+    :class:`~eq1_pulse.models.schedule.SchedRepetition`,
+    :class:`~eq1_pulse.models.schedule.SchedIteration` and
+    :class:`~eq1_pulse.models.schedule.SchedConditional` respectively.
+
+    :param context: The context to test
+
+    :return: :obj:`True` if operations in this context take schedule parameters
+    """
+    return isinstance(context, _SCHEDULE_CONTEXT_TYPES)
+
+
+def _in_sequence(context: Any) -> TypeGuard[SequenceContext]:
+    """Check whether a context has sequence semantics.
+
+    This covers the top-level :class:`~eq1_pulse.models.sequence.OpSequence` as well as the
+    bodies of sequence-side control flow (``repeat``/``for_``/``if_``).
+
+    :param context: The context to test
+
+    :return: :obj:`True` if operations in this context are implicitly ordered
+    """
+    return isinstance(context, _SEQUENCE_CONTEXT_TYPES)
+
+
 @dataclass
 class BuilderState:
     """State for the pulse builder.
@@ -128,23 +170,14 @@ class BuilderState:
     allowing it to be stored in a ContextVar for thread and async safety.
     """
 
-    context_stack: list[
-        OpSequence
-        | Schedule
-        | Repetition
-        | Iteration
-        | Conditional
-        | SchedRepetition
-        | SchedIteration
-        | SchedConditional
-    ] = field(default_factory=list)
+    context_stack: list[BuilderContext] = field(default_factory=list)
     op_counter: int = 0
-    # Track unconsumed schedule blocks per context using defaultdict
-    # Key is id(context), value is list of unconsumed blocks
-    unconsumed_blocks: defaultdict[int, list[ScheduleBlock]] = field(default_factory=lambda: defaultdict(list))
-    # Track declared variables per context using defaultdict
-    # Key is id(context), value is set of declared variable names
-    declared_variables: defaultdict[int, set[str]] = field(default_factory=lambda: defaultdict(set))
+    # Unconsumed schedule blocks, one list per entry of context_stack.
+    # Kept as a parallel stack rather than keyed by id(context): ids are reused
+    # after garbage collection, which let stale entries surface in unrelated builds.
+    unconsumed_blocks: list[list[ScheduleBlock]] = field(default_factory=list)
+    # Declared variable names, one set per entry of context_stack.
+    declared_variables: list[set[str]] = field(default_factory=list)
 
 
 _state: ContextVar[BuilderState | None] = ContextVar("builder_state", default=None)
@@ -174,6 +207,31 @@ def _generate_op_name() -> str:
     return f"op_{state.op_counter}"
 
 
+def _push_context(context: BuilderContext) -> None:
+    """Push a context onto the builder stack, together with its tracking state.
+
+    Entering a top-level context (i.e. one with no enclosing context) resets the
+    operation counter, so that building the same program twice in one process
+    produces the same generated operation names.
+
+    :param context: The context being entered
+    """
+    state = _get_state()
+    if not state.context_stack:
+        state.op_counter = 0
+    state.context_stack.append(context)
+    state.unconsumed_blocks.append([])
+    state.declared_variables.append(set())
+
+
+def _pop_context() -> None:
+    """Pop the innermost context off the builder stack, discarding its tracking state."""
+    state = _get_state()
+    state.context_stack.pop()
+    state.unconsumed_blocks.pop()
+    state.declared_variables.pop()
+
+
 def _current_context(operation_name: str = "") -> Any:
     """Get the current building context.
 
@@ -197,14 +255,14 @@ def _current_context(operation_name: str = "") -> Any:
 
 
 def _add_to_sequence(
-    context: OpSequence | Repetition | Iteration | Conditional,
+    context: Any,
     operation: Any,
     schedule_params: ScheduleParams | None = None,
     operation_name: str = "",
 ) -> None:
     """Add an operation to a sequence context.
 
-    :param context: The sequence context to add to
+    :param context: The sequence context to add to; anything else raises
     :param operation: The operation to add
     :param schedule_params: Schedule parameters to validate (should be empty)
     :param operation_name: Name of the operation for error messages
@@ -275,15 +333,15 @@ def _register_variable(name: str) -> None:
         return  # No context active, skip registration
 
     # Check if already declared in current context (not parent contexts)
-    context_id = id(_current_context())
-    if name in state.declared_variables[context_id]:
+    current = state.declared_variables[-1]
+    if name in current:
         raise RuntimeError(
             f"Variable '{name}' is already declared in the current context. "
             f"Each variable can only be declared once per context."
         )
 
     # Register in current context
-    state.declared_variables[context_id].add(name)
+    current.add(name)
 
 
 def _is_variable_declared(name: str) -> bool:
@@ -296,16 +354,9 @@ def _is_variable_declared(name: str) -> bool:
     :return: :obj:`True` if variable is declared, :obj:`False` otherwise
     """
     state = _get_state()
-    if not state.context_stack:
-        return False  # No context active
 
     # Check from innermost to outermost context
-    for context in reversed(state.context_stack):
-        context_id = id(context)
-        if name in state.declared_variables[context_id]:
-            return True
-
-    return False
+    return any(name in declared for declared in reversed(state.declared_variables))
 
 
 def _check_variable_declared(name: str) -> None:
@@ -320,17 +371,6 @@ def _check_variable_declared(name: str) -> None:
             f"Variable '{name}' has not been declared. Use var_decl('{name}', dtype, ...) "
             f"before referencing this variable."
         )
-
-
-def _cleanup_context_variables(context: Any) -> None:
-    """Clean up variable tracking for a context when it exits.
-
-    :param context: The context to clean up
-    """
-    state = _get_state()
-    context_id = id(context)
-    if context_id in state.declared_variables:
-        del state.declared_variables[context_id]
 
 
 def _validate_variable_ref(var_ref: VariableRefLike) -> VariableRef:
@@ -432,6 +472,33 @@ def _validate_or_pass_through[T](
     return value
 
 
+def _validate_explicit_variable_ref[T](value: T, *, param_name: str) -> T | VariableRef:
+    """Validate only *explicit* variable references, passing everything else through.
+
+    Unlike :func:`_validate_or_pass_through`, an identifier-like string is **not**
+    treated as a variable reference. Use this for free-form values where a bare
+    string is more likely to be a literal than a variable name; callers wanting a
+    variable there must say so with :func:`var` or a ``{"var": ...}`` dict.
+
+    :param value: Parameter value
+    :param param_name: Name of the parameter being validated (for error messages)
+
+    :return: :class:`VariableRef` if explicitly one, else the value unchanged
+
+    :raises RuntimeError: If an explicit reference names an undeclared variable
+    """
+    if isinstance(value, VariableRef):
+        _check_variable_declared(value.var)
+        return value
+
+    if isinstance(value, dict) and "var" in value:
+        var_ref = VariableRef(**value)
+        _check_variable_declared(var_ref.var)
+        return var_ref
+
+    return value
+
+
 # ============================================================================
 # Basic model builders
 # ============================================================================
@@ -491,6 +558,65 @@ def phase(*args, **kwargs) -> Phase:
 # ============================================================================
 
 
+def _reject_unconsumed_blocks(unconsumed: list[ScheduleBlock], context_kind: str) -> None:
+    """Raise if any schedule blocks created in a context were never added to it.
+
+    :param unconsumed: Blocks still outstanding when the context closed
+    :param context_kind: Human-readable name of the context, for the error message
+
+    :raises RuntimeError: If ``unconsumed`` is non-empty
+    """
+    if not unconsumed:
+        return
+
+    error_parts = [
+        f"{context_kind} context closed with {len(unconsumed)} unconsumed ScheduleBlock(s). "
+        "All @nested_schedule decorated function calls must be passed to add_block() "
+        "with schedule parameters.\n"
+    ]
+    for i, block in enumerate(unconsumed, 1):
+        error_parts.append(f"\nUnconsumed block #{i} created at:")
+        error_parts.append(block._get_creation_info())
+
+    raise RuntimeError("".join(error_parts))
+
+
+@contextmanager
+def _sub_schedule_with_token(
+    **schedule_params: Unpack[ScheduleParams],
+) -> Iterator[tuple[Schedule, OperationToken]]:
+    """Open a nested sub-schedule, exposing both the schedule and its reference token.
+
+    This is the shared implementation behind :func:`sub_schedule` and :func:`add_block`.
+
+    :param schedule_params: Schedule timing parameters
+
+    :yield: The nested schedule and the token referencing it in the parent
+
+    :raises RuntimeError: If not called within a schedule context
+    """
+    context = _current_context("sub_schedule()")
+    if not _in_schedule(context):
+        raise RuntimeError("sub_schedule can only be used within a build_schedule() context")
+
+    nested_sched = Schedule(items=[])
+
+    # Add it to the parent schedule with timing parameters
+    token = _add_to_schedule(context, nested_sched, **schedule_params)
+
+    # Push nested schedule as current context for operations inside it
+    _push_context(nested_sched)
+    try:
+        yield nested_sched, token
+    except BaseException:
+        _pop_context()
+        raise
+    else:
+        unconsumed = _get_state().unconsumed_blocks[-1]
+        _pop_context()
+        _reject_unconsumed_blocks(unconsumed, "sub_schedule")
+
+
 @contextmanager
 def build_sequence() -> Iterator[OpSequence]:
     """Context manager for building an operation sequence.
@@ -505,16 +631,14 @@ def build_sequence() -> Iterator[OpSequence]:
 
         with build_sequence() as seq:
             play("ch1", square_pulse(duration="10us", amplitude="100mV"))
-            wait("ch1", "5us")
+            wait("ch1", duration="5us")
     """
     seq = OpSequence(items=[])
-    state = _get_state()
-    state.context_stack.append(seq)
+    _push_context(seq)
     try:
         yield seq
     finally:
-        state.context_stack.pop()
-        _cleanup_context_variables(seq)
+        _pop_context()
 
 
 @contextmanager
@@ -546,15 +670,11 @@ def sub_sequence() -> Iterator[OpSequence]:
             # Another sub-sequence for measurement
             with sub_sequence():
                 play("drive", square_pulse(duration="1us", amplitude="50mV"))
-                record("readout", var="result", duration="1us")
+                record("readout", "result", duration="1us", integration=full_integration())
     """
     # Must be called within a sequence context
-    state = _get_state()
-    if not state.context_stack:
-        raise RuntimeError("sub_sequence can only be used within a build_sequence() context")
-
-    context = _current_context()
-    if not isinstance(context, OpSequence | Repetition | Iteration | Conditional):
+    context = _current_context("sub_sequence()")
+    if not _in_sequence(context):
         raise RuntimeError("sub_sequence can only be used within a sequence context (not in schedules)")
 
     # Create the nested sequence
@@ -564,12 +684,11 @@ def sub_sequence() -> Iterator[OpSequence]:
     _add_to_sequence(context, nested_seq)
 
     # Push nested sequence as current context for operations inside it
-    state.context_stack.append(nested_seq)
+    _push_context(nested_seq)
     try:
         yield nested_seq
     finally:
-        state.context_stack.pop()
-        _cleanup_context_variables(nested_seq)
+        _pop_context()
 
 
 @contextmanager
@@ -590,50 +709,30 @@ def build_schedule() -> Iterator[Schedule]:
                             ref_op=op1, ref_pt="start", rel_time="5us")
     """
     sched = Schedule(items=[])
-    state = _get_state()
-    state.context_stack.append(sched)
-    sched_id = id(sched)
+    _push_context(sched)
     try:
         yield sched
-    finally:
-        # Check for unconsumed schedule blocks before popping context
-        unconsumed = state.unconsumed_blocks[sched_id]
-        if unconsumed:
-            count = len(unconsumed)
-            # Build detailed error message with traceback info
-            error_parts = [
-                f"Schedule context closed with {count} unconsumed ScheduleBlock(s). "
-                "All @nested_schedule decorated function calls must be passed to add_block() "
-                "with schedule parameters.\n"
-            ]
-
-            # Add creation info for each unconsumed block
-            for i, block in enumerate(unconsumed, 1):
-                error_parts.append(f"\nUnconsumed block #{i} created at:")
-                error_parts.append(block._get_creation_info())
-
-            # Clean up before raising
-            del state.unconsumed_blocks[sched_id]
-            state.context_stack.pop()
-            _cleanup_context_variables(sched)
-            raise RuntimeError("".join(error_parts))
-        # Clean up empty list
-        if sched_id in state.unconsumed_blocks:
-            del state.unconsumed_blocks[sched_id]
-        state.context_stack.pop()
-        _cleanup_context_variables(sched)
+    except BaseException:
+        _pop_context()
+        raise
+    else:
+        unconsumed = _get_state().unconsumed_blocks[-1]
+        _pop_context()
+        _reject_unconsumed_blocks(unconsumed, "Schedule")
 
 
 @contextmanager
-def sub_schedule(**schedule_params: Unpack[ScheduleParams]) -> Iterator[Schedule]:
+def sub_schedule(**schedule_params: Unpack[ScheduleParams]) -> Iterator[OperationToken]:
     """Context manager for building a nested sub-schedule with timing parameters.
 
     This creates a sub-schedule that can be positioned relative to other operations
-    in the parent schedule. Only works within a schedule context (not in sequences).
+    in the parent schedule. Works in any schedule context, including the bodies of
+    schedule-side ``repeat``, ``for_`` and ``if_`` blocks.
 
-    :param schedule_params: Schedule timing parameters (name, ref_op, ref_pt, ref_pt_new, rel_time)
+    :param schedule_params: Schedule timing parameters
+        (``op_name``, ``ref_op``, ``ref_pt``, ``ref_pt_new``, ``rel_time``)
 
-    :yield: The sub-schedule being built
+    :yield: Token referencing the sub-schedule, for use as ``ref_op`` of later operations
 
     :raises RuntimeError: If not called within a schedule context
 
@@ -649,62 +748,18 @@ def sub_schedule(**schedule_params: Unpack[ScheduleParams]) -> Iterator[Schedule
                 play("qubit", square_pulse(duration="100ns", amplitude="200mV"))
                 wait("qubit", duration="50ns")
 
-            # Create gate operation positioned after init
+            # Create gate operation positioned after init, referring to it by token
             gate_op = play("qubit", square_pulse(duration="20ns", amplitude="150mV"),
-                          ref_op="init", ref_pt="end", rel_time="10ns")
+                           ref_op=init, ref_pt="end", rel_time="10ns")
 
             # Create measurement block positioned after gate
             with sub_schedule(op_name="measure", ref_op=gate_op, ref_pt="end", rel_time="50ns"):
                 play("drive", square_pulse(duration="1us", amplitude="50mV"))
-                record("readout", var="result", duration="1us")
+                record("readout", var="result", duration="1us",
+                       integration=full_integration())
     """
-    # Must be called within a schedule context
-    state = _get_state()
-    context = _current_context("sub_schedule()") if state.context_stack else None
-    if context is None or not isinstance(context, Schedule):
-        raise RuntimeError("sub_schedule can only be used within a build_schedule() context")
-
-    # Create the nested schedule
-    nested_sched = Schedule(items=[])
-
-    # Add it to the parent schedule with timing parameters
-    token = _add_to_schedule(context, nested_sched, **schedule_params)
-
-    # Push nested schedule as current context for operations inside it
-    state.context_stack.append(nested_sched)
-    sched_id = id(nested_sched)
-    try:
-        yield nested_sched
-    finally:
-        # Check for unconsumed schedule blocks before popping context
-        unconsumed = state.unconsumed_blocks[sched_id]
-        if unconsumed:
-            count = len(unconsumed)
-            # Build detailed error message with traceback info
-            error_parts = [
-                f"sub_schedule context closed with {count} unconsumed ScheduleBlock(s). "
-                "All @nested_schedule decorated function calls must be passed to add_block() "
-                "with schedule parameters.\n"
-            ]
-
-            # Add creation info for each unconsumed block
-            for i, block in enumerate(unconsumed, 1):
-                error_parts.append(f"\nUnconsumed block #{i} created at:")
-                error_parts.append(block._get_creation_info())
-
-            # Clean up before raising
-            del state.unconsumed_blocks[sched_id]
-            state.context_stack.pop()
-            _cleanup_context_variables(nested_sched)
-            raise RuntimeError("".join(error_parts))
-        # Clean up empty list
-        if sched_id in state.unconsumed_blocks:
-            del state.unconsumed_blocks[sched_id]
-        state.context_stack.pop()
-        _cleanup_context_variables(nested_sched)
-
-    # Return the token so it can be used for further references
-    return token  # type: ignore[return-value]
+    with _sub_schedule_with_token(**schedule_params) as (_, token):
+        yield token
 
 
 @contextmanager
@@ -716,7 +771,7 @@ def repeat(count: int, **schedule_params: Unpack[ScheduleParams]) -> Iterator[Re
 
     :param count: Number of times to repeat
     :param schedule_params:
-        Additional scheduling parameters (name, ref_op, ref_pt, etc.) - only used in schedule context
+        Additional scheduling parameters (op_name, ref_op, ref_pt, etc.) - only used in schedule context
 
     :yield: The repetition being built
 
@@ -739,38 +794,30 @@ def repeat(count: int, **schedule_params: Unpack[ScheduleParams]) -> Iterator[Re
             with repeat(10, ref_op=op1, ref_pt="end"):
                 play("qubit", square_pulse(duration="50ns", amplitude="100mV"))
     """
-    state = _get_state()
     parent = _current_context("repeat()")
 
     # Schedule context - create SchedRepetition
-    if isinstance(parent, Schedule | SchedRepetition | SchedIteration | SchedConditional):
-        sched_body = Schedule(items=[])
-        sched_rep = SchedRepetition(count=count, body=sched_body)
+    if _in_schedule(parent):
+        sched_rep = SchedRepetition(count=count, body=Schedule(items=[]))
         _add_to_schedule(parent, sched_rep, **schedule_params)
-        state.context_stack.append(sched_rep)
+        _push_context(sched_rep)
         try:
             yield sched_rep  # type: ignore[misc]
         finally:
-            state.context_stack.pop()
-            _cleanup_context_variables(sched_rep)
+            _pop_context()
         return
 
     # Sequence context - create Repetition
-    if isinstance(parent, OpSequence | Repetition | Iteration | Conditional):
+    if _in_sequence(parent):
         # Check that no schedule parameters were provided in sequence context
         _reject_schedule_params(schedule_params, "repeat")
-        seq_body = OpSequence(items=[])
-        rep = Repetition(count=count, body=seq_body)
-        if isinstance(parent, OpSequence):
-            parent.items.append(rep)
-        else:
-            parent.body.items.append(rep)
-        state.context_stack.append(rep)
+        rep = Repetition(count=count, body=OpSequence(items=[]))
+        _add_to_sequence(parent, rep)
+        _push_context(rep)
         try:
             yield rep  # type: ignore[misc]
         finally:
-            state.context_stack.pop()
-            _cleanup_context_variables(rep)
+            _pop_context()
         return
 
     msg = f"repeat() cannot be used in context of type {type(parent).__name__}"
@@ -793,16 +840,18 @@ def _convert_range_to_model(iterable: Any) -> Range | list[Any] | Any:
 
     Conversion rules:
 
-    - Empty range → empty list
+    - Empty range → :class:`ValueError` (a loop that can never run is a typo, not intent)
     - Single-element range → single-element list
     - Multi-element range → Range model (if valid) or list
+
+    :raises ValueError: If the range yields no elements
 
     Examples
 
     .. code-block:: python
 
         _convert_range_to_model(range(0, 10, 2))  # Range(start=0, stop=8, step=2)
-        _convert_range_to_model(range(10, 0, 2))  # [] (wrong step direction)
+        _convert_range_to_model(range(10, 0, 2))  # ValueError (wrong step direction)
         _convert_range_to_model(range(5, 6))      # [5] (single element)
     """
     # Only process Python range objects
@@ -812,9 +861,13 @@ def _convert_range_to_model(iterable: Any) -> Range | list[Any] | Any:
     # Convert to list to get actual elements
     range_list = list(iterable)
 
-    # Handle empty range (wrong step direction or step too large)
+    # An empty range (wrong step direction, or step larger than the span) would build
+    # a loop body that can never execute. Say so rather than emitting it silently.
     if len(range_list) == 0:
-        return []
+        raise ValueError(
+            f"{iterable!r} is empty, so the loop body would never execute. "
+            "Check the sign of the step and the order of start/stop."
+        )
 
     # Handle single-element range
     if len(range_list) == 1:
@@ -847,7 +900,7 @@ def for_(
 @contextmanager
 def for_(
     var: list[VariableRefLike],
-    items: list[Iterable[Any] | Range | LinSpace],
+    items: list[Iterable[Any] | Range | LinSpace] | Iterable[Any] | Range | LinSpace,
     **schedule_params: Unpack[ScheduleParams],
 ) -> Iterator[Iteration | SchedIteration]: ...
 
@@ -868,10 +921,13 @@ def for_(
     :param var: Variable reference(s) for the loop variable(s).
         Can be a single variable or list of variables for zipped iteration.
     :param items: Iterable(s) to iterate over.
+
         - For single iteration: Range, LinSpace, or any iterable
-        - For zipped iteration: list of iterables (same length as var list)
+        - For zipped iteration: list of iterables, one per variable. A single iterable
+          is broadcast across all of the variables.
+
     :param schedule_params:
-        Additional scheduling parameters (name, ref_op, ref_pt, etc.) - only used in schedule context
+        Additional scheduling parameters (op_name, ref_op, ref_pt, etc.) - only used in schedule context
 
     :yield: The iteration being built
 
@@ -922,10 +978,17 @@ def for_(
     if isinstance(validated_vars, list):
         # Multiple variables - items must be a list of iterables (zipped iteration)
         if not isinstance(items, list):
-            # Single iterable provided for multiple variables - wrap in list
-            # This allows for_(["i", "j"], range(10)) to iterate same range for both
-            validated_items = [_convert_range_to_model(items)]
+            # A single iterable provided for multiple variables is broadcast, so that
+            # for_(["i", "j"], range(10)) iterates the same range for both. Wrapping it
+            # in a one-element list instead would fail the model's length check.
+            validated_items = [_convert_range_to_model(items)] * len(validated_vars)
         else:
+            if len(items) != len(validated_vars):
+                names = [ref.var for ref in cast("list[VariableRef]", validated_vars)]
+                raise ValueError(
+                    f"Zipped iteration needs one iterable per variable: got {len(names)} "
+                    f"variable(s) {names} but {len(items)} iterable(s)."
+                )
             # Convert any range objects in the list
             validated_items = [_convert_range_to_model(item) for item in items]
     else:
@@ -933,37 +996,30 @@ def for_(
         validated_items = _convert_range_to_model(items)
 
     parent = _current_context("for_()")
-    body = OpSequence(items=[])
-    iter_obj = Iteration(var=validated_vars, items=validated_items, body=body)
 
-    state = _get_state()
-    if isinstance(parent, OpSequence):
-        _reject_schedule_params(schedule_params, "for_")
-        parent.items.append(iter_obj)
-    elif isinstance(parent, Repetition | Iteration | Conditional):
-        _reject_schedule_params(schedule_params, "for_")
-        parent.body.items.append(iter_obj)
-    elif isinstance(parent, Schedule | SchedRepetition | SchedIteration | SchedConditional):
+    if _in_schedule(parent):
         # For schedules, we need SchedIteration not Iteration
         sched_iter = SchedIteration(var=validated_vars, items=validated_items, body=Schedule(items=[]))
         _add_to_schedule(parent, sched_iter, **schedule_params)
-        state.context_stack.append(sched_iter)
+        _push_context(sched_iter)
         try:
             yield sched_iter  # type: ignore[misc]
         finally:
-            state.context_stack.pop()
-            _cleanup_context_variables(sched_iter)
+            _pop_context()
         return
-    else:
+
+    if not _in_sequence(parent):
         msg = f"for_() cannot be used in context of type {type(parent).__name__}"
         raise RuntimeError(msg)
 
-    state.context_stack.append(iter_obj)
+    _reject_schedule_params(schedule_params, "for_")
+    iter_obj = Iteration(var=validated_vars, items=validated_items, body=OpSequence(items=[]))
+    _add_to_sequence(parent, iter_obj)
+    _push_context(iter_obj)
     try:
         yield iter_obj
     finally:
-        state.context_stack.pop()
-        _cleanup_context_variables(iter_obj)
+        _pop_context()
 
 
 @contextmanager
@@ -972,7 +1028,7 @@ def if_(var: VariableRefLike, **schedule_params: Unpack[ScheduleParams]) -> Iter
 
     :param var: Variable reference for the condition
     :param schedule_params:
-        Additional scheduling parameters (name, ref_op, ref_pt, etc.) - only used in schedule context
+        Additional scheduling parameters (op_name, ref_op, ref_pt, etc.) - only used in schedule context
 
     :yield: The conditional being built
 
@@ -1001,37 +1057,30 @@ def if_(var: VariableRefLike, **schedule_params: Unpack[ScheduleParams]) -> Iter
     validated_var = _validate_variable_ref(var)
 
     parent = _current_context("if_()")
-    body = OpSequence(items=[])
-    cond = Conditional(var=validated_var, body=body)
 
-    state = _get_state()
-    if isinstance(parent, OpSequence):
-        _reject_schedule_params(schedule_params, "if_")
-        parent.items.append(cond)
-    elif isinstance(parent, Repetition | Iteration | Conditional):
-        _reject_schedule_params(schedule_params, "if_")
-        parent.body.items.append(cond)
-    elif isinstance(parent, Schedule | SchedRepetition | SchedIteration | SchedConditional):
+    if _in_schedule(parent):
         # For schedules, we need SchedConditional not Conditional
         sched_cond = SchedConditional(var=validated_var, body=Schedule(items=[]))
         _add_to_schedule(parent, sched_cond, **schedule_params)
-        state.context_stack.append(sched_cond)
+        _push_context(sched_cond)
         try:
             yield sched_cond  # type: ignore[misc]
         finally:
-            state.context_stack.pop()
-            _cleanup_context_variables(sched_cond)
+            _pop_context()
         return
-    else:
+
+    if not _in_sequence(parent):
         msg = f"if_() cannot be used in context of type {type(parent).__name__}"
         raise RuntimeError(msg)
 
-    state.context_stack.append(cond)
+    _reject_schedule_params(schedule_params, "if_")
+    cond = Conditional(var=validated_var, body=OpSequence(items=[]))
+    _add_to_sequence(parent, cond)
+    _push_context(cond)
     try:
         yield cond
     finally:
-        state.context_stack.pop()
-        _cleanup_context_variables(cond)
+        _pop_context()
 
 
 # ============================================================================
@@ -1166,14 +1215,16 @@ def external_pulse(
     duration = _validate_or_pass_through(duration, param_name="duration", context="external_pulse()")
     amplitude = _validate_or_pass_through(amplitude, param_name="amplitude", context="external_pulse()")
 
-    # Validate top-level params dict values (if params provided)
+    # Validate top-level params dict values (if params provided).
+    #
+    # Unlike the typed scalar parameters above, params carries arbitrary values for
+    # the external function, so a bare identifier-like string is far more likely to
+    # be a literal ("hann", "cubic", "gaussian") than a variable name. Only explicit
+    # variable references are validated here; everything else passes through.
     if params is not None:
-        validated_params = {}
-        for key, value in params.items():
-            validated_params[key] = _validate_or_pass_through(
-                value, param_name=f"params['{key}']", context="external_pulse()"
-            )
-        params = validated_params
+        params = {
+            key: _validate_explicit_variable_ref(value, param_name=f"params['{key}']") for key, value in params.items()
+        }
 
     return ExternalPulse(
         function=function,
@@ -1429,7 +1480,7 @@ def var_decl(
     _register_variable(name)
 
     context = _current_context("var_decl()")
-    if isinstance(context, Schedule | SchedRepetition | SchedIteration | SchedConditional):
+    if _in_schedule(context):
         return _add_to_schedule(context, var_decl_obj, **kwargs)
     else:
         _add_to_sequence(context, var_decl_obj, kwargs, "var_decl")
@@ -1481,7 +1532,7 @@ def pulse_decl(
     pulse_decl_obj = PulseDecl(name=name, pulse=pulse)
 
     context = _current_context("pulse_decl()")
-    if isinstance(context, Schedule | SchedRepetition | SchedIteration | SchedConditional):
+    if _in_schedule(context):
         return _add_to_schedule(context, pulse_decl_obj, **kwargs)
     else:
         _add_to_sequence(context, pulse_decl_obj, kwargs, "pulse_decl")
@@ -1516,16 +1567,18 @@ class ScheduleBlock:
         # We'll use this to provide helpful error messages if the block is not consumed
         self._creation_traceback = traceback.format_stack()[:-1]  # Exclude this __init__ frame
 
-        # Register this block with the current context
-        state = _get_state()
-        context = _current_context()
-        state.unconsumed_blocks[id(context)].append(self)
+        # Register this block against the innermost context, so that closing that
+        # context can report it if it was never passed to add_block()
+        _current_context("@nested_schedule function call")
+        _get_state().unconsumed_blocks[-1].append(self)
 
     def _execute(self) -> None:
         """Execute the block's function and mark as consumed."""
-        # Remove from unconsumed list (find the context this belongs to)
+        # Mark as consumed. The block was registered against whichever context was
+        # innermost when it was created, which is the caller's frame rather than the
+        # sub-schedule add_block() has since opened, so search outwards.
         state = _get_state()
-        for blocks in state.unconsumed_blocks.values():
+        for blocks in reversed(state.unconsumed_blocks):
             if self in blocks:
                 blocks.remove(self)
                 break
@@ -1539,16 +1592,20 @@ class ScheduleBlock:
         return "".join(self._creation_traceback)
 
 
-def add_block(block: ScheduleBlock, **schedule_params: Unpack[ScheduleParams]) -> OperationToken | None:
+def add_block(block: ScheduleBlock, **schedule_params: Unpack[ScheduleParams]) -> OperationToken:
     """Add a schedule block to the current schedule with timing parameters.
 
     This function must be used with @nested_schedule decorated functions to
     add them to a schedule with positioning parameters.
 
     :param block: The ScheduleBlock returned by calling a @nested_schedule decorated function
-    :param schedule_params: Schedule timing parameters (name, ref_op, ref_pt, ref_pt_new, rel_time)
+    :param schedule_params: Schedule timing parameters
+        (``op_name``, ``ref_op``, ``ref_pt``, ``ref_pt_new``, ``rel_time``)
 
     :return: Operation token for referencing this block
+
+    :raises TypeError: If ``block`` is not a :class:`ScheduleBlock`
+    :raises RuntimeError: If not called within a schedule context
 
     Examples
 
@@ -1562,29 +1619,21 @@ def add_block(block: ScheduleBlock, **schedule_params: Unpack[ScheduleParams]) -
 
         with build_schedule():
             # Call the function to create a block, then add it with timing
-            token = add_block(init_block("qubit0"), name="init")
+            token = add_block(init_block("qubit0"), op_name="init")
             add_block(init_block("qubit1"), ref_op=token, ref_pt="end", rel_time="50ns")
     """
     if not isinstance(block, ScheduleBlock):
         raise TypeError("add_block() requires a ScheduleBlock from @nested_schedule decorated function")
 
-    context = _current_context()
-    if not isinstance(context, Schedule):
+    context = _current_context("add_block()")
+    if not _in_schedule(context):
         raise RuntimeError("add_block() can only be used within a build_schedule() context")
 
-    # Record the number of items before
-    items_before = len(context.items)
-
-    # Execute the block within a sub_schedule
-    with sub_schedule(**schedule_params) as _:  # type: ignore[arg-type]
+    # Execute the block within a sub-schedule carrying the timing parameters
+    with _sub_schedule_with_token(**schedule_params) as (_, token):
         block._execute()
 
-    # Get the token from the newly added scheduled operation
-    if len(context.items) > items_before:
-        last_sched_op = context.items[-1]
-        if last_sched_op.name:
-            return OperationToken(last_sched_op.name, last_sched_op)
-    return None
+    return token
 
 
 def nested_sequence[R, **P](func: Callable[P, R]) -> Callable[P, R]:
@@ -1617,7 +1666,7 @@ def nested_sequence[R, **P](func: Callable[P, R]) -> Callable[P, R]:
         def measurement_block(drive_ch: str, readout_ch: str, result_var: str):
             '''Perform readout measurement.'''
             play(drive_ch, square_pulse(duration="1us", amplitude="50mV"))
-            record(readout_ch, var=result_var, duration="1us")
+            record(readout_ch, result_var, duration="1us", integration=full_integration())
 
         # Use in sequence context - automatically creates sub_sequence
         with build_sequence():
@@ -1632,15 +1681,15 @@ def nested_sequence[R, **P](func: Callable[P, R]) -> Callable[P, R]:
         # Check if we're in a context
         state = _get_state()
         if state.context_stack:
-            context = _current_context()
+            context = _current_context(f"@nested_sequence function {func.__name__}()")
 
             # In sequence context (OpSequence or control flow)
-            if isinstance(context, OpSequence | Repetition | Iteration | Conditional):
+            if _in_sequence(context):
                 # Use sub_sequence context
                 with sub_sequence() as _:
                     return func(*args, **kwargs)  # type: ignore[return-value]
             # In schedule context - not supported, raise error
-            elif isinstance(context, Schedule):
+            elif _in_schedule(context):
                 raise RuntimeError(
                     "@nested_sequence decorator cannot be used in schedule context. "
                     "Use @nested_schedule decorator instead for functions that need schedule timing parameters."
@@ -1682,14 +1731,14 @@ def nested_schedule[**P](func: Callable[P, Any]) -> Callable[P, ScheduleBlock]:
         def measurement_block(drive_ch: str, readout_ch: str, result_var: str):
             '''Perform readout measurement.'''
             play(drive_ch, square_pulse(duration="1us", amplitude="50mV"))
-            record(readout_ch, var=result_var, duration="1us")
+            record(readout_ch, result_var, duration="1us", integration=full_integration())
 
         # Use in schedule context - pass block to add_block with schedule parameters
         with build_schedule():
             var_decl("result", "complex", unit="mV")
 
             # Create block and add with timing parameters
-            init_token = add_block(initialization("qubit0"), name="init")
+            init_token = add_block(initialization("qubit0"), op_name="init")
 
             # Position second block relative to first
             add_block(
@@ -1757,7 +1806,7 @@ def play(
     op = Play(channel=channel, pulse=pulse, scale_amp=scale_amp, cond=cond)
 
     context = _current_context("play()")
-    if isinstance(context, Schedule | SchedRepetition | SchedIteration | SchedConditional):
+    if _in_schedule(context):
         return _add_to_schedule(context, op, **schedule_params)
     else:
         _add_to_sequence(context, op, schedule_params, "play")
@@ -1804,7 +1853,7 @@ def wait(
     context = _current_context("wait()")
 
     # Validate multi-channel wait in schedules
-    if isinstance(context, Schedule | SchedRepetition | SchedIteration | SchedConditional) and len(channels) > 1:
+    if _in_schedule(context) and len(channels) > 1:
         raise RuntimeError(
             f"Wait with multiple channels ({len(channels)} channels) is not allowed "
             "in schedule context. Multi-channel wait has complex semantics in schedules "
@@ -1816,7 +1865,7 @@ def wait(
 
     op = Wait(*channels, duration=duration)  # type: ignore[arg-type]
 
-    if isinstance(context, Schedule | SchedRepetition | SchedIteration | SchedConditional):
+    if _in_schedule(context):
         return _add_to_schedule(context, op, **schedule_params)
     else:
         _add_to_sequence(context, op, schedule_params, "wait")
@@ -1858,7 +1907,7 @@ def barrier(
     op = Barrier(*channels)
 
     context = _current_context("barrier()")
-    if isinstance(context, Schedule):
+    if _in_schedule(context):
         raise RuntimeError(
             "Barrier operations are not supported in schedule contexts. "
             "Schedules use explicit timing, making barriers unnecessary. "
@@ -1896,7 +1945,7 @@ def set_frequency(
     op = SetFrequency(channel=channel, frequency=frequency)
 
     context = _current_context("set_frequency()")
-    if isinstance(context, Schedule):
+    if _in_schedule(context):
         return _add_to_schedule(context, op, **schedule_params)
     else:
         _add_to_sequence(context, op, schedule_params, "set_frequency")
@@ -1930,11 +1979,11 @@ def shift_frequency(
 
     op = ShiftFrequency(channel=channel, frequency=frequency)
 
-    context = _current_context()
-    if isinstance(context, Schedule):
+    context = _current_context("shift_frequency()")
+    if _in_schedule(context):
         return _add_to_schedule(context, op, **schedule_params)
     else:
-        _add_to_sequence(context, op, schedule_params, "set_frequency")
+        _add_to_sequence(context, op, schedule_params, "shift_frequency")
         return None
 
 
@@ -1965,11 +2014,11 @@ def set_phase(
 
     op = SetPhase(channel=channel, phase=phase)
 
-    context = _current_context()
-    if isinstance(context, Schedule):
+    context = _current_context("set_phase()")
+    if _in_schedule(context):
         return _add_to_schedule(context, op, **schedule_params)
     else:
-        _add_to_sequence(context, op, schedule_params, "set_frequency")
+        _add_to_sequence(context, op, schedule_params, "set_phase")
         return None
 
 
@@ -2000,11 +2049,11 @@ def shift_phase(
 
     op = ShiftPhase(channel=channel, phase=phase)
 
-    context = _current_context()
-    if isinstance(context, Schedule):
+    context = _current_context("shift_phase()")
+    if _in_schedule(context):
         return _add_to_schedule(context, op, **schedule_params)
     else:
-        _add_to_sequence(context, op, schedule_params, "set_frequency")
+        _add_to_sequence(context, op, schedule_params, "shift_phase")
         return None
 
 
@@ -2052,11 +2101,11 @@ def record(
 
     op = Record(channel=channel, var=validated_var, duration=duration, integration=integration)  # type: ignore[arg-type]
 
-    context = _current_context()
-    if isinstance(context, Schedule):
+    context = _current_context("record()")
+    if _in_schedule(context):
         return _add_to_schedule(context, op, **schedule_params)
     else:
-        _add_to_sequence(context, op, schedule_params, "set_frequency")
+        _add_to_sequence(context, op, schedule_params, "record")
         return None
 
 
@@ -2113,11 +2162,11 @@ def discriminate(
         project=project,  # type: ignore[arg-type]
     )
 
-    context = _current_context()
-    if isinstance(context, Schedule):
+    context = _current_context("discriminate()")
+    if _in_schedule(context):
         return _add_to_schedule(context, op, **schedule_params)
     else:
-        _add_to_sequence(context, op, schedule_params, "set_frequency")
+        _add_to_sequence(context, op, schedule_params, "discriminate")
         return None
 
 
@@ -2162,8 +2211,9 @@ def store(
             var_decl("i", "int")
             var_decl("m", "complex", unit="mV")
 
-            with repeat(range(100)):
-                measure("drive", result_var="m", duration="1us", amplitude="50mV")
+            with repeat(100):
+                measure("drive", result_var="m", duration="1us", amplitude="50mV",
+                        integration=full_integration())
                 store("avg_result", "m", mode="average")
     """
     # Validate variable reference
@@ -2171,11 +2221,11 @@ def store(
 
     op = Store(key=key, source=validated_source, mode=mode)  # type: ignore[arg-type]
 
-    context = _current_context()
-    if isinstance(context, Schedule):
+    context = _current_context("store()")
+    if _in_schedule(context):
         return _add_to_schedule(context, op, **schedule_params)
     else:
-        _add_to_sequence(context, op, schedule_params, "set_frequency")
+        _add_to_sequence(context, op, schedule_params, "store")
         return None
 
 
@@ -2201,9 +2251,17 @@ def measure(
     :param integration: Integration configuration (use :func:`full_integration` or :func:`demod_integration`)
     :param schedule_params: Additional scheduling parameters (for schedules)
 
-    :return: Operation token if in schedule context, :obj:`None` if in sequence context
+    :return: Token for the emitted play operation if in a schedule context,
+        :obj:`None` if in a sequence context
 
     :raises RuntimeError: If schedule parameters are provided in a sequence context
+
+    .. note::
+
+        In a schedule this emits two operations: a play carrying ``op_name`` (or a
+        generated name), and a record named ``"<that name>_record"`` anchored to the
+        play's start. The returned token refers to the play; since both share a start
+        and a duration, referencing either gives the same timing.
 
     Examples
 
@@ -2226,10 +2284,10 @@ def measure(
                     duration="1us", amplitude="50mV",
                     integration=demod_integration(phase="0deg"))
     """
-    context = _current_context()
+    context = _current_context("measure()")
 
     # Check if schedule params provided in sequence context
-    if isinstance(context, OpSequence | Repetition | Iteration | Conditional):
+    if _in_sequence(context):
         _reject_schedule_params(schedule_params, "measure")
 
     # Parse channel parameter
@@ -2241,25 +2299,34 @@ def measure(
     # Create measurement pulse
     meas_pulse = square_pulse(duration=duration, amplitude=amplitude)
 
-    if isinstance(context, Schedule | SchedRepetition | SchedIteration | SchedConditional):
-        # In schedule: create both operations with same timing
+    if _in_schedule(context):
+        # In schedule: the play carries the caller's timing parameters...
         play_token = play(drive_channel, meas_pulse, **schedule_params)
+        assert play_token is not None  # guaranteed in a schedule context
 
-        # Record starts at the same time as play
-        record_params = schedule_params.copy()
-        if play_token:
-            record_params["ref_op"] = play_token.name
-            record_params["ref_pt"] = "start"
-            record_params["ref_pt_new"] = "start"
-            record_params["rel_time"] = 0
+        # ...and the record is anchored to the play's start, so it needs none of
+        # them. Reusing the caller's op_name here would give both operations the
+        # same name and make ref_op="<that name>" ambiguous, so derive a distinct one.
+        record_params: ScheduleParams = {
+            "op_name": f"{play_token.name}_record",
+            "ref_op": play_token.name,
+            "ref_pt": "start",
+            "ref_pt_new": "start",
+            "rel_time": 0,
+        }
 
-        return record(
+        record(
             readout_channel,
             result_var,
             duration=duration,
             integration=integration,
             **record_params,
         )
+
+        # Return the play's token: it carries the name the caller asked for, and the
+        # two operations share a start and a duration, so every reference point of
+        # the pair coincides.
+        return play_token
     else:
         # In sequence: add operations sequentially
         # Note: In a true measurement, play and record should be simultaneous

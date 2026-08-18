@@ -6,18 +6,20 @@ including operation tokens, schedule parameters, and resolution functions.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import TYPE_CHECKING, Any, Final, TypedDict
 
 if TYPE_CHECKING:
     from ..models.schedule import RefPtLike, RelTimeLike, ScheduledOperation
 
-__all__ = ("OperationToken", "ScheduleParams", "resolve_schedule_params")
+__all__ = ("SCHEDULE_PARAM_NAMES", "OperationToken", "ScheduleParams", "resolve_schedule_params")
 
 
 class ScheduleParams(TypedDict, total=False):
     """Type definition for schedule parameters used in builder operations.
 
-    :param op_name: Optional name for the operation
+    :param op_name: Optional name for the operation. Spelled ``op_name`` rather than
+        ``name`` because :func:`~eq1_pulse.builder.var_decl` and
+        :func:`~eq1_pulse.builder.pulse_decl` already take a ``name`` of their own.
     :param rel_time: Relative time from the reference point
     :param ref_op: Name of or token for the reference operation
     :param ref_pt: Reference point on the reference operation
@@ -29,6 +31,10 @@ class ScheduleParams(TypedDict, total=False):
     ref_op: str | OperationToken | None
     ref_pt: RefPtLike | None
     ref_pt_new: RefPtLike | None
+
+
+SCHEDULE_PARAM_NAMES: Final[frozenset[str]] = frozenset(ScheduleParams.__annotations__)
+"""The parameter names accepted wherever ``**schedule_params`` appears."""
 
 
 class OperationToken:
@@ -59,6 +65,8 @@ def resolve_schedule_params(params: ScheduleParams) -> dict[str, Any]:
 
     :return: Resolved parameters with tokens replaced by operation names
 
+    :raises TypeError: If an unrecognised parameter name is passed
+
     Examples
 
     .. code-block:: python
@@ -77,6 +85,15 @@ def resolve_schedule_params(params: ScheduleParams) -> dict[str, Any]:
         # resolved["ref_op"] remains "op_1"
     """
     resolved: dict[str, Any] = dict(params)
+
+    # Reject anything that is not a schedule parameter, rather than silently dropping
+    # it further down. "name" gets its own message: it is what ScheduledOperation calls
+    # the field, so it is the natural thing to reach for.
+    if unknown := set(resolved) - SCHEDULE_PARAM_NAMES:
+        if "name" in unknown:
+            raise TypeError("Use 'op_name' to name a scheduled operation, not 'name'.")
+        known = ", ".join(sorted(SCHEDULE_PARAM_NAMES))
+        raise TypeError(f"Unknown schedule parameter(s): {', '.join(sorted(unknown))}. Expected one of: {known}.")
 
     # Resolve operation token to name
     if "ref_op" in resolved and isinstance(resolved["ref_op"], OperationToken):

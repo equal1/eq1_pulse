@@ -126,7 +126,7 @@ class TestBuildSequence:
 
     def test_sub_sequence_outside_sequence_raises_error(self):
         """Test that sub_sequence outside a sequence context raises error."""
-        with pytest.raises(RuntimeError, match="can only be used within a build_sequence"):
+        with pytest.raises(RuntimeError, match="sub_sequence"):
             with sub_sequence():
                 play("ch1", square_pulse(duration="10us", amplitude="100mV"))
 
@@ -248,7 +248,7 @@ class TestBuildSchedule:
 
     def test_sub_schedule_outside_schedule_raises_error(self):
         """Test that sub_schedule outside a schedule context raises error."""
-        with pytest.raises(RuntimeError, match="can only be used within a build_schedule"):
+        with pytest.raises(RuntimeError, match="sub_schedule"):
             with sub_schedule(op_name="invalid"):
                 play("ch1", square_pulse(duration="10us", amplitude="100mV"))
 

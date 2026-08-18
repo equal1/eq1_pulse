@@ -23,11 +23,13 @@ repos:
       - id: ruff-format
         args: ["--line-length", "120"]
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: "v1.16.0"
+    rev: "v2.3.1"
     hooks:
       - id: mypy
         additional_dependencies:
-          [pydantic, numpy, qcodes==0.52.0, types-requests, types-toml,
+          [pydantic, numpy, pytest,
+          #qcodes==0.52.0,
+          types-requests, types-toml,
           # types-networkx
           rustworkx,
           ]

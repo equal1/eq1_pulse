@@ -378,8 +378,8 @@ class TestVariableReferencesInBuilderFunctions:
             assert pulse.amplitude.var == "amp"
 
     def test_external_pulse_with_variable_in_params(self):
-        """Test external_pulse with variable in params dict (top-level only)."""
-        from eq1_pulse.builder import external_pulse
+        """Test external_pulse binds explicit variable references in its params dict."""
+        from eq1_pulse.builder import external_pulse, var
 
         with build_sequence():
             var_decl("phase_val", "float")
@@ -388,13 +388,27 @@ class TestVariableReferencesInBuilderFunctions:
                 function="my_lib.pulse_func",
                 duration="10us",
                 amplitude="100mV",
-                params={"phase": "phase_val", "beta": 0.5},
+                params={"phase": var("phase_val"), "beta": 0.5},
             )
 
             assert isinstance(pulse.params, dict)
             assert isinstance(pulse.params["phase"], VariableRef)
             assert pulse.params["phase"].var == "phase_val"
             assert pulse.params["beta"] == 0.5
+
+    def test_external_pulse_params_keep_identifier_like_literals(self):
+        """Test that plain strings in params stay literals, even when identifier-shaped."""
+        from eq1_pulse.builder import external_pulse
+
+        with build_sequence():
+            pulse = external_pulse(
+                function="my_lib.pulse_func",
+                duration="10us",
+                amplitude="100mV",
+                params={"window": "hann", "interpolation": "cubic"},
+            )
+
+            assert pulse.params == {"window": "hann", "interpolation": "cubic"}
 
     def test_arbitrary_pulse_with_variable_params(self):
         """Test arbitrary_pulse accepts variables for duration and amplitude (not samples)."""

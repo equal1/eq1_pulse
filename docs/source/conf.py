@@ -67,7 +67,7 @@ extensions = [
 # Generate plots in SVG (300 DPI) for HTML and PDF for LaTeX
 plot_formats = [("svg", 300), ("pdf", 300)]
 
-# Show only SVG in HTML output (True to show all formats)
+# Offer every generated format (SVG and PDF) as download links under each figure
 plot_html_show_formats = True
 
 # Show link to source code

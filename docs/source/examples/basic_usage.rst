@@ -393,7 +393,8 @@ Measure and classify the result into a binary state:
             "qubit",
             result_var="raw_result",
             duration="1us",
-            amplitude="30mV"
+            amplitude="30mV",
+            integration=demod_integration()
         )
 
         # Discriminate
@@ -416,7 +417,8 @@ Execute operations based on a measurement outcome:
         var_decl("result", "complex", unit="mV")
 
         # Measure
-        measure("qubit", result_var="result", duration="1us", amplitude="50mV")
+        measure("qubit", result_var="result", duration="1us", amplitude="50mV",
+                integration=demod_integration())
 
         # Apply correction if result indicates excited state
         with if_("result"):
@@ -434,7 +436,8 @@ With else clause:
             "qubit",
             result_var="raw",
             duration="1us",
-            amplitude="30mV"
+            amplitude="30mV",
+            integration=demod_integration()
         )
 
         discriminate(
@@ -466,7 +469,8 @@ Store measurement results to a named stream:
 
         with for_("i", sweep):
             play("qubit", square_pulse(duration="100ns", amplitude=var("i")))
-            measure("qubit", result_var="result", duration="1us", amplitude="30mV")
+            measure("qubit", result_var="result", duration="1us", amplitude="30mV",
+                    integration=demod_integration())
 
             # Store to stream (averaged across repetitions)
             store("sweep_data", "result", mode="average")
@@ -527,7 +531,10 @@ Constant amplitude:
 
 .. code-block:: python
 
-    pulse = square_pulse(duration="100ns", amplitude="50mV", phase="0deg")
+    pulse = square_pulse(duration="100ns", amplitude="50mV")
+
+    # Phase is carried by the complex amplitude, not a separate parameter:
+    pulse = square_pulse(duration="100ns", amplitude=phase(deg=90) @ "50mV")
 
 External Pulse
 ~~~~~~~~~~~~~~
@@ -542,10 +549,9 @@ For pulse shapes not defined internally (e.g., Gaussian envelopes or DRAG pulses
         duration="200ns",
         amplitude="50mV",
         params={
-            "sigma": "40ns"  # Width parameter
+            "sigma": "40ns",      # Width parameter
+            "frequency": "5.2GHz",
         },
-        frequency="5.2GHz",
-        phase="0deg"
     )
 
 .. code-block:: python
@@ -555,9 +561,11 @@ For pulse shapes not defined internally (e.g., Gaussian envelopes or DRAG pulses
         function="pulse_library.drag_pulse",
         duration="200ns",
         amplitude="50mV",
-        sigma="40ns",
-        beta=0.5,  # DRAG parameter
-        frequency="5.2GHz"
+        params={
+            "sigma": "40ns",
+            "beta": 0.5,          # DRAG parameter
+            "frequency": "5.2GHz",
+        },
     )
 
 .. note::

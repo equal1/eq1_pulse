@@ -74,14 +74,33 @@ class WrappedValueModel(NoExtrasModel):
     def __init__(self, *args, **kwargs):
         """Initialize the WrappedValueModel.
 
-        Accepts either a single positional argument representing the value
-        or keyword arguments corresponding to the model fields.
+        Accepts either keyword arguments corresponding to the model fields, or the
+        literal ``0`` as a single positional argument (e.g. ``Duration(0)``).
+
+        A single positional argument is deliberately *not* accepted for any other
+        value: with no unit attached, ``Duration(5)`` reads as "5" but silently means
+        5 seconds, and ``Amplitude(1)`` silently means 1 Volt. 0 is exempt because it
+        is the one value that means the same thing in every unit.
+
+        :raises TypeError: If more than one positional argument is given, or a
+            positional argument is combined with keyword arguments
+        :raises ValueError: If the single positional argument is not the literal ``0``
         """
-        if args and len(args) == 1 and not kwargs:
+        if args:
+            if len(args) != 1:
+                raise TypeError(f"expected at most 1 positional argument, got {len(args)}")
+            if kwargs:
+                raise TypeError("cannot combine a positional argument with keyword arguments")
+            if args[0] != 0:
+                raise ValueError(
+                    f"{args[0]!r} is not a valid positional argument for {self.__class__.__name__}(); "
+                    f"only the literal 0 is accepted positionally. Use a keyword argument instead, "
+                    f"e.g. {self.__class__.__name__}({get_unit_of_zero(self.__class__)}={args[0]!r})."
+                )
             super().__init__(**{get_unit_of_zero(self.__class__): args[0]})
             return
 
-        super().__init__(*args, **kwargs)
+        super().__init__(**kwargs)
 
     @classmethod
     def model_json_schema(

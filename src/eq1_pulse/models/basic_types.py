@@ -14,6 +14,7 @@ or Duration instead of Time.
 from __future__ import annotations
 
 import cmath
+import operator
 from collections.abc import Callable, Iterable
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, Self, TypedDict, TypeGuard, overload
@@ -210,6 +211,33 @@ def _get_raw_value_attribute(type1: type) -> str | None:
     return type_comp.raw if type_comp.raw is not None else type_comp.unit
 
 
+def _comparable_hash(self: ComparableWrappedValueOrZeroModel) -> int:
+    """Hash on the normalized magnitude, so that equal values hash equally.
+
+    :meth:`ComparableWrappedValueOrZeroModel.__eq__` compares across units and across
+    registered compatible types, so hashing the stored field (as pydantic's generated
+    model hash does) would break the ``a == b implies hash(a) == hash(b)`` invariant
+    and silently corrupt any use of these types in a :class:`set` or as a
+    :class:`dict` key.
+
+    The type is deliberately not part of the hash: equality holds across the whole
+    registered compatibility group, so every member of it must hash alike. Python's
+    numeric hash is already consistent across :class:`int`, :class:`float` and
+    :class:`complex`, so no further normalization is needed.
+
+    :param self: The value to hash
+
+    :return: Hash of the value expressed in its registered comparison unit
+    """
+    # The *comparison* unit, not the raw one: raw is the value in whichever unit it
+    # happens to be stored in (1 for both 1us and 1ns), which is only good enough for
+    # the zero checks it exists for. Equality normalizes, so the hash must too.
+    type_info = _find_registered_equality_comparison_type_info(type(self))
+    if type_info is None:
+        return object.__hash__(self)
+    return hash(getattr(self.value, type_info.unit))
+
+
 class ComparableWrappedValueOrZeroModel(WrappedValueOrZeroModel):
     """A :class:`WrappedValueOrZeroModel` that supports comparison with zero literal and compatible types.
 
@@ -243,61 +271,70 @@ class ComparableWrappedValueOrZeroModel(WrappedValueOrZeroModel):
 
         return super().__eq__(value)
 
-    def __lt__(self, other: object) -> bool:
-        """Less-than comparison with another object, considering zero literal and compatible types."""
+    def __hash__(self) -> int:
+        """Hash consistently with :meth:`__eq__`; see :func:`_comparable_hash`."""
+        return _comparable_hash(self)
+
+    @classmethod
+    def __pydantic_init_subclass__(cls, **kwargs: Any) -> None:
+        """Re-apply :func:`_comparable_hash` to every subclass.
+
+        Pydantic generates a fresh field-based ``__hash__`` on each frozen model
+        class, which would shadow the inherited one. This hook runs after the class
+        is fully built, so assigning here wins.
+        """
+        super().__pydantic_init_subclass__(**kwargs)
+        cls.__hash__ = _comparable_hash  # type: ignore[assignment, method-assign]
+
+    def __compare(self, other: object, op: Callable[[Any, Any], bool]) -> bool | None:
+        """Apply an ordering operator against a compatible value or the zero literal.
+
+        :param other: The right-hand operand
+        :param op: The operator to apply to the two normalized magnitudes
+
+        :return: The result of ``op``, or :obj:`None` if ``other`` is not comparable
+        """
         if isinstance(other, WrappedValueOrZeroModel):
-            cls = type(self)
-            unit_of_comparison = _get_equality_comparison_unit(cls, type(other))
+            unit_of_comparison = _get_equality_comparison_unit(type(self), type(other))
             if unit_of_comparison is None:
-                return NotImplemented
-            return (  # type: ignore[no-any-return]
-                getattr(self.value, unit_of_comparison) < getattr(other.value, unit_of_comparison)
-            )
+                return None
+            return bool(op(getattr(self.value, unit_of_comparison), getattr(other.value, unit_of_comparison)))
 
         if isinstance(other, int | float | complex) and other == 0:
-            cls = type(self)
-            unit_of_zero = _get_raw_value_attribute(cls)
+            unit_of_zero = _get_raw_value_attribute(type(self))
             if unit_of_zero is None:
-                return NotImplemented
+                return None
+            return bool(op(getattr(self.value, unit_of_zero), 0))
 
-            return getattr(self.value, unit_of_zero) < 0  # type: ignore[no-any-return]
+        return None
 
-        return NotImplemented
+    def __lt__(self, other: object) -> bool:
+        """Less-than comparison with another object, considering zero literal and compatible types."""
+        result = self.__compare(other, operator.lt)
+        return NotImplemented if result is None else result
 
     def __le__(self, other: object) -> bool:
         """Less-than-or-equal comparison with another object, considering zero literal and compatible types."""
-        if isinstance(other, WrappedValueOrZeroModel):
-            cls = type(self)
-            unit_of_comparison = _get_equality_comparison_unit(cls, type(other))
-            if unit_of_comparison is None:
-                return NotImplemented
-            return (  # type: ignore[no-any-return]
-                getattr(self.value, unit_of_comparison) <= getattr(other.value, unit_of_comparison)
-            )
-
-        if isinstance(other, int | float | complex) and other == 0:
-            cls = type(self)
-            unit_of_zero = _get_raw_value_attribute(cls)
-            if unit_of_zero is None:
-                return NotImplemented
-
-            return getattr(self.value, unit_of_zero) <= 0  # type: ignore[no-any-return]
-
-        return NotImplemented
+        result = self.__compare(other, operator.le)
+        return NotImplemented if result is None else result
 
     def __gt__(self, other: object) -> bool:
-        """Greater-than comparison with another object, considering zero literal and compatible types."""
-        result = self.__le__(other)
-        if result is NotImplemented:
-            return NotImplemented
-        return not result
+        """Greater-than comparison with another object, considering zero literal and compatible types.
+
+        Evaluated directly rather than as ``not self <= other``: negating the
+        complementary operator reports ``True`` for both directions when either
+        operand is NaN.
+        """
+        result = self.__compare(other, operator.gt)
+        return NotImplemented if result is None else result
 
     def __ge__(self, other: object) -> bool:
-        """Greater-than-or-equal comparison with another object, considering zero literal and compatible types."""
-        result = self.__lt__(other)
-        if result is NotImplemented:
-            return NotImplemented
-        return not result
+        """Greater-than-or-equal comparison with another object, considering zero literal and compatible types.
+
+        Evaluated directly rather than as ``not self < other``; see :meth:`__gt__`.
+        """
+        result = self.__compare(other, operator.ge)
+        return NotImplemented if result is None else result
 
     def __bool__(self) -> bool:
         """Return True if the wrapped value is non-zero, based on the registered raw value attribute."""
@@ -408,9 +445,15 @@ class Phase(Angle):
         def __init__(self, /, *args, **data): ...
 
     @staticmethod
-    def __as_amplitude(other: Voltage | ComplexVoltageLike) -> Amplitude:
+    def __as_amplitude(other: object) -> Amplitude | None:
+        """Coerce an operand to an :class:`Amplitude`, or :obj:`None` if it is not one.
+
+        :param other: The operand to coerce
+
+        :return: The operand as an :class:`Amplitude`, or :obj:`None` if incompatible
+        """
         if isinstance(other, str) or other == 0 or isinstance(other, dict):
-            return Amplitude.model_validate(other)  # type: ignore
+            return Amplitude.model_validate(other)  # type: ignore[arg-type]
         if isinstance(other, Amplitude):
             return other
         if isinstance(other, ComplexVoltage):
@@ -418,16 +461,16 @@ class Phase(Angle):
         if isinstance(other, Voltage):
             return Amplitude.create_from(other)
 
-        return NotImplemented  # type: ignore
+        return None
 
     def __matmul__(self, other: Voltage | ComplexVoltageLike) -> Amplitude:
         """Matrix-multiply this Phase with magnitude or voltage.
 
         :return: The resulting complex amplitude after rotation.
         """
-        rhs: Amplitude = self.__as_amplitude(other)
-        if rhs is NotImplemented:
-            return rhs
+        rhs = self.__as_amplitude(other)
+        if rhs is None:
+            return NotImplemented
         return self.complex_rotation * rhs
 
     def __rmatmul__(self, other: Voltage | ComplexVoltageLike) -> Amplitude:
@@ -435,9 +478,9 @@ class Phase(Angle):
 
         :return: The resulting complex amplitude after rotation.
         """
-        lhs: Amplitude = self.__as_amplitude(other)
-        if lhs is NotImplemented:
-            return lhs
+        lhs = self.__as_amplitude(other)
+        if lhs is None:
+            return NotImplemented
         return lhs * self.complex_rotation
 
 

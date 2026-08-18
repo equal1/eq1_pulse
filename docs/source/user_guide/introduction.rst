@@ -54,7 +54,8 @@ A Pythonic context manager-based API for constructing pulse programs:
 
     with build_sequence() as seq:
         play("qubit", square_pulse(duration="100ns", amplitude="50mV"))
-        measure("qubit", result_var="result", duration="1us", amplitude="30mV")
+        measure("qubit", result_var="result", duration="1us", amplitude="30mV",
+                integration=full_integration())
 
 Installation
 ------------
