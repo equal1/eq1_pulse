@@ -85,7 +85,7 @@ type Schedulable = DiscriminableSchedulableOp | Schedule
 """A type representing a scheduled operation or a sub-schedule."""
 
 if TYPE_CHECKING:
-    type RelTimeLike = RelTime | Literal[0] | TimeDict
+    type RelTimeLike = RelTime | Literal[0] | TimeDict | str
     type RefPtLike = RefPt | Literal["start", "end", "center"]
 
     class OpScheduleDict(TypedDict, total=False):

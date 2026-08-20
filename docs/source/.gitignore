@@ -1,2 +1,6 @@
 /_autosummary/
 /autoapi/
+!/_static/*.svg
+!/_static/*.png
+!/_static/*.pdf
+!/_static/*.jpg

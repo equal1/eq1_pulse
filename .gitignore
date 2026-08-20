@@ -158,6 +158,7 @@ dmypy.json
 *.jpeg
 *.gif
 *.svg
+*.pdf
 
 # ignore all files in sandbox/
 sandbox/*

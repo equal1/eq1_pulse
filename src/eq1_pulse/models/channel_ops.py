@@ -145,16 +145,20 @@ class Wait(ChannelsOpBase):
 
     op_type: Literal["wait"] = "wait"
     """The type discriminator, always "wait"."""
-    duration: Duration
+    duration: Duration | VariableRef
     """The duration to wait."""
 
     if TYPE_CHECKING:
 
         @overload
-        def __init__(self, /, *, channels: list[ChannelRefLike], duration: Duration | dict[str, float], **data): ...
+        def __init__(
+            self, /, *, channels: list[ChannelRefLike], duration: Duration | dict[str, float] | VariableRef, **data
+        ): ...
 
         @overload
-        def __init__(self, /, *channels: ChannelRefLike, duration: Duration | dict[str, float], **data): ...
+        def __init__(
+            self, /, *channels: ChannelRefLike, duration: Duration | dict[str, float] | VariableRefLike, **data
+        ): ...
 
         def __init__(self, *args, **data): ...  # noqa: D107
 
@@ -226,7 +230,7 @@ class Record(ChannelOpBase):
     """The type discriminator, always "record"."""
     var: VariableRef
     """The variable to store the acquisition result."""
-    duration: Duration
+    duration: Duration | VariableRef
     """The duration of the acquisition."""
     integration: FullIntegration | DemodIntegration
     """The integration method to use."""
@@ -241,7 +245,7 @@ class Record(ChannelOpBase):
             channel: ChannelRefLike,
             *,
             var: VariableRefLike,
-            duration: Duration | dict[str, float],
+            duration: DurationLike | VariableRefLike,
             integration: FullIntegration | DemodIntegration = ...,
             time_of_flight: Duration | dict[str, float] | None = None,
             **data,
@@ -265,7 +269,7 @@ class Trace(ChannelOpBase):
     """The type discriminator, always "trace"."""
     var: VariableRef
     """The array variable to store the trace data."""
-    duration: Duration
+    duration: Duration | VariableRef
     """The total duration of the trace acquisition."""
     integration: FullIntegration | DemodIntegration | None = None
     """The integration method to use."""
@@ -280,7 +284,7 @@ class Trace(ChannelOpBase):
             channel: ChannelRefLike,
             *,
             var: VariableRef | str,
-            duration: Duration | dict[str, float],
+            duration: DurationLike | VariableRefLike,
             integration: FullIntegration | DemodIntegration = ...,
             time_of_flight: Duration | dict[str, float] | None = None,
             **data,
