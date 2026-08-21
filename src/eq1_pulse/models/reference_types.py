@@ -14,6 +14,7 @@ from pydantic import BaseModel, GetJsonSchemaHandler, model_serializer, model_va
 from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import CoreSchema, PydanticSerializationUnexpectedValue
 
+from .base_models import field_json_schemas
 from .identifier_str import ExternalSymbolStr, IdentifierStr
 
 __all__ = (
@@ -35,11 +36,10 @@ class Reference(BaseModel):
 
     Note:
         A descendant that keeps the wrapped object form instead must set :attr:`_serializes_bare`
-        to :obj:`False` *and* override both :meth:`_wrap_serializer` and
-        :meth:`__get_pydantic_json_schema__`;
-        see :class:`ExternalRef`. All three go together: the flag drives union dispatch, the
-        serializer produces the wire form, and the schema describes it. Declaring one without the
-        others is rejected when the class is created — see :meth:`__pydantic_init_subclass__`.
+        to :obj:`False` *and* override :meth:`_wrap_serializer` to produce that form; see
+        :class:`ExternalRef`. :meth:`__get_pydantic_json_schema__` already branches on
+        :attr:`_serializes_bare`, so it needs no override. Declaring the flag without the serializer
+        is rejected when the class is created — see :meth:`__pydantic_init_subclass__`.
 
     """
 
@@ -55,7 +55,8 @@ class Reference(BaseModel):
 
         :param kwargs: class keyword arguments, passed through to the base implementation.
         :raises TypeError: if the subclass does not define exactly one field, or if its
-            :attr:`_serializes_bare` declaration disagrees with the methods it overrides.
+            :attr:`_serializes_bare` declaration disagrees with whether it overrides
+            :meth:`_wrap_serializer`.
         """
         super().__pydantic_init_subclass__(**kwargs)
 
@@ -73,18 +74,12 @@ class Reference(BaseModel):
                     f"A union serializer would then offer values of other reference classes to it "
                     f"and accept the result; set _serializes_bare = False."
                 )
-        else:
-            missing = [
-                name
-                for name in ("_wrap_serializer", "__get_pydantic_json_schema__")
-                if not cls._overrides_below_reference(name)
-            ]
-            if missing:
-                raise TypeError(
-                    f"{cls.__name__} sets _serializes_bare = False but does not override "
-                    f"{', '.join(missing)}. The base implementations unwrap to the single field, "
-                    f"which contradicts the declaration."
-                )
+        elif not overrides_serializer:
+            raise TypeError(
+                f"{cls.__name__} sets _serializes_bare = False but does not override "
+                f"_wrap_serializer. The base implementation unwraps to the single field, which "
+                f"contradicts the declaration."
+            )
 
     @classmethod
     def _overrides_below_reference(cls, name: str) -> bool:
@@ -135,20 +130,49 @@ class Reference(BaseModel):
 
     @classmethod
     def __get_pydantic_json_schema__(cls, core_schema: CoreSchema, handler: GetJsonSchemaHandler) -> JsonSchemaValue:
-        """Add the bare field value to the accepted input forms.
+        """Describe the reference by :attr:`_serializes_bare`.
 
-        :meth:`_wrap_validator` passes a dict through and wraps anything else, so both the bare
-        value and the ``{"<field>": ...}`` object are accepted; :meth:`_wrap_serializer` only ever
-        produces the bare value.
+        A class that serializes bare (the default) accepts and describes both the bare value and
+        the ``{"<field>": ...}`` object on input, per :meth:`_wrap_validator`, but only ever
+        produces the bare value on output, per :meth:`_wrap_serializer`. A class that serializes
+        wrapped (see :class:`ExternalRef`) keeps the object form in both directions; a bare string
+        is still accepted by :meth:`_wrap_validator` for constructor convenience, but it is
+        deliberately not advertised in the validation schema -- a bare string in a union always
+        resolves to a bare-serializing reference, so advertising it here would describe an input
+        this class never actually resolves from.
 
         :param core_schema: the core schema the JSON schema is generated from.
         :param handler: the handler producing the default JSON schema.
-        :return: the JSON schema, with the bare value added when describing accepted input.
+        :return: the JSON schema, describing whichever form :attr:`_serializes_bare` selects.
         """
         json_schema = handler(core_schema)
         target = handler.resolve_ref_schema(json_schema)
 
-        # Falsy also covers Reference itself, which declares no field to unwrap to.
+        if not cls.model_fields:
+            # Reference itself declares no field to unwrap to.
+            return json_schema
+
+        if handler.mode == "serialization":
+            # _wrap_serializer has no declared return_type, so handler(core_schema) has already
+            # collapsed target to {} here; rebuild it from the field annotations instead.
+            if cls._serializes_bare:
+                replacement = dict(field_json_schemas(cls, handler)[cls._first_field_name()])
+                if (title := target.get("title")) is not None:
+                    replacement["title"] = title
+                target.clear()
+                target.update(replacement)
+            else:
+                target.update(
+                    type="object",
+                    properties=field_json_schemas(cls, handler),
+                    required=list(cls.model_fields),
+                )
+            return json_schema
+
+        if not cls._serializes_bare:
+            # The default object schema already describes it; no bare form to add.
+            return json_schema
+
         if not (properties := target.get("properties")):
             return json_schema
 
@@ -218,21 +242,6 @@ class ExternalRef(Reference):
     @model_serializer
     def _wrap_serializer(self) -> Any:
         return {"ext": self.ext}
-
-    @classmethod
-    def __get_pydantic_json_schema__(cls, core_schema: CoreSchema, handler: GetJsonSchemaHandler) -> JsonSchemaValue:
-        """Keep the wrapped object schema, bypassing :meth:`Reference.__get_pydantic_json_schema__`.
-
-        A bare string is accepted by :meth:`_wrap_validator` for constructor convenience, but it is
-        deliberately not advertised: on the wire a bare string is always a :class:`VariableRef`, so
-        listing it here would describe an input that the :obj:`SymbolRef` union never resolves to an
-        external reference.
-
-        :param core_schema: the core schema the JSON schema is generated from.
-        :param handler: the handler producing the default JSON schema.
-        :return: the default object schema, unmodified.
-        """
-        return handler(core_schema)
 
 
 class ChannelRef(Reference):

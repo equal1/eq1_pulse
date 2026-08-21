@@ -1,9 +1,8 @@
+import inspect
 from typing import Any, ClassVar
 
 import pytest
-from pydantic import GetJsonSchemaHandler, TypeAdapter, ValidationError, model_serializer
-from pydantic.json_schema import JsonSchemaValue
-from pydantic_core import CoreSchema
+from pydantic import TypeAdapter, ValidationError, model_serializer
 
 from eq1_pulse.models.identifier_str import str_is_external_symbol
 from eq1_pulse.models.reference_types import (
@@ -189,29 +188,22 @@ def test_reference_subclass_overriding_the_serializer_must_declare_it():
                 return {"a": self.a}
 
 
-def test_wrapped_reference_must_override_the_serializer_and_the_schema():
-    with pytest.raises(TypeError, match="_wrap_serializer, __get_pydantic_json_schema__"):
+def test_wrapped_reference_must_override_the_serializer():
+    with pytest.raises(TypeError, match="_wrap_serializer"):
 
         class Liar(Reference):
             _serializes_bare: ClassVar[bool] = False
 
             a: str
 
-    with pytest.raises(TypeError, match="does not override __get_pydantic_json_schema__"):
-
-        class HalfDone(Reference):
-            _serializes_bare: ClassVar[bool] = False
-
-            a: str
-
-            @model_serializer
-            def _wrap_serializer(self) -> Any:
-                return {"a": self.a}
-
 
 def test_a_wrapped_reference_other_than_external_ref_also_dispatches_correctly():
     class TagRef(Reference):
-        """A second wrapped reference, to show the mechanism is not special-cased to ExternalRef."""
+        """A second wrapped reference, to show the mechanism is not special-cased to ExternalRef.
+
+        Overriding ``_wrap_serializer`` is enough: ``__get_pydantic_json_schema__`` branches on
+        ``_serializes_bare`` in the base class, so a wrapped reference needs no schema override.
+        """
 
         _serializes_bare: ClassVar[bool] = False
 
@@ -221,15 +213,21 @@ def test_a_wrapped_reference_other_than_external_ref_also_dispatches_correctly()
         def _wrap_serializer(self) -> Any:
             return {"tag": self.tag}
 
-        @classmethod
-        def __get_pydantic_json_schema__(
-            cls, core_schema: CoreSchema, handler: GetJsonSchemaHandler
-        ) -> JsonSchemaValue:
-            """Keep the wrapped object schema."""
-            return handler(core_schema)
-
     adapter: TypeAdapter[VariableRef | TagRef] = TypeAdapter(VariableRef | TagRef)
     assert adapter.dump_python(TagRef(tag="t")) == {"tag": "t"}
+
+    assert TagRef.model_json_schema() == {
+        "properties": {"tag": {"title": "Tag", "type": "string"}},
+        "required": ["tag"],
+        "title": "TagRef",
+        "type": "object",
+        "description": inspect.cleandoc(TagRef.__doc__ or ""),
+    }
+    assert TagRef.model_json_schema(mode="serialization") == {
+        "properties": {"tag": {"type": "string"}},
+        "required": ["tag"],
+        "type": "object",
+    }
     assert adapter.dump_python(VariableRef("v")) == "v"
 
 

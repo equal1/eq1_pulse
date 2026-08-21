@@ -54,6 +54,28 @@ class FrozenModel(NoExtrasModel):
     model_config = ConfigDict(frozen=True)
 
 
+def field_json_schemas(cls: type[BaseModel], handler: GetJsonSchemaHandler) -> dict[str, JsonSchemaValue]:
+    """Build each of *cls*'s fields' own JSON schema from its annotation.
+
+    This is independent of *cls*'s ``model_serializer``: a plain-mode ``@model_serializer`` with no
+    declared ``return_type`` gives pydantic nothing to derive a serialization-mode schema from, so
+    ``handler(core_schema)`` collapses to ``{}`` in that mode regardless of what the fields actually
+    contain. Schema hooks that describe the serializer's output in terms of the underlying fields
+    (unwrapping, as :class:`WrappedValueModel` and :class:`~.reference_types.Reference` do) build it
+    from the field annotations directly instead, through this function.
+
+    Reusing *handler* rather than a fresh :class:`~pydantic.TypeAdapter` schema generation keeps the
+    result registered in the same ``$defs``/``components.schemas`` collection as the rest of the
+    document, so shared field types are not duplicated under a second name.
+
+    :param cls: the model whose fields to build schemas for.
+    :param handler: the handler producing the default JSON schema, reused so refs land in the same
+        ``$defs`` collection as the rest of the document.
+    :return: a mapping of field name to that field's own JSON schema.
+    """
+    return {name: handler(TypeAdapter(field.annotation).core_schema) for name, field in cls.model_fields.items()}
+
+
 class WrappedValueModel(NoExtrasModel):
     """A :class:`NoExtrasModel` that wraps a single value in a field named 'value'."""
 
@@ -117,6 +139,18 @@ class WrappedValueModel(NoExtrasModel):
         """
         json_schema = handler(core_schema)
         target = handler.resolve_ref_schema(json_schema)
+
+        if handler.mode == "serialization":
+            # _wrap_serializer has no declared return_type, so handler(core_schema) has already
+            # collapsed target to {} here; rebuild it from the value field's own annotation instead.
+            if "value" not in cls.model_fields:
+                return json_schema
+            replacement = dict(field_json_schemas(cls, handler)["value"])
+            if (title := target.get("title")) is not None:
+                replacement["title"] = title
+            target.clear()
+            target.update(replacement)
+            return json_schema
 
         if (
             (properties := target.get("properties")) is None

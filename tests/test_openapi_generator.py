@@ -107,19 +107,24 @@ def test_experimental_schema_components_are_tagged():
     schema = generate_openapi_schema()
     schemas = schema["components"]["schemas"]
 
-    experimental_models = [model for model in get_all_pydantic_models() if "experimental" in model.__module__]
-    assert experimental_models, "Expected at least one experimental model to check"
+    experimental_names = {model.__name__ for model in get_all_pydantic_models() if "experimental" in model.__module__}
+    assert experimental_names, "Expected at least one experimental model to check"
 
-    for model in experimental_models:
-        assert schemas[model.__name__].get("tags") == ["experimental"], (
-            f"{model.__name__} is generated from {model.__module__} and should be tagged 'experimental'"
-        )
+    for model_name in experimental_names:
+        component_names = {
+            name for name in schemas if name in {model_name, f"{model_name}-Input", f"{model_name}-Output"}
+        }
+        assert component_names, f"Expected a schema component for experimental model {model_name}"
+        for component_name in component_names:
+            assert schemas[component_name].get("tags") == ["experimental"], (
+                f"{component_name} is generated from an experimental model and should be tagged 'experimental'"
+            )
 
-    non_experimental_names = {model.__name__ for model in get_all_pydantic_models()} - {
-        model.__name__ for model in experimental_models
-    }
-    for name in non_experimental_names:
-        assert "tags" not in schemas.get(name, {}), f"{name} should not carry the 'experimental' tag"
+    for name, component_schema in schemas.items():
+        if "tags" not in component_schema:
+            continue
+        model_name = name.removesuffix("-Input").removesuffix("-Output")
+        assert model_name in experimental_names, f"{name} should not carry the 'experimental' tag"
 
 
 def test_save_openapi_schema_yaml():
@@ -224,14 +229,14 @@ def test_wrapped_models_are_not_described_by_their_internal_shape(generated_sche
     so the generated document described the internal representation instead of the wire form.
     """
     for name in ("Duration", "Amplitude", "Frequency"):
-        schema = generated_schemas[name]
+        schema = generated_schemas[f"{name}-Input"]
         assert "properties" not in schema, f"{name} is described by its internal object shape"
         assert "anyOf" in schema, f"{name} should offer its accepted input forms"
 
 
 def test_unit_models_accept_the_suffixed_string_form(generated_schemas):
     """``Seconds`` and friends accept ``"10s"`` as well as ``{"s": 10}``; both must be advertised."""
-    schema = generated_schemas["Seconds"]
+    schema = generated_schemas["Seconds-Input"]
     branches = schema["anyOf"]
     assert any(branch.get("type") == "object" for branch in branches), "the object form is missing"
     assert any(branch.get("type") == "string" for branch in branches), "the string form is missing"
@@ -240,17 +245,24 @@ def test_unit_models_accept_the_suffixed_string_form(generated_schemas):
 def test_bare_references_advertise_the_bare_form(generated_schemas):
     """A reference serializes bare, so the generated schema must accept the bare form."""
     for name in ("VariableRef", "ChannelRef", "PulseRef"):
-        branches = generated_schemas[name]["anyOf"]
+        branches = generated_schemas[f"{name}-Input"]["anyOf"]
         assert len(branches) == 2, f"{name} should accept the bare value and the object form"
         assert any("$ref" in branch for branch in branches), f"{name} does not advertise the bare form"
 
 
 def test_external_ref_stays_an_object(generated_schemas):
-    """``ExternalRef`` keeps the wrapped form; a bare string is always a variable reference."""
-    schema = generated_schemas["ExternalRef"]
-    assert schema["type"] == "object"
-    assert "ext" in schema["properties"]
-    assert "anyOf" not in schema
+    """``ExternalRef`` keeps the wrapped form; a bare string is always a variable reference.
+
+    True on both sides: validation still describes only the object form (a bare string is accepted
+    at the constructor for ergonomics, per :meth:`~eq1_pulse.models.reference_types.Reference.
+    __get_pydantic_json_schema__`'s docstring, but not advertised), and serialization never
+    produces anything else.
+    """
+    for suffix in ("-Input", "-Output"):
+        schema = generated_schemas[f"ExternalRef{suffix}"]
+        assert schema["type"] == "object"
+        assert "ext" in schema["properties"]
+        assert "anyOf" not in schema
 
 
 def test_generated_schema_agrees_with_the_direct_call():
@@ -262,34 +274,75 @@ def test_generated_schema_agrees_with_the_direct_call():
     from eq1_pulse.models.basic_types import Duration
 
     direct = Duration.model_json_schema()
-    generated = generate_openapi_schema()["components"]["schemas"]["Duration"]
+    generated = generate_openapi_schema()["components"]["schemas"]["Duration-Input"]
 
     def ref_names(schema):
-        return [branch["$ref"].rsplit("/", 1)[-1] for branch in schema["anyOf"] if "$ref" in branch]
+        # The direct, single-model call never needs to disambiguate input from output, so its refs
+        # are unsuffixed ("Seconds"); the batch call generates both modes for every model, so a ref
+        # to a type that itself differs between modes is suffixed ("Seconds-Input"). That naming
+        # difference is expected and orthogonal to what this test guards -- strip it before comparing.
+        return [
+            branch["$ref"].rsplit("/", 1)[-1].removesuffix("-Input").removesuffix("-Output")
+            for branch in schema["anyOf"]
+            if "$ref" in branch
+        ]
 
     assert ref_names(direct) == ref_names(generated)
     assert direct["anyOf"][0] == generated["anyOf"][0] == {"const": 0, "type": "integer"}
 
 
-def test_serialization_mode_schema_can_be_generated():
-    """``mode="serialization"`` used to raise ``KeyError`` on every reference model."""
+def test_serialization_mode_schema_is_no_longer_empty():
+    """``mode="serialization"`` used to raise ``KeyError``, then to collapse to ``{}``.
+
+    ``__get_pydantic_json_schema__`` now rebuilds it from the field annotations (see
+    :func:`eq1_pulse.models.base_models.field_json_schemas`), independent of the plain
+    ``@model_serializer``'s undeclared return type.
+    """
     from eq1_pulse.models.reference_types import VariableRef
 
-    assert VariableRef.model_json_schema(mode="serialization") is not None
+    assert VariableRef.model_json_schema(mode="serialization") == {"type": "string"}
 
 
-def test_serialized_operations_validate_against_the_generated_schema():
-    """What the models emit must validate against the document the generator publishes."""
+def test_serialized_models_validate_against_the_generated_schema():
+    """What the models emit must validate against the *output* schema the generator publishes."""
     from eq1_pulse.models.channel_ops import Play, Wait
+    from eq1_pulse.models.external_block import ExternalBlock
+    from eq1_pulse.models.pulse_types import ExternalPulse
+    from eq1_pulse.models.reference_types import PulseRef, VariableRef
 
     schemas = json.loads(
         json.dumps(generate_openapi_schema()["components"]["schemas"]).replace("#/components/schemas/", "#/$defs/")
     )
-    operations = [
+    models = [
         (Play(channel="ch1", pulse="p1"), "Play"),
         (Wait(channels=["ch1"], duration="10us"), "Wait"),
         (Wait(channels=["ch1"], duration={"ns": 100}), "Wait"),
+        (
+            ExternalPulse(
+                function="eq1.pulses.drag",
+                duration="10us",
+                amplitude="100mV",
+                params={
+                    "detuning": "5GHz",
+                    "phase_offset": 0.5 - 0.25j,
+                    "scale": VariableRef(var="scale"),
+                    "template": PulseRef(pulse_name="template"),
+                },
+            ),
+            "ExternalPulse",
+        ),
+        (
+            ExternalBlock(
+                program="eq1.cal.measure",
+                channels={"readout": "ch1"},
+                params={"template": PulseRef(pulse_name="template")},
+                results={"outcome": VariableRef(var="result")},
+                duration="10us",
+            ),
+            "ExternalBlock",
+        ),
     ]
-    for operation, name in operations:
-        document = json.loads(operation.model_dump_json())
-        jsonschema.validate(document, {"$defs": schemas, **schemas[name]})
+    for model, name in models:
+        document = json.loads(model.model_dump_json())
+        output_schema = schemas[f"{name}-Output"]
+        jsonschema.validate(document, {"$defs": schemas, **output_schema})
