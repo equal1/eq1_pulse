@@ -14,13 +14,23 @@ the model, and nothing in a sequence guarantees they start in lock-step. This on
 becomes an actual concern for the same-channel Play/Record exception above, where the
 two operations must be treated as one atomic measurement rather than two ops that
 happen to share a channel and start time.
+
+:class:`~.channel_ops.Wait` is the more primitive counterpart of OpenQASM's multi-resource
+``delay``, which conflates a barrier with a delay. The composite decomposes exactly:
+
+.. code-block:: text
+
+    import:   delay[d] a, b;   ->   barrier(a, b) ; wait(a, b, d)
+    export:   wait(a, b, d)    ->   delay[d] a;  delay[d] b;
+
+See :class:`~.channel_ops.Wait` for why both identities hold.
 """
 
 # ruff: noqa: D107
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import TYPE_CHECKING, Annotated, overload
+from typing import TYPE_CHECKING, Annotated, ClassVar, Literal, overload
 
 from pydantic import Discriminator
 
@@ -28,6 +38,7 @@ from .basic_types import LinSpace, OpBase, Range
 from .channel_ops import ChannelOp
 from .control_flow import ConditionalBase, IterationBase, RepetitionBase, SequenceBase
 from .data_ops import DataOp
+from .external_block import ExternalBlock
 from .nd_array import NumpyArray
 
 if TYPE_CHECKING:
@@ -35,7 +46,9 @@ if TYPE_CHECKING:
     from .nd_array import NumpyArrayLike
     from .reference_types import VariableRefLike
 
-type DiscriminableOp = Annotated[ChannelOp | DataOp | Repetition | Iteration | Conditional, Discriminator("op_type")]
+type DiscriminableOp = Annotated[
+    ChannelOp | DataOp | ExternalBlock | Repetition | Iteration | Conditional, Discriminator("op_type")
+]
 """All operations that can be discriminated by the "op_type" field."""
 
 type OpSequenceItem = DiscriminableOp | OpSequence
@@ -50,6 +63,9 @@ class OpSequence(SequenceBase[OpSequenceItem]):
 
     :ivar items: List of operation sequence items
     """
+
+    # Lets eq1_pulse.builder._state detect context kind without importing this class.
+    _context_kind: ClassVar[Literal["sequence"]] = "sequence"
 
     if TYPE_CHECKING:  # mypy food
         items: list[OpSequenceItem]
@@ -76,6 +92,8 @@ class Repetition(RepetitionBase[OpSequence]):
     :ivar body: The sequence of operations to repeat
     """
 
+    _context_kind: ClassVar[Literal["sequence"]] = "sequence"
+
     if TYPE_CHECKING:
 
         def __init__(self, /, *, count: int, body: OpSequenceLike, **data): ...
@@ -89,6 +107,8 @@ class Iteration(IterationBase[OpSequence]):
     :ivar items: The range or array over which to iterate.
     :ivar body: The sequence of operations to execute in each iteration
     """
+
+    _context_kind: ClassVar[Literal["sequence"]] = "sequence"
 
     if TYPE_CHECKING:
 
@@ -115,6 +135,8 @@ class Conditional(ConditionalBase[OpSequence]):
     :ivar body: The sequence of operations to execute if the condition is met
     """
 
+    _context_kind: ClassVar[Literal["sequence"]] = "sequence"
+
     if TYPE_CHECKING:
 
         def __init__(self, /, *, var: VariableRefLike, body: OpSequenceLike, **data): ...
@@ -123,6 +145,7 @@ class Conditional(ConditionalBase[OpSequence]):
 __all__ = (
     "Conditional",
     "DiscriminableOp",
+    "ExternalBlock",
     "Iteration",
     "LinSpace",
     "NumpyArray",

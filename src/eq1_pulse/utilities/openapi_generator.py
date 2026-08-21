@@ -81,7 +81,7 @@ def get_all_pydantic_models() -> list[type[BaseModel]]:
         "nd_array",
         "pulse_types",
         "reference_types",
-        "schedule",
+        "experimental.schedule",
         "sequence",
         "units",
     ]
@@ -181,11 +181,23 @@ def generate_openapi_schema(
     models_with_mode: list[tuple[type[BaseModel], Literal["validation", "serialization"]]] = [
         (model, "validation") for model in models_list
     ]
-    _, definitions = models_json_schema(
+    key_map, definitions = models_json_schema(
         models_with_mode,
         ref_template="#/components/schemas/{model}",
         title="Equal1 Pulse Models",
     )
+
+    schemas = definitions.get("$defs", {})
+
+    # Tag components generated from eq1_pulse.models.experimental so they can be told
+    # apart from the supported schema surface; a top-level tag alone only documents the
+    # tag's existence, it does not associate it with any schema.
+    for (model, _mode), ref in key_map.items():
+        if not model.__module__.startswith("eq1_pulse.models.experimental"):
+            continue
+        schema_name = ref["$ref"].rsplit("/", 1)[-1]
+        if schema_name in schemas:
+            schemas[schema_name]["tags"] = ["experimental"]
 
     # Build the OpenAPI document structure
     openapi_doc: dict[str, Any] = {
@@ -196,7 +208,7 @@ def generate_openapi_schema(
             "description": description,
         },
         "components": {
-            "schemas": definitions.get("$defs", {}),
+            "schemas": schemas,
         },
         "paths": {},
     }
@@ -209,9 +221,10 @@ def generate_openapi_schema(
             {"name": "channel-ops", "description": "Channel operations (Play, Record, Barrier, etc.)"},
             {"name": "control-flow", "description": "Control flow operations (Repetition, Iteration, Conditional)"},
             {"name": "data-ops", "description": "Data operations (Assignment, Arithmetic, etc.)"},
-            {"name": "sequences", "description": "Operation sequences and schedules"},
+            {"name": "sequences", "description": "Operation sequences"},
             {"name": "reference-types", "description": "Reference types for variables and parameters"},
             {"name": "units", "description": "Unit types (Seconds, Volts, Hertz, etc.)"},
+            {"name": "experimental", "description": "Unused / experimental models, subject to removal"},
         ]
         openapi_doc["tags"] = tags
 

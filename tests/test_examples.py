@@ -12,7 +12,8 @@ from pathlib import Path
 import pytest
 
 EXAMPLES_DIR = Path(__file__).parent.parent / "examples"
-EXAMPLE_SCRIPTS = sorted(EXAMPLES_DIR.glob("*.py"))
+# rglob, not glob: examples/experimental/ holds the unused, experimental schedule examples.
+EXAMPLE_SCRIPTS = sorted(EXAMPLES_DIR.rglob("*.py"))
 
 
 @pytest.mark.parametrize("script", EXAMPLE_SCRIPTS, ids=lambda p: p.stem)

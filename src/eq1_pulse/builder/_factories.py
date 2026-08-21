@@ -1,0 +1,582 @@
+"""Context-free builder helpers.
+
+Pulse factories, the ``phase``/``var``/``channel``/``pulse_ref`` constructors, and the
+variable-reference validation helpers. None of these touch the context stack beyond
+checking that a referenced variable has been declared, so they are shared unchanged
+between the sequence builder (:mod:`eq1_pulse.builder.core`) and the schedule builder
+(:mod:`eq1_pulse.builder.experimental.schedule`).
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, Literal, overload
+
+from eq1_pulse.models import Phase
+
+from ..models.basic_types import Range
+from ..models.channel_ops import DemodIntegration, FullIntegration
+from ..models.pulse_types import ArbitrarySampledPulse, ExternalPulse, SinePulse, SquarePulse
+from ..models.reference_types import ChannelRef, PulseRef, VariableRef
+from ._state import _check_variable_declared, _is_variable_declared
+
+if TYPE_CHECKING:
+    from ..models.basic_types import AmplitudeLike, DurationLike, FrequencyLike, PhaseLike
+    from ..models.reference_types import VariableRefLike
+
+# ============================================================================
+# Basic model builders
+# ============================================================================
+
+
+@overload
+def phase(_0: Literal[0], /) -> Phase: ...
+
+
+@overload
+def phase(_s: str, /) -> Phase: ...
+
+
+@overload
+def phase(*, deg: float) -> Phase: ...
+
+
+@overload
+def phase(*, rad: float) -> Phase: ...
+
+
+@overload
+def phase(*, turns: float) -> Phase: ...
+
+
+@overload
+def phase(*, half_turns: float) -> Phase: ...
+
+
+def phase(*args, **kwargs) -> Phase:
+    """Construct a phase object.
+
+    :param deg: Phase in degrees
+    :param rad: Phase in radians
+    :param turns: Phase in turns
+    :param half_turns: Phase in half-turns
+    :param _0: The literal zero
+    :param _s: The string representation (value + unit) only as positional
+    :return: The constructed phase object
+        Use the result to matrix-multiply (`@`)
+    """
+    match len(args):
+        case 0:
+            if not len(kwargs):
+                raise TypeError("not enough arguments")
+            return Phase(**kwargs)
+        case 1:
+            if len(kwargs):
+                raise TypeError("keyword arguments cannot follow positional argument")
+            return Phase.model_validate(*args)
+        case _:
+            raise TypeError("at most one positional argument is allowed")
+
+
+def _validate_variable_ref(var_ref: VariableRefLike) -> VariableRef:
+    """Validate a variable reference and convert to VariableRef object.
+
+    :param var_ref: Variable reference (string, dict, or VariableRef)
+
+    :return: Validated VariableRef object
+
+    :raises RuntimeError: If variable has not been declared
+    """
+    # Convert to VariableRef if needed
+    if isinstance(var_ref, str):
+        var_ref = VariableRef(var_ref)
+    elif isinstance(var_ref, dict):
+        var_ref = VariableRef(**var_ref)
+    elif isinstance(var_ref, VariableRef):
+        pass
+    else:
+        raise TypeError(f"Unexpected value passed into variable reference: {var_ref!r}")
+
+    # Check if variable is declared
+    _check_variable_declared(var_ref.var)
+
+    # Return validated VariableRef
+    return var_ref
+
+
+def _validate_or_pass_through[T](
+    value: T | VariableRef,
+    *,
+    param_name: str,
+    context: str,
+) -> T | VariableRef:
+    """Validate a parameter that can be a variable reference or literal value.
+
+    - If value is :obj:`None`: pass through
+    - If value is :class:`VariableRef`: validate it's declared, pass through
+    - If value is dict with ``"var"`` key: convert to :class:`VariableRef` and validate
+    - If value is dict without ``"var"`` key: pass through unchanged
+    - If value is string AND identifier: treat as variable, validate, return :class:`VariableRef`
+    - If value is string AND not identifier: pass through (e.g., ``"10us"``)
+    - Otherwise: pass through unchanged (for model validation)
+
+    This handles parameters like ``duration="10us"`` vs ``duration="my_var"`` vs ``duration=var("my_var")``.
+
+    :param value: Parameter value
+    :param param_name: Name of the parameter being validated (for error messages)
+    :param context: Context/function name where validation occurs (for error messages)
+
+    :return: :class:`VariableRef` if identifier string or dict with ``"var"``, else unchanged value
+
+    :raises RuntimeError: If identifier string references undeclared variable
+    """
+    if value is None:
+        return None  # type: ignore[return-value]
+
+    if isinstance(value, VariableRef):
+        _check_variable_declared(value.var)
+        return value
+
+    if isinstance(value, dict):
+        if "var" in value:
+            var_ref = VariableRef(**value)
+            _check_variable_declared(var_ref.var)
+            return var_ref
+        # Dict without "var" key - pass through (e.g., {"ns": 100})
+        return value  # type: ignore[return-value]
+
+    if isinstance(value, str) and value.isidentifier():
+        if not _is_variable_declared(value):
+            raise RuntimeError(
+                f"Parameter '{param_name}' in {context} references undeclared variable '{value}'. "
+                f"Use var_decl('{value}', dtype, ...) before referencing this variable."
+            )
+        return VariableRef(value)
+
+    return value
+
+
+def _validate_explicit_variable_ref[T](value: T, *, param_name: str) -> T | VariableRef:
+    """Validate only *explicit* variable references, passing everything else through.
+
+    Unlike :func:`_validate_or_pass_through`, an identifier-like string is **not**
+    treated as a variable reference. Use this for free-form values where a bare
+    string is more likely to be a literal than a variable name; callers wanting a
+    variable there must say so with :func:`var` or a ``{"var": ...}`` dict.
+
+    :param value: Parameter value
+    :param param_name: Name of the parameter being validated (for error messages)
+
+    :return: :class:`VariableRef` if explicitly one, else the value unchanged
+
+    :raises RuntimeError: If an explicit reference names an undeclared variable
+    """
+    if isinstance(value, VariableRef):
+        _check_variable_declared(value.var)
+        return value
+
+    if isinstance(value, dict) and "var" in value:
+        var_ref = VariableRef(**value)
+        _check_variable_declared(var_ref.var)
+        return var_ref
+
+    return value
+
+
+# ============================================================================
+# Pulse creation helpers
+# ============================================================================
+
+
+def square_pulse(
+    *,
+    duration: DurationLike | VariableRefLike,
+    amplitude: AmplitudeLike | VariableRefLike,
+    rise_time: DurationLike | VariableRefLike | None = None,
+    fall_time: DurationLike | VariableRefLike | None = None,
+) -> SquarePulse:
+    """Create a square pulse.
+
+    :param duration: Pulse duration
+    :param amplitude: Pulse amplitude
+    :param rise_time: Optional rise time
+    :param fall_time: Optional fall time
+
+    :return: Square pulse definition
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import square_pulse
+
+        pulse = square_pulse(duration="10us", amplitude="100mV")
+    """
+    duration = _validate_or_pass_through(duration, param_name="duration", context="square_pulse()")
+    amplitude = _validate_or_pass_through(amplitude, param_name="amplitude", context="square_pulse()")
+    rise_time = _validate_or_pass_through(rise_time, param_name="rise_time", context="square_pulse()")
+    fall_time = _validate_or_pass_through(fall_time, param_name="fall_time", context="square_pulse()")
+
+    return SquarePulse(
+        duration=duration,
+        amplitude=amplitude,
+        rise_time=rise_time,
+        fall_time=fall_time,
+    )
+
+
+def sine_pulse(
+    *,
+    duration: DurationLike | VariableRefLike,
+    amplitude: AmplitudeLike | VariableRefLike,
+    frequency: FrequencyLike | VariableRefLike,
+    to_frequency: FrequencyLike | VariableRefLike | None = None,
+) -> SinePulse:
+    """Create a sine pulse.
+
+    :param duration: Pulse duration
+    :param amplitude: Pulse amplitude
+    :param frequency: Start frequency
+    :param to_frequency: Optional end frequency for chirp
+
+    :return: Sine pulse definition
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import sine_pulse
+
+        pulse = sine_pulse(duration="20us", amplitude="50mV", frequency="5GHz")
+
+        # Chirped sine pulse
+        chirp = sine_pulse(
+            duration="50us",
+            amplitude="30mV",
+            frequency="4.5GHz",
+            to_frequency="5.5GHz"
+        )
+    """
+    duration = _validate_or_pass_through(duration, param_name="duration", context="sine_pulse()")
+    amplitude = _validate_or_pass_through(amplitude, param_name="amplitude", context="sine_pulse()")
+    frequency = _validate_or_pass_through(frequency, param_name="frequency", context="sine_pulse()")
+    to_frequency = _validate_or_pass_through(to_frequency, param_name="to_frequency", context="sine_pulse()")
+
+    return SinePulse(
+        duration=duration,
+        amplitude=amplitude,
+        frequency=frequency,
+        to_frequency=to_frequency,
+    )
+
+
+def external_pulse(
+    function: str,
+    *,
+    duration: DurationLike | VariableRefLike,
+    amplitude: AmplitudeLike | VariableRefLike,
+    params: dict[str, Any] | None = None,
+) -> ExternalPulse:
+    """Create an external pulse reference.
+
+    References a pulse shape defined in an external function. The function
+    should accept duration, amplitude, and any additional params, and return
+    normalized waveform samples.
+
+    :param function: Fully qualified function name (e.g., "my_lib.gaussian")
+    :param duration: Pulse duration
+    :param amplitude: Pulse amplitude (scale factor)
+    :param params: Additional parameters passed to the pulse function
+
+    :return: External pulse definition
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import external_pulse
+
+        # Reference a Gaussian pulse from an external library
+        pulse = external_pulse(
+            "pulses.gaussian",
+            duration="100ns",
+            amplitude="80mV",
+            params={"sigma": "20ns"}
+        )
+
+        # DRAG pulse with parameters
+        drag = external_pulse(
+            "pulses.drag",
+            duration="50ns",
+            amplitude="100mV",
+            params={"beta": 0.5, "sigma": "10ns"}
+        )
+    """
+    duration = _validate_or_pass_through(duration, param_name="duration", context="external_pulse()")
+    amplitude = _validate_or_pass_through(amplitude, param_name="amplitude", context="external_pulse()")
+
+    # Validate top-level params dict values (if params provided).
+    #
+    # Unlike the typed scalar parameters above, params carries arbitrary values for
+    # the external function, so a bare identifier-like string is far more likely to
+    # be a literal ("hann", "cubic", "gaussian") than a variable name. Only explicit
+    # variable references are validated here; everything else passes through.
+    if params is not None:
+        params = {
+            key: _validate_explicit_variable_ref(value, param_name=f"params['{key}']") for key, value in params.items()
+        }
+
+    return ExternalPulse(
+        function=function,
+        duration=duration,
+        amplitude=amplitude,
+        params=params,  # type: ignore[arg-type]
+    )
+
+
+def arbitrary_pulse(
+    samples: list[float] | list[complex],
+    *,
+    duration: DurationLike | VariableRefLike,
+    amplitude: AmplitudeLike | VariableRefLike,
+    interpolation: str | None = None,
+    time_points: list[float] | None = None,
+) -> ArbitrarySampledPulse:
+    """Create an arbitrary sampled pulse from explicit samples.
+
+    Defines a pulse shape using explicitly provided sample points. Samples
+    should be normalized (peak value of 1.0), and will be scaled by amplitude.
+
+    :param samples: Normalized waveform samples (real or complex)
+    :param duration: Total pulse duration
+    :param amplitude: Pulse amplitude (scale factor for samples)
+    :param interpolation: Interpolation method (e.g., "linear", "cubic")
+    :param time_points: Optional time points for samples (normalized 0-1)
+
+    :return: Arbitrary pulse definition
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import arbitrary_pulse
+
+        # Simple triangle pulse
+        triangle = arbitrary_pulse(
+            samples=[0.0, 0.5, 1.0, 0.5, 0.0],
+            duration="100ns",
+            amplitude="50mV"
+        )
+
+        # Complex IQ pulse with explicit time points
+        iq_samples = [0.0+0.0j, 0.5+0.3j, 1.0+0.0j, 0.5-0.3j, 0.0+0.0j]
+        iq_pulse = arbitrary_pulse(
+            samples=iq_samples,
+            duration="80ns",
+            amplitude="75mV",
+            time_points=[0.0, 0.25, 0.5, 0.75, 1.0],
+            interpolation="cubic"
+        )
+    """
+    duration = _validate_or_pass_through(duration, param_name="duration", context="arbitrary_pulse()")
+    amplitude = _validate_or_pass_through(amplitude, param_name="amplitude", context="arbitrary_pulse()")
+
+    return ArbitrarySampledPulse(
+        samples=samples,
+        duration=duration,
+        amplitude=amplitude,
+        interpolation=interpolation,
+        time_points=time_points,
+    )
+
+
+# ============================================================================
+# Integration helpers
+# ============================================================================
+
+
+def full_integration() -> FullIntegration:
+    """Create a full integration configuration.
+
+    Full integration performs a simple accumulation of the measured signal
+    over the acquisition window.
+
+    :return: Full integration configuration object
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import full_integration, record
+
+        # Use full integration for recording
+        record("readout", var="result", duration="1us", integration=full_integration())
+    """
+    return FullIntegration()
+
+
+def demod_integration(
+    *,
+    phase: PhaseLike | None = None,
+    scale_cos: float = 1.0,
+    scale_sin: float = 1.0,
+) -> DemodIntegration:
+    """Create a demodulation integration configuration.
+
+    Demodulation integration multiplies the measured signal with the channel's
+    output signal (at the channel's frequency and phase) before integration.
+    This is useful for extracting the in-phase and quadrature components.
+
+    :param phase: Optional phase rotation to apply to the result
+    :param scale_cos: Scaling factor for the real (cosine) part (default: 1.0)
+    :param scale_sin: Scaling factor for the imaginary (sine) part (default: 1.0)
+
+    :return: Demodulation integration configuration object
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import demod_integration, record
+
+        # Basic demodulation
+        record("readout", var="result", duration="1us",
+               integration=demod_integration())
+
+        # With phase rotation
+        record("readout", var="result", duration="1us",
+               integration=demod_integration(phase="45deg"))
+
+        # With scaling (e.g., to flip sign of imaginary part)
+        record("readout", var="result", duration="1us",
+               integration=demod_integration(scale_cos=1.0, scale_sin=-1.0))
+    """
+    return DemodIntegration(
+        phase=phase,  # type: ignore[arg-type]
+        scale_cos=scale_cos,
+        scale_sin=scale_sin,
+    )
+
+
+# ============================================================================
+# Reference helpers
+# ============================================================================
+
+
+def var(name: str) -> VariableRef:
+    """Create a variable reference.
+
+    :param name: Variable name
+
+    :return: Variable reference
+
+    :raises RuntimeError: If variable has not been declared in current or parent contexts
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import var
+
+        freq_var = var("frequency")
+    """
+    _check_variable_declared(name)
+    return VariableRef(var=name)
+
+
+def channel(name: str) -> ChannelRef:
+    """Create a channel reference.
+
+    :param name: Channel name
+
+    :return: Channel reference
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import channel
+
+        ch = channel("qubit_1")
+    """
+    return ChannelRef(channel=name)
+
+
+def pulse_ref(name: str) -> PulseRef:
+    """Create a pulse reference.
+
+    :param name: Pulse name
+
+    :return: Pulse reference
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import pulse_ref
+
+        p = pulse_ref("pi_pulse")
+    """
+    return PulseRef(pulse_name=name)
+
+
+def _convert_range_to_model(iterable: Any) -> Range | list[Any] | Any:
+    """Convert Python range objects to Range model or list.
+
+    This function handles the semantic differences between Python's built-in range
+    and the eq1_pulse Range model:
+
+    - Python range excludes the stop point, Range includes it
+    - Python range can be empty if step has wrong direction, Range adjusts step sign
+    - Range requires step to divide the distance evenly
+
+    :param iterable: An iterable, potentially a Python range object
+
+    :return: Range model, list, or the original iterable unchanged
+
+    Conversion rules:
+
+    - Empty range → :class:`ValueError` (a loop that can never run is a typo, not intent)
+    - Single-element range → single-element list
+    - Multi-element range → Range model (if valid) or list
+
+    :raises ValueError: If the range yields no elements
+
+    Examples
+
+    .. code-block:: python
+
+        _convert_range_to_model(range(0, 10, 2))  # Range(start=0, stop=8, step=2)
+        _convert_range_to_model(range(10, 0, 2))  # ValueError (wrong step direction)
+        _convert_range_to_model(range(5, 6))      # [5] (single element)
+    """
+    # Only process Python range objects
+    if not isinstance(iterable, range):
+        return iterable
+
+    # Convert to list to get actual elements
+    range_list = list(iterable)
+
+    # An empty range (wrong step direction, or step larger than the span) would build
+    # a loop body that can never execute. Say so rather than emitting it silently.
+    if len(range_list) == 0:
+        raise ValueError(
+            f"{iterable!r} is empty, so the loop body would never execute. "
+            "Check the sign of the step and the order of start/stop."
+        )
+
+    # Handle single-element range
+    if len(range_list) == 1:
+        return range_list
+
+    # Multi-element range: convert to Range model
+    # Range includes the stop point, so we use the last element as stop
+    start = range_list[0]
+    stop = range_list[-1]
+    step = iterable.step
+
+    # Create Range with adjusted stop point to include the last element
+    try:
+        return Range(start=start, stop=stop, step=step)
+    except ValueError:
+        # If Range validation fails (step doesn't divide evenly), fall back to list
+        return range_list

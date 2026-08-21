@@ -1,12 +1,14 @@
-"""Core builder functions for constructing pulse sequences and schedules.
+"""Core builder functions for constructing pulse sequences.
 
 This module provides global functions for creating pulse programs with:
 
-- Context managers for sequences, schedules, iterations, and conditionals
+- Context managers for sequences, iterations, and conditionals
 - Function calls for operations like playing pulses, recording, and barriers
-- Token-based references for relative positioning in schedules
 - Shorthand functions for common pulse types
 - Measure functions for simultaneous play + record operations
+
+For the unused, experimental schedule API (explicit timing with reference points),
+see :mod:`eq1_pulse.builder.experimental`.
 
 Examples
 
@@ -19,12 +21,6 @@ Examples
         play("ch1", square_pulse(duration="10us", amplitude="100mV"))
         wait("ch1", duration="5us")
         play("ch1", sine_pulse(duration="20us", amplitude="50mV", frequency="5GHz"))
-
-    # Building a schedule with relative positioning
-    with build_schedule() as sched:
-        op1 = play("ch1", square_pulse(duration="10us", amplitude="100mV"))
-        op2 = play("ch2", square_pulse(duration="10us", amplitude="100mV"),
-                        ref_op=op1, ref_pt="start", rel_time="5us")
 
     # Using control flow
     with build_sequence() as seq:
@@ -41,14 +37,9 @@ Examples
 
 from __future__ import annotations
 
-import traceback
 from collections.abc import Callable
 from contextlib import contextmanager
-from contextvars import ContextVar
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Final, Literal, TypeGuard, Unpack, cast, overload
-
-from eq1_pulse.models import Phase
+from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
 from ..models.basic_types import LinSpace, Range
 from ..models.channel_ops import (
@@ -64,17 +55,35 @@ from ..models.channel_ops import (
     Wait,
 )
 from ..models.data_ops import Discriminate, PulseDecl, Store, StoreMode, StoreModeLiteral, VariableDecl
-from ..models.pulse_types import ArbitrarySampledPulse, ExternalPulse, PulseType, SinePulse, SquarePulse
-from ..models.reference_types import ChannelRef, PulseRef, VariableRef
-from ..models.schedule import (
-    SchedConditional,
-    SchedIteration,
-    SchedRepetition,
-    Schedule,
-    ScheduledOperation,
-)
+from ..models.external_block import ExternalBlock
+from ..models.pulse_types import PulseType
+from ..models.reference_types import VariableRef
 from ..models.sequence import Conditional, Iteration, OpSequence, Repetition
-from .utils import OperationToken, ScheduleParams, resolve_schedule_params
+from ._factories import (
+    _convert_range_to_model,
+    _validate_explicit_variable_ref,
+    _validate_variable_ref,
+    arbitrary_pulse,
+    channel,
+    demod_integration,
+    external_pulse,
+    full_integration,
+    phase,
+    pulse_ref,
+    sine_pulse,
+    square_pulse,
+    var,
+)
+from ._factories import _validate_or_pass_through as _validate_or_pass_through
+from ._state import (
+    _current_context,
+    _in_schedule,
+    _in_sequence,
+    _pop_context,
+    _push_context,
+    _register_variable,
+)
+from ._state import _get_state as _get_state
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
@@ -84,21 +93,18 @@ if TYPE_CHECKING:
     from ..models.reference_types import ChannelRefLike, PulseRefLike, VariableRefLike
 
 __all__ = (
-    "ScheduleBlock",
-    "add_block",
     "arbitrary_pulse",
     "barrier",
-    "build_schedule",
     "build_sequence",
     "channel",
     "demod_integration",
     "discriminate",
+    "external_block",
     "external_pulse",
     "for_",
     "full_integration",
     "if_",
     "measure",
-    "nested_schedule",
     "nested_sequence",
     "phase",
     "play",
@@ -112,7 +118,6 @@ __all__ = (
     "sine_pulse",
     "square_pulse",
     "store",
-    "sub_schedule",
     "sub_sequence",
     "var",
     "var_decl",
@@ -120,160 +125,27 @@ __all__ = (
 )
 
 
-type SequenceContext = OpSequence | Repetition | Iteration | Conditional
-"""Contexts in which operations are ordered implicitly (sequence semantics)."""
+def _not_a_sequence_context(operation_name: str) -> RuntimeError:
+    """Build the reciprocal-rejection error for an operation called outside a sequence.
 
-type ScheduleContext = Schedule | SchedRepetition | SchedIteration | SchedConditional
-"""Contexts in which operations carry explicit timing parameters (schedule semantics)."""
+    :param operation_name: Name of the operation for the error message, e.g. ``"play()"``
 
-type BuilderContext = SequenceContext | ScheduleContext
-"""Any context the builder can be inside of."""
-
-_SEQUENCE_CONTEXT_TYPES: Final = (OpSequence, Repetition, Iteration, Conditional)
-_SCHEDULE_CONTEXT_TYPES: Final = (Schedule, SchedRepetition, SchedIteration, SchedConditional)
-
-
-def _in_schedule(context: Any) -> TypeGuard[ScheduleContext]:
-    """Check whether a context has schedule semantics.
-
-    This covers the top-level :class:`~eq1_pulse.models.schedule.Schedule` as well as the
-    bodies of schedule-side control flow (``repeat``/``for_``/``if_``), which are
-    :class:`~eq1_pulse.models.schedule.SchedRepetition`,
-    :class:`~eq1_pulse.models.schedule.SchedIteration` and
-    :class:`~eq1_pulse.models.schedule.SchedConditional` respectively.
-
-    :param context: The context to test
-
-    :return: :obj:`True` if operations in this context take schedule parameters
+    :return: The error to raise
     """
-    return isinstance(context, _SCHEDULE_CONTEXT_TYPES)
+    return RuntimeError(
+        f"{operation_name} requires a build_sequence() context. Schedules are built with "
+        "eq1_pulse.builder.experimental and cannot contain sequence operations."
+    )
 
 
-def _in_sequence(context: Any) -> TypeGuard[SequenceContext]:
-    """Check whether a context has sequence semantics.
-
-    This covers the top-level :class:`~eq1_pulse.models.sequence.OpSequence` as well as the
-    bodies of sequence-side control flow (``repeat``/``for_``/``if_``).
-
-    :param context: The context to test
-
-    :return: :obj:`True` if operations in this context are implicitly ordered
-    """
-    return isinstance(context, _SEQUENCE_CONTEXT_TYPES)
-
-
-@dataclass
-class BuilderState:
-    """State for the pulse builder.
-
-    This class encapsulates all module-level state for the builder interface,
-    allowing it to be stored in a ContextVar for thread and async safety.
-    """
-
-    context_stack: list[BuilderContext] = field(default_factory=list)
-    op_counter: int = 0
-    # Unconsumed schedule blocks, one list per entry of context_stack.
-    # Kept as a parallel stack rather than keyed by id(context): ids are reused
-    # after garbage collection, which let stale entries surface in unrelated builds.
-    unconsumed_blocks: list[list[ScheduleBlock]] = field(default_factory=list)
-    # Declared variable names, one set per entry of context_stack.
-    declared_variables: list[set[str]] = field(default_factory=list)
-
-
-_state: ContextVar[BuilderState | None] = ContextVar("builder_state", default=None)
-
-
-def _get_state() -> BuilderState:
-    """Get the current builder state from context storage.
-
-    If no state exists for the current context, a new state is initialized and set.
-
-    :return: The current builder state
-    """
-    state = _state.get()
-    if state is None:
-        state = BuilderState()
-        _state.set(state)
-    return state
-
-
-def _generate_op_name() -> str:
-    """Generate a unique operation name.
-
-    :return: Unique operation name
-    """
-    state = _get_state()
-    state.op_counter += 1
-    return f"op_{state.op_counter}"
-
-
-def _push_context(context: BuilderContext) -> None:
-    """Push a context onto the builder stack, together with its tracking state.
-
-    Entering a top-level context (i.e. one with no enclosing context) resets the
-    operation counter, so that building the same program twice in one process
-    produces the same generated operation names.
-
-    :param context: The context being entered
-    """
-    state = _get_state()
-    if not state.context_stack:
-        state.op_counter = 0
-    state.context_stack.append(context)
-    state.unconsumed_blocks.append([])
-    state.declared_variables.append(set())
-
-
-def _pop_context() -> None:
-    """Pop the innermost context off the builder stack, discarding its tracking state."""
-    state = _get_state()
-    state.context_stack.pop()
-    state.unconsumed_blocks.pop()
-    state.declared_variables.pop()
-
-
-def _current_context(operation_name: str = "") -> Any:
-    """Get the current building context.
-
-    :param operation_name: Optional operation name for more specific error messages
-
-    :return: The current sequence or schedule being built
-
-    :raises RuntimeError: If no context is active
-    """
-    state = _get_state()
-    if not state.context_stack:
-        if operation_name:
-            msg = (
-                f"No active building context for {operation_name}. "
-                "Use build_sequence() or build_schedule() context manager first."
-            )
-        else:
-            msg = "No active building context. Use build_sequence() or build_schedule() context manager first."
-        raise RuntimeError(msg)
-    return state.context_stack[-1]
-
-
-def _add_to_sequence(
-    context: Any,
-    operation: Any,
-    schedule_params: ScheduleParams | None = None,
-    operation_name: str = "",
-) -> None:
+def _add_to_sequence(context: Any, operation: Any) -> None:
     """Add an operation to a sequence context.
 
     :param context: The sequence context to add to; anything else raises
     :param operation: The operation to add
-    :param schedule_params: Schedule parameters to validate (should be empty)
-    :param operation_name: Name of the operation for error messages
 
     :raises RuntimeError: If context is not a sequence
-    :raises RuntimeError: If schedule parameters are provided
     """
-    # Reject schedule parameters if any were provided
-    if schedule_params:
-        _reject_schedule_params(schedule_params, operation_name)
-
     if isinstance(context, Repetition | Iteration | Conditional):
         context.body.items.append(operation)
     elif isinstance(context, OpSequence):
@@ -282,339 +154,9 @@ def _add_to_sequence(
         raise RuntimeError(f"Cannot add sequence operation to {type(context).__name__} context")
 
 
-def _add_to_schedule(
-    context: Schedule | SchedRepetition | SchedIteration | SchedConditional,
-    operation: Any,
-    **schedule_params: Unpack[ScheduleParams],
-) -> OperationToken:
-    """Add an operation to a schedule context.
-
-    :param context: The schedule context to add to
-    :param operation: The operation to add
-    :param schedule_params: Additional scheduling parameters
-
-    :return: Token for referencing this operation
-
-    :raises RuntimeError: If context is not a schedule
-    """
-    # Resolve any operation tokens to names
-    resolved_params = resolve_schedule_params(schedule_params)  # type: ignore[arg-type]
-
-    # Generate operation name if not provided
-    if "op_name" not in resolved_params:
-        resolved_params["op_name"] = _generate_op_name()
-
-    # ScheduledOperation expects 'name', not 'op_name'
-    sched_params = {**resolved_params}
-    sched_params["name"] = sched_params.pop("op_name")
-
-    sched_op = ScheduledOperation(op=operation, **sched_params)  # type: ignore[arg-type]
-
-    # Add to the appropriate schedule-like context
-    if isinstance(context, SchedRepetition | SchedIteration | SchedConditional):
-        context.body.items.append(sched_op)
-    elif isinstance(context, Schedule):
-        context.items.append(sched_op)
-    else:
-        raise RuntimeError(f"Cannot add scheduled operation to {type(context).__name__} context")
-
-    return OperationToken(resolved_params["op_name"], sched_op)
-
-
-def _register_variable(name: str) -> None:
-    """Register a variable as declared in the current context.
-
-    :param name: Variable name to register
-
-    :raises RuntimeError: If variable is already declared in the current context
-    """
-    state = _get_state()
-    if not state.context_stack:
-        return  # No context active, skip registration
-
-    # Check if already declared in current context (not parent contexts)
-    current = state.declared_variables[-1]
-    if name in current:
-        raise RuntimeError(
-            f"Variable '{name}' is already declared in the current context. "
-            f"Each variable can only be declared once per context."
-        )
-
-    # Register in current context
-    current.add(name)
-
-
-def _is_variable_declared(name: str) -> bool:
-    """Check if a variable has been declared in the current or parent contexts.
-
-    Variables are scoped to the context where they are declared and all nested contexts.
-
-    :param name: Variable name to check
-
-    :return: :obj:`True` if variable is declared, :obj:`False` otherwise
-    """
-    state = _get_state()
-
-    # Check from innermost to outermost context
-    return any(name in declared for declared in reversed(state.declared_variables))
-
-
-def _check_variable_declared(name: str) -> None:
-    """Check if a variable has been declared and raise an error if not.
-
-    :param name: Variable name to check
-
-    :raises RuntimeError: If variable has not been declared in current or parent contexts
-    """
-    if not _is_variable_declared(name):
-        raise RuntimeError(
-            f"Variable '{name}' has not been declared. Use var_decl('{name}', dtype, ...) "
-            f"before referencing this variable."
-        )
-
-
-def _validate_variable_ref(var_ref: VariableRefLike) -> VariableRef:
-    """Validate a variable reference and convert to VariableRef object.
-
-    :param var_ref: Variable reference (string, dict, or VariableRef)
-
-    :return: Validated VariableRef object
-
-    :raises RuntimeError: If variable has not been declared
-    """
-    # Convert to VariableRef if needed
-    if isinstance(var_ref, str):
-        var_ref = VariableRef(var_ref)
-    elif isinstance(var_ref, dict):
-        var_ref = VariableRef(**var_ref)
-    elif isinstance(var_ref, VariableRef):
-        pass
-    else:
-        raise TypeError(f"Unexpected value passed into variable reference: {var_ref!r}")
-
-    # Check if variable is declared
-    _check_variable_declared(var_ref.var)
-
-    # Return validated VariableRef
-    return var_ref
-
-
-def _reject_schedule_params(schedule_params: ScheduleParams, operation_name: str) -> None:
-    """Reject schedule parameters when adding to sequence.
-
-    Called just before adding an operation to a sequence context to ensure
-    no schedule parameters were provided.
-
-    :param schedule_params: Schedule parameters to check
-    :param operation_name: Name of the operation for error messages
-
-    :raises RuntimeError: If any schedule parameters are provided
-    """
-    provided_params = [key for key, value in schedule_params.items() if value is not None]
-
-    if provided_params:
-        params_str = ", ".join(f"'{p}'" for p in provided_params)
-        raise RuntimeError(
-            f"Schedule parameters ({params_str}) not allowed in sequence context for '{operation_name}'. "
-            f"Use build_schedule() instead of build_sequence()."
-        )
-
-
-def _validate_or_pass_through[T](
-    value: T | VariableRef,
-    *,
-    param_name: str,
-    context: str,
-) -> T | VariableRef:
-    """Validate a parameter that can be a variable reference or literal value.
-
-    - If value is :obj:`None`: pass through
-    - If value is :class:`VariableRef`: validate it's declared, pass through
-    - If value is dict with ``"var"`` key: convert to :class:`VariableRef` and validate
-    - If value is dict without ``"var"`` key: pass through unchanged
-    - If value is string AND identifier: treat as variable, validate, return :class:`VariableRef`
-    - If value is string AND not identifier: pass through (e.g., ``"10us"``)
-    - Otherwise: pass through unchanged (for model validation)
-
-    This handles parameters like ``duration="10us"`` vs ``duration="my_var"`` vs ``duration=var("my_var")``.
-
-    :param value: Parameter value
-    :param param_name: Name of the parameter being validated (for error messages)
-    :param context: Context/function name where validation occurs (for error messages)
-
-    :return: :class:`VariableRef` if identifier string or dict with ``"var"``, else unchanged value
-
-    :raises RuntimeError: If identifier string references undeclared variable
-    """
-    if value is None:
-        return None  # type: ignore[return-value]
-
-    if isinstance(value, VariableRef):
-        _check_variable_declared(value.var)
-        return value
-
-    if isinstance(value, dict):
-        if "var" in value:
-            var_ref = VariableRef(**value)
-            _check_variable_declared(var_ref.var)
-            return var_ref
-        # Dict without "var" key - pass through (e.g., {"ns": 100})
-        return value  # type: ignore[return-value]
-
-    if isinstance(value, str) and value.isidentifier():
-        if not _is_variable_declared(value):
-            raise RuntimeError(
-                f"Parameter '{param_name}' in {context} references undeclared variable '{value}'. "
-                f"Use var_decl('{value}', dtype, ...) before referencing this variable."
-            )
-        return VariableRef(value)
-
-    return value
-
-
-def _validate_explicit_variable_ref[T](value: T, *, param_name: str) -> T | VariableRef:
-    """Validate only *explicit* variable references, passing everything else through.
-
-    Unlike :func:`_validate_or_pass_through`, an identifier-like string is **not**
-    treated as a variable reference. Use this for free-form values where a bare
-    string is more likely to be a literal than a variable name; callers wanting a
-    variable there must say so with :func:`var` or a ``{"var": ...}`` dict.
-
-    :param value: Parameter value
-    :param param_name: Name of the parameter being validated (for error messages)
-
-    :return: :class:`VariableRef` if explicitly one, else the value unchanged
-
-    :raises RuntimeError: If an explicit reference names an undeclared variable
-    """
-    if isinstance(value, VariableRef):
-        _check_variable_declared(value.var)
-        return value
-
-    if isinstance(value, dict) and "var" in value:
-        var_ref = VariableRef(**value)
-        _check_variable_declared(var_ref.var)
-        return var_ref
-
-    return value
-
-
-# ============================================================================
-# Basic model builders
-# ============================================================================
-
-
-@overload
-def phase(_0: Literal[0], /) -> Phase: ...
-
-
-@overload
-def phase(_s: str, /) -> Phase: ...
-
-
-@overload
-def phase(*, deg: float) -> Phase: ...
-
-
-@overload
-def phase(*, rad: float) -> Phase: ...
-
-
-@overload
-def phase(*, turns: float) -> Phase: ...
-
-
-@overload
-def phase(*, half_turns: float) -> Phase: ...
-
-
-def phase(*args, **kwargs) -> Phase:
-    """Construct a phase object.
-
-    :param deg: Phase in degrees
-    :param rad: Phase in radians
-    :param turns: Phase in turns
-    :param half_turns: Phase in half-turns
-    :param _0: The literal zero
-    :param _s: The string representation (value + unit) only as positional
-    :return: The constructed phase object
-        Use the result to matrix-multiply (`@`)
-    """
-    match len(args):
-        case 0:
-            if not len(kwargs):
-                raise TypeError("not enough arguments")
-            return Phase(**kwargs)
-        case 1:
-            if len(kwargs):
-                raise TypeError("keyword arguments cannot follow positional argument")
-            return Phase.model_validate(*args)
-        case _:
-            raise TypeError("at most one positional argument is allowed")
-
-
 # ============================================================================
 # Context managers
 # ============================================================================
-
-
-def _reject_unconsumed_blocks(unconsumed: list[ScheduleBlock], context_kind: str) -> None:
-    """Raise if any schedule blocks created in a context were never added to it.
-
-    :param unconsumed: Blocks still outstanding when the context closed
-    :param context_kind: Human-readable name of the context, for the error message
-
-    :raises RuntimeError: If ``unconsumed`` is non-empty
-    """
-    if not unconsumed:
-        return
-
-    error_parts = [
-        f"{context_kind} context closed with {len(unconsumed)} unconsumed ScheduleBlock(s). "
-        "All @nested_schedule decorated function calls must be passed to add_block() "
-        "with schedule parameters.\n"
-    ]
-    for i, block in enumerate(unconsumed, 1):
-        error_parts.append(f"\nUnconsumed block #{i} created at:")
-        error_parts.append(block._get_creation_info())
-
-    raise RuntimeError("".join(error_parts))
-
-
-@contextmanager
-def _sub_schedule_with_token(
-    **schedule_params: Unpack[ScheduleParams],
-) -> Iterator[tuple[Schedule, OperationToken]]:
-    """Open a nested sub-schedule, exposing both the schedule and its reference token.
-
-    This is the shared implementation behind :func:`sub_schedule` and :func:`add_block`.
-
-    :param schedule_params: Schedule timing parameters
-
-    :yield: The nested schedule and the token referencing it in the parent
-
-    :raises RuntimeError: If not called within a schedule context
-    """
-    context = _current_context("sub_schedule()")
-    if not _in_schedule(context):
-        raise RuntimeError("sub_schedule can only be used within a build_schedule() context")
-
-    nested_sched = Schedule(items=[])
-
-    # Add it to the parent schedule with timing parameters
-    token = _add_to_schedule(context, nested_sched, **schedule_params)
-
-    # Push nested schedule as current context for operations inside it
-    _push_context(nested_sched)
-    try:
-        yield nested_sched, token
-    except BaseException:
-        _pop_context()
-        raise
-    else:
-        unconsumed = _get_state().unconsumed_blocks[-1]
-        _pop_context()
-        _reject_unconsumed_blocks(unconsumed, "sub_schedule")
 
 
 @contextmanager
@@ -622,6 +164,8 @@ def build_sequence() -> Iterator[OpSequence]:
     """Context manager for building an operation sequence.
 
     :yield: The operation sequence being built
+
+    :raises RuntimeError: If a build_schedule() context is already active
 
     Examples
 
@@ -633,6 +177,13 @@ def build_sequence() -> Iterator[OpSequence]:
             play("ch1", square_pulse(duration="10us", amplitude="100mV"))
             wait("ch1", duration="5us")
     """
+    state = _get_state()
+    if state.context_stack and _in_schedule(state.context_stack[-1]):
+        raise RuntimeError(
+            "build_sequence() cannot be nested inside a build_schedule() context. "
+            "Schedules are built with eq1_pulse.builder.experimental and cannot contain "
+            "sequence operations."
+        )
     seq = OpSequence(items=[])
     _push_context(seq)
     try:
@@ -675,7 +226,7 @@ def sub_sequence() -> Iterator[OpSequence]:
     # Must be called within a sequence context
     context = _current_context("sub_sequence()")
     if not _in_sequence(context):
-        raise RuntimeError("sub_sequence can only be used within a sequence context (not in schedules)")
+        raise _not_a_sequence_context("sub_sequence()")
 
     # Create the nested sequence
     nested_seq = OpSequence(items=[])
@@ -692,90 +243,14 @@ def sub_sequence() -> Iterator[OpSequence]:
 
 
 @contextmanager
-def build_schedule() -> Iterator[Schedule]:
-    """Context manager for building a schedule.
-
-    :yield: The schedule being built
-
-    Examples
-
-    .. code-block:: python
-
-        from eq1_pulse.builder import *
-
-        with build_schedule() as sched:
-            op1 = play("ch1", square_pulse(duration="10us", amplitude="100mV"))
-            op2 = play("ch2", square_pulse(duration="10us", amplitude="100mV"),
-                            ref_op=op1, ref_pt="start", rel_time="5us")
-    """
-    sched = Schedule(items=[])
-    _push_context(sched)
-    try:
-        yield sched
-    except BaseException:
-        _pop_context()
-        raise
-    else:
-        unconsumed = _get_state().unconsumed_blocks[-1]
-        _pop_context()
-        _reject_unconsumed_blocks(unconsumed, "Schedule")
-
-
-@contextmanager
-def sub_schedule(**schedule_params: Unpack[ScheduleParams]) -> Iterator[OperationToken]:
-    """Context manager for building a nested sub-schedule with timing parameters.
-
-    This creates a sub-schedule that can be positioned relative to other operations
-    in the parent schedule. Works in any schedule context, including the bodies of
-    schedule-side ``repeat``, ``for_`` and ``if_`` blocks.
-
-    :param schedule_params: Schedule timing parameters
-        (``op_name``, ``ref_op``, ``ref_pt``, ``ref_pt_new``, ``rel_time``)
-
-    :yield: Token referencing the sub-schedule, for use as ``ref_op`` of later operations
-
-    :raises RuntimeError: If not called within a schedule context
-
-    Examples
-
-    .. code-block:: python
-
-        from eq1_pulse.builder import *
-
-        with build_schedule() as main:
-            # Create initialization sub-schedule
-            with sub_schedule(op_name="init") as init:
-                play("qubit", square_pulse(duration="100ns", amplitude="200mV"))
-                wait("qubit", duration="50ns")
-
-            # Create gate operation positioned after init, referring to it by token
-            gate_op = play("qubit", square_pulse(duration="20ns", amplitude="150mV"),
-                           ref_op=init, ref_pt="end", rel_time="10ns")
-
-            # Create measurement block positioned after gate
-            with sub_schedule(op_name="measure", ref_op=gate_op, ref_pt="end", rel_time="50ns"):
-                play("drive", square_pulse(duration="1us", amplitude="50mV"))
-                record("readout", var="result", duration="1us",
-                       integration=full_integration())
-    """
-    with _sub_schedule_with_token(**schedule_params) as (_, token):
-        yield token
-
-
-@contextmanager
-def repeat(count: int, **schedule_params: Unpack[ScheduleParams]) -> Iterator[Repetition | SchedRepetition]:
+def repeat(count: int) -> Iterator[Repetition]:
     """Context manager for building a repetition block.
 
-    Creates a sequence repetition in sequence contexts, or a schedule repetition
-    in schedule contexts.
-
     :param count: Number of times to repeat
-    :param schedule_params:
-        Additional scheduling parameters (op_name, ref_op, ref_pt, etc.) - only used in schedule context
 
     :yield: The repetition being built
 
-    :raises RuntimeError: If schedule parameters are provided in a sequence context
+    :raises RuntimeError: If not called within a sequence context
 
     Examples
 
@@ -783,108 +258,22 @@ def repeat(count: int, **schedule_params: Unpack[ScheduleParams]) -> Iterator[Re
 
         from eq1_pulse.builder import *
 
-        # In sequence context
         with build_sequence():
             with repeat(10):
-                play("qubit", square_pulse(duration="50ns", amplitude="100mV"))
-
-        # In schedule context with timing
-        with build_schedule():
-            op1 = play("qubit", square_pulse(duration="50ns", amplitude="100mV"))
-            with repeat(10, ref_op=op1, ref_pt="end"):
                 play("qubit", square_pulse(duration="50ns", amplitude="100mV"))
     """
     parent = _current_context("repeat()")
 
-    # Schedule context - create SchedRepetition
-    if _in_schedule(parent):
-        sched_rep = SchedRepetition(count=count, body=Schedule(items=[]))
-        _add_to_schedule(parent, sched_rep, **schedule_params)
-        _push_context(sched_rep)
-        try:
-            yield sched_rep  # type: ignore[misc]
-        finally:
-            _pop_context()
-        return
+    if not _in_sequence(parent):
+        raise _not_a_sequence_context("repeat()")
 
-    # Sequence context - create Repetition
-    if _in_sequence(parent):
-        # Check that no schedule parameters were provided in sequence context
-        _reject_schedule_params(schedule_params, "repeat")
-        rep = Repetition(count=count, body=OpSequence(items=[]))
-        _add_to_sequence(parent, rep)
-        _push_context(rep)
-        try:
-            yield rep  # type: ignore[misc]
-        finally:
-            _pop_context()
-        return
-
-    msg = f"repeat() cannot be used in context of type {type(parent).__name__}"
-    raise RuntimeError(msg)
-
-
-def _convert_range_to_model(iterable: Any) -> Range | list[Any] | Any:
-    """Convert Python range objects to Range model or list.
-
-    This function handles the semantic differences between Python's built-in range
-    and the eq1_pulse Range model:
-
-    - Python range excludes the stop point, Range includes it
-    - Python range can be empty if step has wrong direction, Range adjusts step sign
-    - Range requires step to divide the distance evenly
-
-    :param iterable: An iterable, potentially a Python range object
-
-    :return: Range model, list, or the original iterable unchanged
-
-    Conversion rules:
-
-    - Empty range → :class:`ValueError` (a loop that can never run is a typo, not intent)
-    - Single-element range → single-element list
-    - Multi-element range → Range model (if valid) or list
-
-    :raises ValueError: If the range yields no elements
-
-    Examples
-
-    .. code-block:: python
-
-        _convert_range_to_model(range(0, 10, 2))  # Range(start=0, stop=8, step=2)
-        _convert_range_to_model(range(10, 0, 2))  # ValueError (wrong step direction)
-        _convert_range_to_model(range(5, 6))      # [5] (single element)
-    """
-    # Only process Python range objects
-    if not isinstance(iterable, range):
-        return iterable
-
-    # Convert to list to get actual elements
-    range_list = list(iterable)
-
-    # An empty range (wrong step direction, or step larger than the span) would build
-    # a loop body that can never execute. Say so rather than emitting it silently.
-    if len(range_list) == 0:
-        raise ValueError(
-            f"{iterable!r} is empty, so the loop body would never execute. "
-            "Check the sign of the step and the order of start/stop."
-        )
-
-    # Handle single-element range
-    if len(range_list) == 1:
-        return range_list
-
-    # Multi-element range: convert to Range model
-    # Range includes the stop point, so we use the last element as stop
-    start = range_list[0]
-    stop = range_list[-1]
-    step = iterable.step
-
-    # Create Range with adjusted stop point to include the last element
+    rep = Repetition(count=count, body=OpSequence(items=[]))
+    _add_to_sequence(parent, rep)
+    _push_context(rep)
     try:
-        return Range(start=start, stop=stop, step=step)
-    except ValueError:
-        # If Range validation fails (step doesn't divide evenly), fall back to list
-        return range_list
+        yield rep
+    finally:
+        _pop_context()
 
 
 @overload
@@ -892,8 +281,7 @@ def _convert_range_to_model(iterable: Any) -> Range | list[Any] | Any:
 def for_(
     var: VariableRefLike,
     items: Iterable[Any] | Range | LinSpace,
-    **schedule_params: Unpack[ScheduleParams],
-) -> Iterator[Iteration | SchedIteration]: ...
+) -> Iterator[Iteration]: ...
 
 
 @overload
@@ -901,16 +289,14 @@ def for_(
 def for_(
     var: list[VariableRefLike],
     items: list[Iterable[Any] | Range | LinSpace] | Iterable[Any] | Range | LinSpace,
-    **schedule_params: Unpack[ScheduleParams],
-) -> Iterator[Iteration | SchedIteration]: ...
+) -> Iterator[Iteration]: ...
 
 
 @contextmanager
 def for_(
     var: VariableRefLike | list[VariableRefLike],
     items: Iterable[Any] | Range | LinSpace | list[Iterable[Any] | Range | LinSpace],
-    **schedule_params: Unpack[ScheduleParams],
-) -> Iterator[Iteration | SchedIteration]:
+) -> Iterator[Iteration]:
     """Context manager for building an iteration (for loop).
 
     Supports both single and zipped iteration:
@@ -926,12 +312,9 @@ def for_(
         - For zipped iteration: list of iterables, one per variable. A single iterable
           is broadcast across all of the variables.
 
-    :param schedule_params:
-        Additional scheduling parameters (op_name, ref_op, ref_pt, etc.) - only used in schedule context
-
     :yield: The iteration being built
 
-    :raises RuntimeError: If schedule parameters are provided in a sequence context
+    :raises RuntimeError: If not called within a sequence context
     :raises ValueError: If var/items length mismatch in zipped iteration
 
     Examples
@@ -959,12 +342,6 @@ def for_(
                     duration="100ns",
                     amplitude=var("amp")
                 ))
-
-        # In schedule context with timing
-        with build_schedule():
-            op1 = play("qubit", square_pulse(duration="50ns", amplitude="100mV"))
-            with for_("i", range(0, 5), ref_op=op1, ref_pt="end"):
-                play("qubit", square_pulse(duration="20ns", amplitude="100mV"))
     """
     # Validate variable reference(s)
     if isinstance(var, list):
@@ -997,22 +374,9 @@ def for_(
 
     parent = _current_context("for_()")
 
-    if _in_schedule(parent):
-        # For schedules, we need SchedIteration not Iteration
-        sched_iter = SchedIteration(var=validated_vars, items=validated_items, body=Schedule(items=[]))
-        _add_to_schedule(parent, sched_iter, **schedule_params)
-        _push_context(sched_iter)
-        try:
-            yield sched_iter  # type: ignore[misc]
-        finally:
-            _pop_context()
-        return
-
     if not _in_sequence(parent):
-        msg = f"for_() cannot be used in context of type {type(parent).__name__}"
-        raise RuntimeError(msg)
+        raise _not_a_sequence_context("for_()")
 
-    _reject_schedule_params(schedule_params, "for_")
     iter_obj = Iteration(var=validated_vars, items=validated_items, body=OpSequence(items=[]))
     _add_to_sequence(parent, iter_obj)
     _push_context(iter_obj)
@@ -1023,16 +387,14 @@ def for_(
 
 
 @contextmanager
-def if_(var: VariableRefLike, **schedule_params: Unpack[ScheduleParams]) -> Iterator[Conditional]:
+def if_(var: VariableRefLike) -> Iterator[Conditional]:
     """Context manager for building a conditional block.
 
     :param var: Variable reference for the condition
-    :param schedule_params:
-        Additional scheduling parameters (op_name, ref_op, ref_pt, etc.) - only used in schedule context
 
     :yield: The conditional being built
 
-    :raises RuntimeError: If schedule parameters are provided in a sequence context
+    :raises RuntimeError: If not called within a sequence context
 
     Examples
 
@@ -1040,40 +402,20 @@ def if_(var: VariableRefLike, **schedule_params: Unpack[ScheduleParams]) -> Iter
 
         from eq1_pulse.builder import *
 
-        # In sequence context
         with build_sequence():
             var_decl("result", "bool")
             # ... perform measurement to populate result ...
             with if_("result"):
                 play("qubit", square_pulse(duration="50ns", amplitude="100mV"))
-
-        # In schedule context with timing
-        with build_schedule():
-            op1 = play("qubit", square_pulse(duration="50ns", amplitude="100mV"))
-            with if_("result", ref_op=op1, ref_pt="end"):
-                play("qubit", square_pulse(duration="20ns", amplitude="100mV"))
     """
     # Validate variable reference
     validated_var = _validate_variable_ref(var)
 
     parent = _current_context("if_()")
 
-    if _in_schedule(parent):
-        # For schedules, we need SchedConditional not Conditional
-        sched_cond = SchedConditional(var=validated_var, body=Schedule(items=[]))
-        _add_to_schedule(parent, sched_cond, **schedule_params)
-        _push_context(sched_cond)
-        try:
-            yield sched_cond  # type: ignore[misc]
-        finally:
-            _pop_context()
-        return
-
     if not _in_sequence(parent):
-        msg = f"if_() cannot be used in context of type {type(parent).__name__}"
-        raise RuntimeError(msg)
+        raise _not_a_sequence_context("if_()")
 
-    _reject_schedule_params(schedule_params, "if_")
     cond = Conditional(var=validated_var, body=OpSequence(items=[]))
     _add_to_sequence(parent, cond)
     _push_context(cond)
@@ -1081,343 +423,6 @@ def if_(var: VariableRefLike, **schedule_params: Unpack[ScheduleParams]) -> Iter
         yield cond
     finally:
         _pop_context()
-
-
-# ============================================================================
-# Pulse creation helpers
-# ============================================================================
-
-
-def square_pulse(
-    *,
-    duration: DurationLike | VariableRefLike,
-    amplitude: AmplitudeLike | VariableRefLike,
-    rise_time: DurationLike | VariableRefLike | None = None,
-    fall_time: DurationLike | VariableRefLike | None = None,
-) -> SquarePulse:
-    """Create a square pulse.
-
-    :param duration: Pulse duration
-    :param amplitude: Pulse amplitude
-    :param rise_time: Optional rise time
-    :param fall_time: Optional fall time
-
-    :return: Square pulse definition
-
-    Examples
-
-    .. code-block:: python
-
-        from eq1_pulse.builder import square_pulse
-
-        pulse = square_pulse(duration="10us", amplitude="100mV")
-    """
-    duration = _validate_or_pass_through(duration, param_name="duration", context="square_pulse()")
-    amplitude = _validate_or_pass_through(amplitude, param_name="amplitude", context="square_pulse()")
-    rise_time = _validate_or_pass_through(rise_time, param_name="rise_time", context="square_pulse()")
-    fall_time = _validate_or_pass_through(fall_time, param_name="fall_time", context="square_pulse()")
-
-    return SquarePulse(
-        duration=duration,
-        amplitude=amplitude,
-        rise_time=rise_time,
-        fall_time=fall_time,
-    )
-
-
-def sine_pulse(
-    *,
-    duration: DurationLike | VariableRefLike,
-    amplitude: AmplitudeLike | VariableRefLike,
-    frequency: FrequencyLike | VariableRefLike,
-    to_frequency: FrequencyLike | VariableRefLike | None = None,
-) -> SinePulse:
-    """Create a sine pulse.
-
-    :param duration: Pulse duration
-    :param amplitude: Pulse amplitude
-    :param frequency: Start frequency
-    :param to_frequency: Optional end frequency for chirp
-
-    :return: Sine pulse definition
-
-    Examples
-
-    .. code-block:: python
-
-        from eq1_pulse.builder import sine_pulse
-
-        pulse = sine_pulse(duration="20us", amplitude="50mV", frequency="5GHz")
-
-        # Chirped sine pulse
-        chirp = sine_pulse(
-            duration="50us",
-            amplitude="30mV",
-            frequency="4.5GHz",
-            to_frequency="5.5GHz"
-        )
-    """
-    duration = _validate_or_pass_through(duration, param_name="duration", context="sine_pulse()")
-    amplitude = _validate_or_pass_through(amplitude, param_name="amplitude", context="sine_pulse()")
-    frequency = _validate_or_pass_through(frequency, param_name="frequency", context="sine_pulse()")
-    to_frequency = _validate_or_pass_through(to_frequency, param_name="to_frequency", context="sine_pulse()")
-
-    return SinePulse(
-        duration=duration,
-        amplitude=amplitude,
-        frequency=frequency,
-        to_frequency=to_frequency,
-    )
-
-
-def external_pulse(
-    function: str,
-    *,
-    duration: DurationLike | VariableRefLike,
-    amplitude: AmplitudeLike | VariableRefLike,
-    params: dict[str, Any] | None = None,
-) -> ExternalPulse:
-    """Create an external pulse reference.
-
-    References a pulse shape defined in an external function. The function
-    should accept duration, amplitude, and any additional params, and return
-    normalized waveform samples.
-
-    :param function: Fully qualified function name (e.g., "my_lib.gaussian")
-    :param duration: Pulse duration
-    :param amplitude: Pulse amplitude (scale factor)
-    :param params: Additional parameters passed to the pulse function
-
-    :return: External pulse definition
-
-    Examples
-
-    .. code-block:: python
-
-        from eq1_pulse.builder import external_pulse
-
-        # Reference a Gaussian pulse from an external library
-        pulse = external_pulse(
-            "pulses.gaussian",
-            duration="100ns",
-            amplitude="80mV",
-            params={"sigma": "20ns"}
-        )
-
-        # DRAG pulse with parameters
-        drag = external_pulse(
-            "pulses.drag",
-            duration="50ns",
-            amplitude="100mV",
-            params={"beta": 0.5, "sigma": "10ns"}
-        )
-    """
-    duration = _validate_or_pass_through(duration, param_name="duration", context="external_pulse()")
-    amplitude = _validate_or_pass_through(amplitude, param_name="amplitude", context="external_pulse()")
-
-    # Validate top-level params dict values (if params provided).
-    #
-    # Unlike the typed scalar parameters above, params carries arbitrary values for
-    # the external function, so a bare identifier-like string is far more likely to
-    # be a literal ("hann", "cubic", "gaussian") than a variable name. Only explicit
-    # variable references are validated here; everything else passes through.
-    if params is not None:
-        params = {
-            key: _validate_explicit_variable_ref(value, param_name=f"params['{key}']") for key, value in params.items()
-        }
-
-    return ExternalPulse(
-        function=function,
-        duration=duration,
-        amplitude=amplitude,
-        params=params,  # type: ignore[arg-type]
-    )
-
-
-def arbitrary_pulse(
-    samples: list[float] | list[complex],
-    *,
-    duration: DurationLike | VariableRefLike,
-    amplitude: AmplitudeLike | VariableRefLike,
-    interpolation: str | None = None,
-    time_points: list[float] | None = None,
-) -> ArbitrarySampledPulse:
-    """Create an arbitrary sampled pulse from explicit samples.
-
-    Defines a pulse shape using explicitly provided sample points. Samples
-    should be normalized (peak value of 1.0), and will be scaled by amplitude.
-
-    :param samples: Normalized waveform samples (real or complex)
-    :param duration: Total pulse duration
-    :param amplitude: Pulse amplitude (scale factor for samples)
-    :param interpolation: Interpolation method (e.g., "linear", "cubic")
-    :param time_points: Optional time points for samples (normalized 0-1)
-
-    :return: Arbitrary pulse definition
-
-    Examples
-
-    .. code-block:: python
-
-        from eq1_pulse.builder import arbitrary_pulse
-
-        # Simple triangle pulse
-        triangle = arbitrary_pulse(
-            samples=[0.0, 0.5, 1.0, 0.5, 0.0],
-            duration="100ns",
-            amplitude="50mV"
-        )
-
-        # Complex IQ pulse with explicit time points
-        iq_samples = [0.0+0.0j, 0.5+0.3j, 1.0+0.0j, 0.5-0.3j, 0.0+0.0j]
-        iq_pulse = arbitrary_pulse(
-            samples=iq_samples,
-            duration="80ns",
-            amplitude="75mV",
-            time_points=[0.0, 0.25, 0.5, 0.75, 1.0],
-            interpolation="cubic"
-        )
-    """
-    duration = _validate_or_pass_through(duration, param_name="duration", context="arbitrary_pulse()")
-    amplitude = _validate_or_pass_through(amplitude, param_name="amplitude", context="arbitrary_pulse()")
-
-    return ArbitrarySampledPulse(
-        samples=samples,
-        duration=duration,
-        amplitude=amplitude,
-        interpolation=interpolation,
-        time_points=time_points,
-    )
-
-
-# ============================================================================
-# Integration helpers
-# ============================================================================
-
-
-def full_integration() -> FullIntegration:
-    """Create a full integration configuration.
-
-    Full integration performs a simple accumulation of the measured signal
-    over the acquisition window.
-
-    :return: Full integration configuration object
-
-    Examples
-
-    .. code-block:: python
-
-        from eq1_pulse.builder import full_integration, record
-
-        # Use full integration for recording
-        record("readout", var="result", duration="1us", integration=full_integration())
-    """
-    return FullIntegration()
-
-
-def demod_integration(
-    *,
-    phase: PhaseLike | None = None,
-    scale_cos: float = 1.0,
-    scale_sin: float = 1.0,
-) -> DemodIntegration:
-    """Create a demodulation integration configuration.
-
-    Demodulation integration multiplies the measured signal with the channel's
-    output signal (at the channel's frequency and phase) before integration.
-    This is useful for extracting the in-phase and quadrature components.
-
-    :param phase: Optional phase rotation to apply to the result
-    :param scale_cos: Scaling factor for the real (cosine) part (default: 1.0)
-    :param scale_sin: Scaling factor for the imaginary (sine) part (default: 1.0)
-
-    :return: Demodulation integration configuration object
-
-    Examples
-
-    .. code-block:: python
-
-        from eq1_pulse.builder import demod_integration, record
-
-        # Basic demodulation
-        record("readout", var="result", duration="1us",
-               integration=demod_integration())
-
-        # With phase rotation
-        record("readout", var="result", duration="1us",
-               integration=demod_integration(phase="45deg"))
-
-        # With scaling (e.g., to flip sign of imaginary part)
-        record("readout", var="result", duration="1us",
-               integration=demod_integration(scale_cos=1.0, scale_sin=-1.0))
-    """
-    return DemodIntegration(
-        phase=phase,  # type: ignore[arg-type]
-        scale_cos=scale_cos,
-        scale_sin=scale_sin,
-    )
-
-
-# ============================================================================
-# Reference helpers
-# ============================================================================
-
-
-def var(name: str) -> VariableRef:
-    """Create a variable reference.
-
-    :param name: Variable name
-
-    :return: Variable reference
-
-    :raises RuntimeError: If variable has not been declared in current or parent contexts
-
-    Examples
-
-    .. code-block:: python
-
-        from eq1_pulse.builder import var
-
-        freq_var = var("frequency")
-    """
-    _check_variable_declared(name)
-    return VariableRef(var=name)
-
-
-def channel(name: str) -> ChannelRef:
-    """Create a channel reference.
-
-    :param name: Channel name
-
-    :return: Channel reference
-
-    Examples
-
-    .. code-block:: python
-
-        from eq1_pulse.builder import channel
-
-        ch = channel("qubit_1")
-    """
-    return ChannelRef(channel=name)
-
-
-def pulse_ref(name: str) -> PulseRef:
-    """Create a pulse reference.
-
-    :param name: Pulse name
-
-    :return: Pulse reference
-
-    Examples
-
-    .. code-block:: python
-
-        from eq1_pulse.builder import pulse_ref
-
-        p = pulse_ref("pi_pulse")
-    """
-    return PulseRef(pulse_name=name)
 
 
 # ============================================================================
@@ -1431,8 +436,7 @@ def var_decl(
     *,
     shape: tuple[int, ...] | None = None,
     unit: str | None = None,
-    **kwargs: Unpack[ScheduleParams],
-) -> OperationToken | None:
+) -> None:
     """Declare a variable for use in the current context.
 
     Variables should be declared before they are used in iterations or conditionals.
@@ -1443,15 +447,6 @@ def var_decl(
     :param dtype: Data type of the variable ("bool", "int", "float", or "complex")
     :param shape: Optional shape for array variables (e.g., (10,) for 1D array)
     :param unit: Optional unit string (e.g., "mV", "ns", "GHz") for the variable
-    :param op_name: Optional name for the operation (schedules only)
-    :param rel_time: Relative time from the reference point (schedules only)
-    :param ref_op: Name of or token for the reference operation (schedules only)
-    :param ref_pt: Reference point on the reference operation (schedules only)
-    :param ref_pt_new: Reference point on the new operation (schedules only)
-
-    :return: Operation token if in schedule context, :obj:`None` if in sequence context
-
-    :raises RuntimeError: If schedule parameters are provided in a sequence context
 
     Examples
 
@@ -1468,11 +463,6 @@ def var_decl(
 
             # Declare a complex array variable
             var_decl("iq_data", "complex", shape=(100,))
-
-        # In schedule context
-        with build_schedule():
-            var_decl("result", "complex", unit="mV")
-            # ... use the variable in scheduled operations
     """
     var_decl_obj = VariableDecl(name=name, dtype=dtype, shape=shape, unit=unit)
 
@@ -1480,18 +470,15 @@ def var_decl(
     _register_variable(name)
 
     context = _current_context("var_decl()")
-    if _in_schedule(context):
-        return _add_to_schedule(context, var_decl_obj, **kwargs)
-    else:
-        _add_to_sequence(context, var_decl_obj, kwargs, "var_decl")
-        return None
+    if not _in_sequence(context):
+        raise _not_a_sequence_context("var_decl()")
+    _add_to_sequence(context, var_decl_obj)
 
 
 def pulse_decl(
     name: str,
     pulse: PulseType,
-    **kwargs: Unpack[ScheduleParams],
-) -> OperationToken | None:
+) -> None:
     """Declare a pulse for use in the current context.
 
     Pulses can be declared and given a name, then referenced later using
@@ -1500,15 +487,6 @@ def pulse_decl(
 
     :param name: Name of the pulse (must be a valid identifier)
     :param pulse: The pulse definition (e.g., from :func:`square_pulse`, :func:`sine_pulse`)
-    :param op_name: Optional name for the operation (schedules only)
-    :param rel_time: Relative time from the reference point (schedules only)
-    :param ref_op: Name of or token for the reference operation (schedules only)
-    :param ref_pt: Reference point on the reference operation (schedules only)
-    :param ref_pt_new: Reference point on the new operation (schedules only)
-
-    :return: Operation token if in schedule context, :obj:`None` if in sequence context
-
-    :raises RuntimeError: If schedule parameters are provided in a sequence context
 
     Examples
 
@@ -1523,20 +501,13 @@ def pulse_decl(
             # Use the pulse reference later
             play("qubit", pulse_ref("my_square"))
             play("qubit", pulse_ref("my_square"))  # Reuse the same pulse
-
-        # In schedule context
-        with build_schedule():
-            pulse_decl("readout_pulse", square_pulse(duration="1us", amplitude="50mV"))
-            play("readout", pulse_ref("readout_pulse"))
     """
     pulse_decl_obj = PulseDecl(name=name, pulse=pulse)
 
     context = _current_context("pulse_decl()")
-    if _in_schedule(context):
-        return _add_to_schedule(context, pulse_decl_obj, **kwargs)
-    else:
-        _add_to_sequence(context, pulse_decl_obj, kwargs, "pulse_decl")
-        return None
+    if not _in_sequence(context):
+        raise _not_a_sequence_context("pulse_decl()")
+    _add_to_sequence(context, pulse_decl_obj)
 
 
 # ============================================================================
@@ -1544,105 +515,12 @@ def pulse_decl(
 # ============================================================================
 
 
-class ScheduleBlock:
-    """A schedule block that must be added via add_block().
-
-    This is returned by @nested_schedule decorated functions and must be
-    passed to add_block() to be added to the schedule. Unconsumed blocks
-    are tracked and verified when the schedule context closes.
-    """
-
-    def __init__(self, func: Callable[..., Any], args: tuple[Any, ...], kwargs: dict[str, Any]):
-        """Initialize the schedule block.
-
-        :param func: The wrapped function to execute later
-        :param args: Positional arguments for the function
-        :param kwargs: Keyword arguments for the function
-        """
-        self._func = func
-        self._args = args
-        self._kwargs = kwargs
-
-        # Capture the traceback of where this block was created
-        # We'll use this to provide helpful error messages if the block is not consumed
-        self._creation_traceback = traceback.format_stack()[:-1]  # Exclude this __init__ frame
-
-        # Register this block against the innermost context, so that closing that
-        # context can report it if it was never passed to add_block()
-        _current_context("@nested_schedule function call")
-        _get_state().unconsumed_blocks[-1].append(self)
-
-    def _execute(self) -> None:
-        """Execute the block's function and mark as consumed."""
-        # Mark as consumed. The block was registered against whichever context was
-        # innermost when it was created, which is the caller's frame rather than the
-        # sub-schedule add_block() has since opened, so search outwards.
-        state = _get_state()
-        for blocks in reversed(state.unconsumed_blocks):
-            if self in blocks:
-                blocks.remove(self)
-                break
-
-        # Execute the function
-        self._func(*self._args, **self._kwargs)
-
-    def _get_creation_info(self) -> str:
-        """Get formatted information about where this block was created."""
-        # Format the traceback to show where the block was created
-        return "".join(self._creation_traceback)
-
-
-def add_block(block: ScheduleBlock, **schedule_params: Unpack[ScheduleParams]) -> OperationToken:
-    """Add a schedule block to the current schedule with timing parameters.
-
-    This function must be used with @nested_schedule decorated functions to
-    add them to a schedule with positioning parameters.
-
-    :param block: The ScheduleBlock returned by calling a @nested_schedule decorated function
-    :param schedule_params: Schedule timing parameters
-        (``op_name``, ``ref_op``, ``ref_pt``, ``ref_pt_new``, ``rel_time``)
-
-    :return: Operation token for referencing this block
-
-    :raises TypeError: If ``block`` is not a :class:`ScheduleBlock`
-    :raises RuntimeError: If not called within a schedule context
-
-    Examples
-
-    .. code-block:: python
-
-        from eq1_pulse.builder import *
-
-        @nested_schedule
-        def init_block(qubit: str):
-            play(qubit, square_pulse(duration="100ns", amplitude="200mV"))
-
-        with build_schedule():
-            # Call the function to create a block, then add it with timing
-            token = add_block(init_block("qubit0"), op_name="init")
-            add_block(init_block("qubit1"), ref_op=token, ref_pt="end", rel_time="50ns")
-    """
-    if not isinstance(block, ScheduleBlock):
-        raise TypeError("add_block() requires a ScheduleBlock from @nested_schedule decorated function")
-
-    context = _current_context("add_block()")
-    if not _in_schedule(context):
-        raise RuntimeError("add_block() can only be used within a build_schedule() context")
-
-    # Execute the block within a sub-schedule carrying the timing parameters
-    with _sub_schedule_with_token(**schedule_params) as (_, token):
-        block._execute()
-
-    return token
-
-
 def nested_sequence[R, **P](func: Callable[P, R]) -> Callable[P, R]:
     """Decorator that automatically wraps a function body in a sub-sequence.
 
     This decorator creates a :func:`sub_sequence` context around the function body,
     allowing you to define reusable operation blocks that can be composed together
-    in sequence contexts. Use this for functions that don't need schedule-specific
-    timing parameters.
+    in sequence contexts.
 
     :param func: The function to decorate
 
@@ -1688,71 +566,16 @@ def nested_sequence[R, **P](func: Callable[P, R]) -> Callable[P, R]:
                 # Use sub_sequence context
                 with sub_sequence() as _:
                     return func(*args, **kwargs)  # type: ignore[return-value]
-            # In schedule context - not supported, raise error
-            elif _in_schedule(context):
+            # Not a sequence context - not supported, raise error
+            else:
                 raise RuntimeError(
                     "@nested_sequence decorator cannot be used in schedule context. "
-                    "Use @nested_schedule decorator instead for functions that need schedule timing parameters."
+                    "eq1_pulse.builder.experimental has its own @nested_schedule decorator "
+                    "for functions that need schedule timing parameters."
                 )
 
         # If not in a context, just call the function directly
         return func(*args, **kwargs)
-
-    return wrapper
-
-
-def nested_schedule[**P](func: Callable[P, Any]) -> Callable[P, ScheduleBlock]:
-    """Decorator that creates schedule blocks for modular composition.
-
-    Functions decorated with @nested_schedule return a :class:`ScheduleBlock` when called.
-    This block must be passed to :func:`add_block` along with schedule timing parameters
-    to be added to the schedule.
-
-    This approach provides proper type safety: the decorated function's parameters are
-    preserved, and schedule parameters are provided separately via :func:`add_block`.
-
-    :param func: The function to decorate
-
-    :return: A function that returns a ScheduleBlock when called
-
-    Examples
-
-    .. code-block:: python
-
-        from eq1_pulse.builder import *
-
-        @nested_schedule
-        def initialization(qubit: str):
-            '''Initialize qubit.'''
-            play(qubit, square_pulse(duration="100ns", amplitude="200mV"))
-            wait(qubit, duration="50ns")
-
-        @nested_schedule
-        def measurement_block(drive_ch: str, readout_ch: str, result_var: str):
-            '''Perform readout measurement.'''
-            play(drive_ch, square_pulse(duration="1us", amplitude="50mV"))
-            record(readout_ch, result_var, duration="1us", integration=full_integration())
-
-        # Use in schedule context - pass block to add_block with schedule parameters
-        with build_schedule():
-            var_decl("result", "complex", unit="mV")
-
-            # Create block and add with timing parameters
-            init_token = add_block(initialization("qubit0"), op_name="init")
-
-            # Position second block relative to first
-            add_block(
-                measurement_block("drive0", "readout0", "result"),
-                ref_op=init_token,
-                ref_pt="end",
-                rel_time="100ns"
-            )
-    """
-    from functools import wraps
-
-    @wraps(func)
-    def wrapper(*args: P.args, **kwargs: P.kwargs) -> ScheduleBlock:
-        return ScheduleBlock(func, args, kwargs)
 
     return wrapper
 
@@ -1768,19 +591,13 @@ def play(
     *,
     scale_amp: float | complex | VariableRefLike | None = None,
     cond: VariableRefLike | None = None,
-    **schedule_params: Unpack[ScheduleParams],
-) -> OperationToken | None:
+) -> None:
     """Play a pulse on a channel.
 
     :param channel: Channel to play on
     :param pulse: Pulse to play
     :param scale_amp: Optional amplitude scaling
     :param cond: Optional condition variable
-    :param schedule_params: Additional scheduling parameters (for schedules)
-
-    :return: Operation token if in schedule context, :obj:`None` if in sequence context
-
-    :raises RuntimeError: If schedule parameters are provided in a sequence context
 
     Examples
 
@@ -1788,12 +605,7 @@ def play(
 
         from eq1_pulse.builder import *
 
-        # In sequence
         play("ch1", square_pulse(duration="10us", amplitude="100mV"))
-
-        # In schedule with positioning
-        op = play("ch1", square_pulse(duration="10us", amplitude="100mV"),
-                      ref_op=previous_op, ref_pt="end")
     """
     # scale_amp can be numeric or variable - only validate if it's a potential VariableRef type
     if scale_amp is not None and isinstance(scale_amp, str | dict | VariableRef):
@@ -1806,36 +618,22 @@ def play(
     op = Play(channel=channel, pulse=pulse, scale_amp=scale_amp, cond=cond)
 
     context = _current_context("play()")
-    if _in_schedule(context):
-        return _add_to_schedule(context, op, **schedule_params)
-    else:
-        _add_to_sequence(context, op, schedule_params, "play")
-        return None
+    if not _in_sequence(context):
+        raise _not_a_sequence_context("play()")
+    _add_to_sequence(context, op)
 
 
 def wait(
     *channels: ChannelRefLike,
     duration: DurationLike | VariableRefLike,
-    **schedule_params: Unpack[ScheduleParams],
-) -> OperationToken | None:
+) -> None:
     """Add wait operation on channel(s).
 
-    In sequences, wait can be applied to multiple channels simultaneously,
-    appending the wait time to each channel independently.
+    Wait can be applied to multiple channels simultaneously, appending the
+    wait time to each channel independently.
 
-    In schedules, wait can only be applied to a single channel due to complex
-    semantics (multi-channel wait would be equivalent to a subschedule where
-    all channels idle, which contradicts the sequence definition).
-
-    :param channels: Channel(s) to wait on. Multiple channels allowed in sequences,
-        single channel only in schedules.
+    :param channels: Channel(s) to wait on
     :param duration: Wait duration
-    :param schedule_params: Additional scheduling parameters (for schedules)
-
-    :return: Operation token if in schedule context, :obj:`None` if in sequence context
-
-    :raises RuntimeError: If multiple channels specified in a schedule context
-    :raises RuntimeError: If schedule parameters are provided in a sequence context
 
     Examples
 
@@ -1843,33 +641,22 @@ def wait(
 
         from eq1_pulse.builder import wait
 
-        # Single channel (works in both sequences and schedules)
+        # Single channel
         wait("ch1", duration="5us")
 
-        # Multiple channels (only works in sequences)
+        # Multiple channels
         with build_sequence():
             wait("ch1", "ch2", duration="10us")
     """
     context = _current_context("wait()")
-
-    # Validate multi-channel wait in schedules
-    if _in_schedule(context) and len(channels) > 1:
-        raise RuntimeError(
-            f"Wait with multiple channels ({len(channels)} channels) is not allowed "
-            "in schedule context. Multi-channel wait has complex semantics in schedules "
-            "(equivalent to a subschedule with all channels idling), which contradicts "
-            "the sequence definition. Use single-channel wait in schedules."
-        )
+    if not _in_sequence(context):
+        raise _not_a_sequence_context("wait()")
 
     duration = _validate_or_pass_through(duration, param_name="duration", context="wait()")
 
     op = Wait(*channels, duration=duration)  # type: ignore[arg-type]
 
-    if _in_schedule(context):
-        return _add_to_schedule(context, op, **schedule_params)
-    else:
-        _add_to_sequence(context, op, schedule_params, "wait")
-        return None
+    _add_to_sequence(context, op)
 
 
 def barrier(
@@ -1878,13 +665,9 @@ def barrier(
     """Add barrier (synchronization) on channel(s).
 
     The barrier operation synchronizes multiple channels, causing them to wait
-    until all specified channels have reached the barrier point. This is only
-    meaningful in sequence contexts where relative timing between channels
-    may vary. In schedule contexts, explicit timing makes barriers unnecessary.
+    until all specified channels have reached the barrier point.
 
     :param channels: Channels to synchronize
-
-    :raises RuntimeError: If called in a schedule context (barriers only work in sequences)
 
     Examples
 
@@ -1907,30 +690,19 @@ def barrier(
     op = Barrier(*channels)
 
     context = _current_context("barrier()")
-    if _in_schedule(context):
-        raise RuntimeError(
-            "Barrier operations are not supported in schedule contexts. "
-            "Schedules use explicit timing, making barriers unnecessary. "
-            "Use sequence context instead."
-        )
-    else:
-        _add_to_sequence(context, op)
+    if not _in_sequence(context):
+        raise _not_a_sequence_context("barrier()")
+    _add_to_sequence(context, op)
 
 
 def set_frequency(
     channel: ChannelRefLike,
     frequency: FrequencyLike | VariableRefLike,
-    **schedule_params: Unpack[ScheduleParams],
-) -> OperationToken | None:
+) -> None:
     """Set channel frequency.
 
     :param channel: Channel to set frequency on
     :param frequency: Frequency to set
-    :param schedule_params: Additional scheduling parameters (for schedules)
-
-    :return: Operation token if in schedule context, :obj:`None` if in sequence context
-
-    :raises RuntimeError: If schedule parameters are provided in a sequence context
 
     Examples
 
@@ -1945,27 +717,19 @@ def set_frequency(
     op = SetFrequency(channel=channel, frequency=frequency)
 
     context = _current_context("set_frequency()")
-    if _in_schedule(context):
-        return _add_to_schedule(context, op, **schedule_params)
-    else:
-        _add_to_sequence(context, op, schedule_params, "set_frequency")
-        return None
+    if not _in_sequence(context):
+        raise _not_a_sequence_context("set_frequency()")
+    _add_to_sequence(context, op)
 
 
 def shift_frequency(
     channel: ChannelRefLike,
     frequency: FrequencyLike | VariableRefLike,
-    **schedule_params: Unpack[ScheduleParams],
-) -> OperationToken | None:
+) -> None:
     """Shift channel frequency.
 
     :param channel: Channel to shift frequency on
     :param frequency: Frequency shift amount
-    :param schedule_params: Additional scheduling parameters (for schedules)
-
-    :return: Operation token if in schedule context, :obj:`None` if in sequence context
-
-    :raises RuntimeError: If schedule parameters are provided in a sequence context
 
     Examples
 
@@ -1980,27 +744,19 @@ def shift_frequency(
     op = ShiftFrequency(channel=channel, frequency=frequency)
 
     context = _current_context("shift_frequency()")
-    if _in_schedule(context):
-        return _add_to_schedule(context, op, **schedule_params)
-    else:
-        _add_to_sequence(context, op, schedule_params, "shift_frequency")
-        return None
+    if not _in_sequence(context):
+        raise _not_a_sequence_context("shift_frequency()")
+    _add_to_sequence(context, op)
 
 
 def set_phase(
     channel: ChannelRefLike,
     phase: PhaseLike | VariableRefLike,
-    **schedule_params: Unpack[ScheduleParams],
-) -> OperationToken | None:
+) -> None:
     """Set channel phase.
 
     :param channel: Channel to set phase on
     :param phase: Phase to set
-    :param schedule_params: Additional scheduling parameters (for schedules)
-
-    :return: Operation token if in schedule context, :obj:`None` if in sequence context
-
-    :raises RuntimeError: If schedule parameters are provided in a sequence context
 
     Examples
 
@@ -2015,27 +771,19 @@ def set_phase(
     op = SetPhase(channel=channel, phase=phase)
 
     context = _current_context("set_phase()")
-    if _in_schedule(context):
-        return _add_to_schedule(context, op, **schedule_params)
-    else:
-        _add_to_sequence(context, op, schedule_params, "set_phase")
-        return None
+    if not _in_sequence(context):
+        raise _not_a_sequence_context("set_phase()")
+    _add_to_sequence(context, op)
 
 
 def shift_phase(
     channel: ChannelRefLike,
     phase: PhaseLike | VariableRefLike,
-    **schedule_params: Unpack[ScheduleParams],
-) -> OperationToken | None:
+) -> None:
     """Shift channel phase.
 
     :param channel: Channel to shift phase on
     :param phase: Phase shift amount
-    :param schedule_params: Additional scheduling parameters (for schedules)
-
-    :return: Operation token if in schedule context, :obj:`None` if in sequence context
-
-    :raises RuntimeError: If schedule parameters are provided in a sequence context
 
     Examples
 
@@ -2050,11 +798,9 @@ def shift_phase(
     op = ShiftPhase(channel=channel, phase=phase)
 
     context = _current_context("shift_phase()")
-    if _in_schedule(context):
-        return _add_to_schedule(context, op, **schedule_params)
-    else:
-        _add_to_sequence(context, op, schedule_params, "shift_phase")
-        return None
+    if not _in_sequence(context):
+        raise _not_a_sequence_context("shift_phase()")
+    _add_to_sequence(context, op)
 
 
 def record(
@@ -2063,19 +809,13 @@ def record(
     *,
     duration: DurationLike,
     integration: FullIntegration | DemodIntegration,
-    **schedule_params: Unpack[ScheduleParams],
-) -> OperationToken | None:
+) -> None:
     """Record (acquire) data from a channel.
 
     :param channel: Channel to record from
     :param var: Variable to store the result
     :param duration: Recording duration
     :param integration: Integration configuration (use :func:`full_integration` or :func:`demod_integration`)
-    :param schedule_params: Additional scheduling parameters (for schedules)
-
-    :return: Operation token if in schedule context, :obj:`None` if in sequence context
-
-    :raises RuntimeError: If schedule parameters are provided in a sequence context
 
     Examples
 
@@ -2102,11 +842,9 @@ def record(
     op = Record(channel=channel, var=validated_var, duration=duration, integration=integration)  # type: ignore[arg-type]
 
     context = _current_context("record()")
-    if _in_schedule(context):
-        return _add_to_schedule(context, op, **schedule_params)
-    else:
-        _add_to_sequence(context, op, schedule_params, "record")
-        return None
+    if not _in_sequence(context):
+        raise _not_a_sequence_context("record()")
+    _add_to_sequence(context, op)
 
 
 def discriminate(
@@ -2117,8 +855,7 @@ def discriminate(
     rotation: PhaseLike = 0,
     compare: ComparisonModeLike = ">=",
     project: ComplexToRealProjectionModeLike = "real",
-    **schedule_params: Unpack[ScheduleParams],
-) -> OperationToken | None:
+) -> None:
     """Discriminate a measurement result to a binary outcome.
 
     This operation applies a rotation, projects complex data to real, and compares
@@ -2130,11 +867,6 @@ def discriminate(
     :param rotation: Phase rotation to apply before projection (default: 0)
     :param compare: Comparison operator (default: ">=")
     :param project: Complex-to-real projection mode (default: "real")
-    :param schedule_params: Additional scheduling parameters (for schedules)
-
-    :return: Operation token if in schedule context, :obj:`None` if in sequence context
-
-    :raises RuntimeError: If schedule parameters are provided in a sequence context
 
     Examples
 
@@ -2163,11 +895,9 @@ def discriminate(
     )
 
     context = _current_context("discriminate()")
-    if _in_schedule(context):
-        return _add_to_schedule(context, op, **schedule_params)
-    else:
-        _add_to_sequence(context, op, schedule_params, "discriminate")
-        return None
+    if not _in_sequence(context):
+        raise _not_a_sequence_context("discriminate()")
+    _add_to_sequence(context, op)
 
 
 def store(
@@ -2175,8 +905,7 @@ def store(
     source: VariableRefLike,
     *,
     mode: StoreMode | StoreModeLiteral = "last",
-    **schedule_params: Unpack[ScheduleParams],
-) -> OperationToken | None:
+) -> None:
     """Store a variable value for later retrieval.
 
     This operation stores the value of a variable to persistent storage
@@ -2186,11 +915,6 @@ def store(
     :param key: Storage key for retrieving the data
     :param source: Source variable to store
     :param mode: Storage mode - how to aggregate multiple values
-    :param schedule_params: Additional scheduling parameters (for schedules)
-
-    :return: Operation token if in schedule context, :obj:`None` if in sequence context
-
-    :raises RuntimeError: If schedule parameters are provided in a sequence context
 
     Examples
 
@@ -2222,11 +946,9 @@ def store(
     op = Store(key=key, source=validated_source, mode=mode)  # type: ignore[arg-type]
 
     context = _current_context("store()")
-    if _in_schedule(context):
-        return _add_to_schedule(context, op, **schedule_params)
-    else:
-        _add_to_sequence(context, op, schedule_params, "store")
-        return None
+    if not _in_sequence(context):
+        raise _not_a_sequence_context("store()")
+    _add_to_sequence(context, op)
 
 
 def measure(
@@ -2236,8 +958,7 @@ def measure(
     duration: DurationLike,
     amplitude: AmplitudeLike,
     integration: FullIntegration | DemodIntegration,
-    **schedule_params: Unpack[ScheduleParams],
-) -> OperationToken | None:
+) -> None:
     """Perform a measurement (simultaneous play + record).
 
     This is a convenience function that creates a square pulse play operation
@@ -2249,19 +970,6 @@ def measure(
     :param duration: Measurement duration
     :param amplitude: Measurement pulse amplitude
     :param integration: Integration configuration (use :func:`full_integration` or :func:`demod_integration`)
-    :param schedule_params: Additional scheduling parameters (for schedules)
-
-    :return: Token for the emitted play operation if in a schedule context,
-        :obj:`None` if in a sequence context
-
-    :raises RuntimeError: If schedule parameters are provided in a sequence context
-
-    .. note::
-
-        In a schedule this emits two operations: a play carrying ``op_name`` (or a
-        generated name), and a record named ``"<that name>_record"`` anchored to the
-        play's start. The returned token refers to the play; since both share a start
-        and a duration, referencing either gives the same timing.
 
     Examples
 
@@ -2284,11 +992,10 @@ def measure(
                     duration="1us", amplitude="50mV",
                     integration=demod_integration(phase="0deg"))
     """
+    # Fail fast if there is no active (sequence) context, matching the other operations.
     context = _current_context("measure()")
-
-    # Check if schedule params provided in sequence context
-    if _in_sequence(context):
-        _reject_schedule_params(schedule_params, "measure")
+    if not _in_sequence(context):
+        raise _not_a_sequence_context("measure()")
 
     # Parse channel parameter
     if isinstance(channel, tuple):
@@ -2299,43 +1006,105 @@ def measure(
     # Create measurement pulse
     meas_pulse = square_pulse(duration=duration, amplitude=amplitude)
 
-    if _in_schedule(context):
-        # In schedule: the play carries the caller's timing parameters...
-        play_token = play(drive_channel, meas_pulse, **schedule_params)
-        assert play_token is not None  # guaranteed in a schedule context
+    # Add operations sequentially.
+    # Note: In a true measurement, play and record should be simultaneous.
+    # This requires the backend to handle the timing correctly.
+    play(drive_channel, meas_pulse)
+    record(
+        readout_channel,
+        result_var,
+        duration=duration,
+        integration=integration,
+    )
 
-        # ...and the record is anchored to the play's start, so it needs none of
-        # them. Reusing the caller's op_name here would give both operations the
-        # same name and make ref_op="<that name>" ambiguous, so derive a distinct one.
-        record_params: ScheduleParams = {
-            "op_name": f"{play_token.name}_record",
-            "ref_op": play_token.name,
-            "ref_pt": "start",
-            "ref_pt_new": "start",
-            "rel_time": 0,
+
+def external_block(
+    *positional_channels: ChannelRefLike,
+    program: str | None = None,
+    channels: dict[str, ChannelRefLike] | None = None,
+    params: dict[str, Any] | None = None,
+    results: dict[str, VariableRefLike] | None = None,
+    duration: DurationLike | VariableRefLike | None = None,
+) -> None:
+    """Reserve channels for an opaque, externally defined block of operations.
+
+    Two forms are supported for specifying the reserved channels:
+
+    - ``channels={"role": channel, ...}`` when the referenced program distinguishes between the
+      channels it uses (e.g. drive vs. readout).
+    - Positional channels when roles do not matter. Placeholder role keys are generated
+      deterministically as ``"0"``, ``"1"``, ... in argument order.
+
+    :param positional_channels: Channels to reserve when roles do not matter. Mutually exclusive
+        with ``channels``
+    :param program: Fully qualified reference to the externally defined program supplying the
+        block's contents. :obj:`None` is a pure reservation (see :class:`~eq1_pulse.models.ExternalBlock`)
+    :param channels: Channels to reserve, keyed by the role each plays in ``program``. Mutually
+        exclusive with ``positional_channels``
+    :param params: Input arguments passed to ``program``
+    :param results: Output bindings: variables ``program`` writes into. Each variable must already
+        be declared in an enclosing scope
+    :param duration: Total duration. :obj:`None` means *flex*: the duration is whatever ``program``
+        naturally takes
+
+    :raises ValueError: If both positional channels and ``channels=`` are given, or if neither is
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import build_sequence, external_block, var, var_decl
+
+        with build_sequence():
+            var_decl("iq", "complex", unit="mV")
+
+            # Named channel roles, input params, output binding
+            external_block(
+                program="eq1.cal.measure",
+                channels={"drive": "q0", "readout": "q0_ro"},
+                params={"amp": "50mV"},
+                results={"iq": var("iq")},
+            )
+
+            # Positional form when roles do not matter
+            external_block("q0", "q1", program="eq1.cal.cz")
+
+            # Pure reservation, no referenced program
+            external_block("q1", duration="1us")
+    """
+    if positional_channels and channels is not None:
+        raise ValueError(
+            "external_block() cannot accept both positional channels and a channels= mapping. "
+            "Use one form or the other."
+        )
+    if positional_channels:
+        resolved_channels: dict[str, ChannelRefLike] = {str(index): ch for index, ch in enumerate(positional_channels)}
+    elif channels is not None:
+        resolved_channels = channels
+    else:
+        raise ValueError("external_block() requires at least one channel, either positional or via channels=.")
+
+    # A VariableRef in params is a read, validated the same way external_pulse() validates its params.
+    if params is not None:
+        params = {
+            key: _validate_explicit_variable_ref(value, param_name=f"params['{key}']") for key, value in params.items()
         }
 
-        record(
-            readout_channel,
-            result_var,
-            duration=duration,
-            integration=integration,
-            **record_params,
-        )
+    # results are writes: the target variable must already be declared, exactly as record() enforces for its var.
+    if results is not None:
+        results = {key: _validate_variable_ref(value) for key, value in results.items()}
 
-        # Return the play's token: it carries the name the caller asked for, and the
-        # two operations share a start and a duration, so every reference point of
-        # the pair coincides.
-        return play_token
-    else:
-        # In sequence: add operations sequentially
-        # Note: In a true measurement, play and record should be simultaneous
-        # This requires the backend to handle the timing correctly
-        play(drive_channel, meas_pulse)
-        record(
-            readout_channel,
-            result_var,
-            duration=duration,
-            integration=integration,
-        )
-        return None
+    duration = _validate_or_pass_through(duration, param_name="duration", context="external_block()")
+
+    op = ExternalBlock(
+        program=program,
+        channels=resolved_channels,  # type: ignore[arg-type]
+        params=params,  # type: ignore[arg-type]
+        results=results,  # type: ignore[arg-type]
+        duration=duration,  # type: ignore[arg-type]
+    )
+
+    context = _current_context("external_block()")
+    if not _in_sequence(context):
+        raise _not_a_sequence_context("external_block()")
+    _add_to_sequence(context, op)

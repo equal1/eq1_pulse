@@ -13,15 +13,15 @@ import pytest
 
 from eq1_pulse.models import Amplitude, Duration, Frequency, Phase, Time
 from eq1_pulse.models.basic_types import Angle, ComplexVoltage, Voltage
-from eq1_pulse.models.schedule import RelTime
 
 # Pairs that denote the same physical quantity written two different ways.
+# The experimental-only RelTime type has an equivalent set of cases in
+# tests/eq1lab_pulse/experimental/test_comparison_invariants.py.
 EQUAL_PAIRS = [
     (Duration(us=1), Duration(ns=1000)),
     (Duration(s=1), Duration(ms=1000)),
     (Time(us=1), Time(ns=1000)),
     (Time(s=2), Duration(ms=2000)),
-    (RelTime(us=1), RelTime(ns=1000)),
     (Frequency(GHz=1), Frequency(MHz=1000)),
     (Frequency(MHz=1), Frequency(kHz=1000)),
     (Amplitude(V=1), Amplitude(mV=1000)),

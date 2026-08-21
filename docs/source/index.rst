@@ -21,6 +21,12 @@ eq1_pulse: Pulse-Level Quantum Programming
    examples/index
 
 .. toctree::
+   :maxdepth: 1
+   :caption: Experimental (unused, pending removal)
+
+   experimental/schedule
+
+.. toctree::
    :maxdepth: 3
    :caption: API Reference
 
@@ -43,7 +49,6 @@ Key Features
 * **Hardware-agnostic** pulse program representation
 * **Builder interface** for intuitive program construction
 * **Type-safe** models with automatic validation
-* Support for **sequences** and **schedules**
 * **Control flow**: loops, conditionals, and branching
 * **Measurement** operations with discrimination
 * **JSON serialization** for portability

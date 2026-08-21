@@ -16,6 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from eq1_pulse.builder import *
+from eq1_pulse.builder import experimental
 
 
 def example_basic_measure_if():
@@ -217,11 +218,11 @@ def example_measure_if_in_schedule():
     print("Example 6: Measure, Discriminate, If in Schedule")
     print("=" * 70)
 
-    with build_schedule() as sched:
-        var_decl("raw", "complex", unit="mV")
-        var_decl("state", "bool")
+    with experimental.build_schedule() as sched:
+        experimental.var_decl("raw", "complex", unit="mV")
+        experimental.var_decl("state", "bool")
         # In schedules, measure, discriminate, and if_ work with relative timing
-        measure(
+        experimental.measure(
             "readout",
             result_var="raw",
             duration="1us",
@@ -229,15 +230,15 @@ def example_measure_if_in_schedule():
             integration=demod_integration(),
             op_name="measure_op",
         )
-        discriminate(
+        experimental.discriminate(
             target="state",
             source="raw",
             threshold="0.5mV",
             op_name="discriminate_op",
         )
-        with if_("state", op_name="conditional_measure"):
+        with experimental.if_("state", op_name="conditional_measure"):
             # Conditional operations in schedule
-            play(
+            experimental.play(
                 "qubit",
                 square_pulse(duration="50ns", amplitude="100mV"),
                 op_name="correction",

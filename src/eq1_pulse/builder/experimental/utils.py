@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Final, TypedDict
 
 if TYPE_CHECKING:
-    from ..models.schedule import RefPtLike, RelTimeLike, ScheduledOperation
+    from ...models.experimental.schedule import RefPtLike, RelTimeLike, ScheduledOperation
 
 __all__ = ("SCHEDULE_PARAM_NAMES", "OperationToken", "ScheduleParams", "resolve_schedule_params")
 

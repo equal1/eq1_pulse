@@ -102,3 +102,4 @@ cd docs && ./generate_pdf.sh   # Builds LaTeX/PDF docs
 - **Builder context**: Operations must be inside `build_sequence()` or `build_schedule()` context managers
 - **Schedule positioning**: Use `OperationToken` return values as `ref_op`, not hardcoded strings
 - **Pulse types**: Don't assume Gaussian/DRAG exist—use `ArbitrarySampledPulse` or `ExternalPulse`
+- **DO NOT USE `git checkout`**: when you have uncommitted changes in-flight. Use `git stash` instead to avoid losing changes. Handle untracked files carefully, do not try to stash everything, but save away the work safely.

@@ -1,7 +1,12 @@
 Builder Interface Guide
 =======================
 
-The builder interface provides a high-level, Pythonic API for constructing pulse sequences and schedules. It uses Python context managers and provides functions that closely mirror the underlying model structure while offering a more intuitive programming experience.
+The builder interface provides a high-level, Pythonic API for constructing pulse sequences. It uses Python context managers and provides functions that closely mirror the underlying model structure while offering a more intuitive programming experience.
+
+.. note::
+
+    An explicitly-timed **schedule** builder also exists (:mod:`eq1_pulse.builder.experimental`), but it
+    is unused and scheduled for removal -- see :doc:`/experimental/schedule`.
 
 Getting Started
 ---------------
@@ -12,11 +17,8 @@ Import the builder functions:
 
     from eq1_pulse.builder import *
 
-Building Sequences vs. Schedules
----------------------------------
-
-Sequences
-~~~~~~~~~
+Building Sequences
+-------------------
 
 A **sequence** is an ordered list of operations where timing is implicit. Operations on the same channel execute sequentially.
 
@@ -35,41 +37,6 @@ In this sequence:
 
 Total time on the ``"qubit"`` channel: 250ns
 
-Schedules
-~~~~~~~~~
-
-A **schedule** provides explicit timing control with reference points. Each operation can specify when it starts relative to another operation.
-
-.. code-block:: python
-
-    with build_schedule() as sched:
-        # First operation
-        op1 = play("qubit", square_pulse(duration="100ns", amplitude="50mV"))
-
-        # Second operation starts 200ns after first operation ends
-        op2 = play(
-            "qubit",
-            square_pulse(duration="100ns", amplitude="30mV"),
-            ref_op=op1,
-            ref_pt="end",
-            rel_time="200ns"
-        )
-
-        # Readout starts when second pulse starts
-        play(
-            "readout",
-            square_pulse(duration="500ns", amplitude="20mV"),
-            ref_op=op2,
-            ref_pt="start",
-            ref_pt_new="start"
-        )
-
-Reference points can be:
-
-* ``"start"`` - operation start time
-* ``"center"`` - operation midpoint
-* ``"end"`` - operation end time
-
 Core Operations
 ---------------
 
@@ -80,7 +47,7 @@ The ``play()`` function sends a pulse to a channel:
 
 .. code-block:: python
 
-    play(channel, pulse, *, scale_amp=None, cond=None, **schedule_params)
+    play(channel, pulse, *, scale_amp=None, cond=None)
 
 Parameters:
 
@@ -89,7 +56,7 @@ Parameters:
 * ``scale_amp`` - Optional amplitude scaling factor (float, complex, or variable)
 * ``cond`` - Optional condition variable (pulse plays only if condition is true)
 
-**In sequences:**
+Example:
 
 .. code-block:: python
 
@@ -99,19 +66,6 @@ Parameters:
         # With amplitude scaling
         play("drive", square_pulse(duration="10us", amplitude="100mV"), scale_amp=0.5)
 
-**In schedules:**
-
-.. code-block:: python
-
-    with build_schedule() as sched:
-        play(
-            "drive",
-            square_pulse(duration="10us", amplitude="100mV"),
-            ref_op=ref_operation,
-            ref_pt="end",
-            rel_time="5us"
-        )
-
 Waiting
 ~~~~~~~
 
@@ -119,7 +73,7 @@ The ``wait()`` function creates a delay on a channel:
 
 .. code-block:: python
 
-    wait(*channels, duration, **schedule_params)
+    wait(*channels, duration)
 
 Example:
 
@@ -134,7 +88,7 @@ The ``set_frequency()`` function changes the oscillator frequency for a channel:
 
 .. code-block:: python
 
-    set_frequency(channel, frequency, **schedule_params)
+    set_frequency(channel, frequency)
 
 Example:
 
@@ -152,7 +106,7 @@ The ``set_phase()`` function updates the phase of a channel:
 
 .. code-block:: python
 
-    set_phase(channel, phase, **schedule_params)
+    set_phase(channel, phase)
 
 Example:
 
@@ -167,7 +121,7 @@ The ``shift_phase()`` function adds an offset to the current phase:
 
 .. code-block:: python
 
-    shift_phase(channel, phase, **schedule_params)
+    shift_phase(channel, phase)
 
 Example:
 
@@ -385,8 +339,7 @@ The ``measure()`` function performs a measurement operation (simultaneous play +
         result_var,
         duration,
         amplitude,
-        integration,
-        **schedule_params
+        integration
     )
 
 The ``integration`` parameter must be created using ``full_integration()`` or ``demod_integration()``.
@@ -467,7 +420,7 @@ Use ``var_decl()`` to declare a variable before using it:
 
 .. code-block:: python
 
-    var_decl(name, dtype, *, shape=None, unit=None, **schedule_params)
+    var_decl(name, dtype, *, shape=None, unit=None)
 
 Data types (``dtype``) can be:
 
@@ -615,7 +568,7 @@ The ``store()`` function saves measurement results:
 
 .. code-block:: python
 
-    store(key, source, *, mode="last", **schedule_params)
+    store(key, source, *, mode="last")
 
 Modes:
 
@@ -880,7 +833,7 @@ Each iteration follows the same temporal pattern: drive → readout → wait. Th
 Creating Reusable Building Blocks
 ----------------------------------
 
-For complex pulse programs, you'll often want to create reusable, modular building blocks that encapsulate common operations. The builder provides two decorators for this purpose: ``@nested_sequence`` and ``@nested_schedule``.
+For complex pulse programs, you'll often want to create reusable, modular building blocks that encapsulate common operations. The builder provides the ``@nested_sequence`` decorator for this purpose.
 
 The ``@nested_sequence`` Decorator
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -927,7 +880,7 @@ Use ``@nested_sequence`` to create reusable operation blocks in sequence context
 - The decorated function is called normally with its parameters
 - It automatically creates a ``sub_sequence`` in the current context
 - The function returns :obj:`None` (operations are added to the context)
-- Can only be used in sequence contexts (raises error in schedule contexts)
+- Can only be used in sequence contexts (raises error otherwise)
 - Decorated functions can call other ``@nested_sequence`` decorated functions
 
 **Visual Explanation:**
@@ -965,207 +918,11 @@ You can compose building blocks together:
         readout_sequence("drive0", "readout0", "result0")
         readout_sequence("drive1", "readout1", "result1")
 
-The ``@nested_schedule`` Decorator
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. note::
 
-Use ``@nested_schedule`` to create reusable schedule blocks that need explicit timing control. Functions decorated with ``@nested_schedule`` return a :class:`ScheduleBlock` object that must be passed to :func:`add_block` along with schedule timing parameters.
-
-**Basic Usage:**
-
-.. code-block:: python
-
-    from eq1_pulse.builder import *
-
-    @nested_schedule
-    def initialize_qubit(qubit: str):
-        """Initialize a qubit to ground state."""
-        play(qubit, square_pulse(duration="100ns", amplitude="200mV"))
-        wait(qubit, duration="50ns")
-
-    @nested_schedule
-    def rabi_drive(qubit: str, amplitude: str):
-        """Apply a Rabi drive pulse."""
-        play(qubit, square_pulse(duration="50ns", amplitude=amplitude))
-
-    @nested_schedule
-    def measure_qubit(drive_ch: str, readout_ch: str, result_var: str):
-        """Measure a qubit."""
-        play(drive_ch, square_pulse(duration="1us", amplitude="50mV"))
-        record(readout_ch, result_var, duration="1us", integration=full_integration())
-
-    # Use the building blocks in a schedule
-    with build_schedule() as sched:
-        # Call the function to create a block, then add it with timing
-        init_token = add_block(initialize_qubit("qubit0"), op_name="init")
-
-        # Position subsequent blocks relative to previous operations
-        rabi_token = add_block(
-            rabi_drive("qubit0", "150mV"),
-            op_name="rabi",
-            ref_op=init_token,
-            ref_pt="end",
-            rel_time="10ns"
-        )
-
-        add_block(
-            measure_qubit("drive0", "readout0", "result"),
-            op_name="measure",
-            ref_op=rabi_token,
-            ref_pt="end",
-            rel_time="50ns"
-        )
-
-**Key Points:**
-
-- The decorated function returns a :class:`ScheduleBlock` (not :obj:`None`)
-- You must pass this block to :func:`add_block` to insert it into the schedule
-- :func:`add_block` takes schedule timing parameters (``name``, ``ref_op``, ``ref_pt``, ``rel_time``)
-- :func:`add_block` returns an :class:`OperationToken` for referencing this block
-- Can only be used in schedule contexts (will error if called in sequence contexts)
-- If you don't call :func:`add_block` on a returned block, you'll get a runtime error when the schedule context closes
-
-**Visual Explanation:**
-
-The diagram below shows how ``@nested_schedule`` decorated functions create schedule blocks that are positioned with ``add_block()``:
-
-.. plot::
-   :align: center
-   :caption: @nested_schedule decorator with add_block usage.
-
-   from nested_schedule_diagram import create_nested_schedule_diagram
-   create_nested_schedule_diagram()
-
-The diagram illustrates:
-
-1. **Top section**: Decorator definitions for reusable schedule blocks
-2. **Middle section**: Usage with ``add_block()`` providing timing parameters
-3. **Bottom section**: Resulting timeline showing precise positioning with reference points and relative timing
-
-**Error Handling:**
-
-The builder tracks all :class:`ScheduleBlock` objects and ensures they are consumed:
-
-.. code-block:: python
-
-    with build_schedule() as sched:
-        # This creates a block but doesn't add it - ERROR!
-        block = initialize_qubit("qubit0")
-        # RuntimeError when context closes: unconsumed ScheduleBlock
-
-    # Correct usage:
-    with build_schedule() as sched:
-        add_block(initialize_qubit("qubit0"), op_name="init")  # ✓
-
-Parallel Operations with Schedules
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Schedule building blocks shine when you need parallel execution:
-
-.. code-block:: python
-
-    @nested_schedule
-    def two_qubit_gate(control: str, target: str, angle: str):
-        """Two-qubit controlled rotation gate."""
-        play(control, square_pulse(duration="40ns", amplitude="100mV"))
-        play(target, square_pulse(duration="40ns", amplitude="100mV"))
-        shift_phase(target, angle)
-
-    with build_schedule() as sched:
-        # Initialize both qubits in parallel (same start time)
-        init0 = add_block(initialize_qubit("qubit0"), op_name="init0")
-        add_block(
-            initialize_qubit("qubit1"),
-            op_name="init1",
-            ref_op=init0,
-            ref_pt="start"  # Start at same time as init0
-        )
-
-        # Apply gates with precise timing
-        gate0 = add_block(
-            rabi_drive("qubit0", "140mV"),
-            op_name="gate0",
-            ref_op=init0,
-            ref_pt="end",
-            rel_time="20ns"
-        )
-
-        gate1 = add_block(
-            two_qubit_gate("qubit0", "qubit1", "45deg"),
-            op_name="cnot",
-            ref_op=gate0,
-            ref_pt="start"  # Start at same time as gate0
-        )
-
-        # Measure both in parallel
-        meas0 = add_block(
-            measure_qubit("drive0", "readout0", "r0"),
-            ref_op=gate1,
-            ref_pt="end",
-            rel_time="100ns"
-        )
-
-        add_block(
-            measure_qubit("drive1", "readout1", "r1"),
-            ref_op=meas0,
-            ref_pt="start"  # Start at same time as meas0
-        )
-
-This creates a schedule where:
-
-- Both qubits are initialized simultaneously
-- The two-qubit gate starts when the single-qubit gate starts
-- Both measurements execute in parallel
-
-When to Use Which Decorator
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-**Use** ``@nested_sequence`` **when:**
-
-- Building sequences with implicit timing (sequential operations on same channel)
-- Creating gate libraries or common operation patterns
-- You don't need explicit timing control
-- Working with control flow (repetitions, iterations, conditionals)
-
-**Use** ``@nested_schedule`` **when:**
-
-- You need explicit timing relationships between operations
-- Implementing parallel operations on multiple channels
-- Building calibration routines with precise timing
-- Creating measurement sequences with specific positioning
-
-**Side-by-Side Comparison:**
-
-.. plot::
-   :align: center
-   :caption: Comparison of @nested_sequence vs @nested_schedule decorators.
-
-   from decorator_comparison_diagram import create_decorator_comparison_diagram
-   create_decorator_comparison_diagram()
-
-**Feature Comparison Table:**
-
-+---------------------------+----------------------------+----------------------------+
-| Feature                   | ``@nested_sequence``       | ``@nested_schedule``       |
-+===========================+============================+============================+
-| Context                   | Sequences only             | Schedules only             |
-+---------------------------+----------------------------+----------------------------+
-| Return value              | :obj:`None`                | :class:`ScheduleBlock`     |
-+---------------------------+----------------------------+----------------------------+
-| Usage                     | Call directly              | Pass to :func:`add_block`  |
-+---------------------------+----------------------------+----------------------------+
-| Timing control            | Implicit (sequential)      | Explicit (ref points)      |
-+---------------------------+----------------------------+----------------------------+
-| Parallel operations       | No                         | Yes                        |
-+---------------------------+----------------------------+----------------------------+
-
-.. important::
-
-   **Sequences and schedules cannot be mixed!**
-
-   - ``@nested_sequence`` decorated functions can **only** be called within ``build_sequence()`` contexts
-   - ``@nested_schedule`` decorated functions can **only** be called within ``build_schedule()`` contexts
-   - You cannot nest a schedule inside a sequence, or vice versa
-   - If you need both sequential operations and explicit timing, choose one approach for your entire program
+    A ``@nested_schedule`` decorator also exists for the unused, experimental schedule builder
+    (:mod:`eq1_pulse.builder.experimental`), together with a side-by-side comparison against
+    ``@nested_sequence`` -- see :doc:`/experimental/schedule`.
 
 Best Practices
 ~~~~~~~~~~~~~~
@@ -1187,7 +944,7 @@ Best Practices
 
    .. code-block:: python
 
-       @nested_schedule
+       @nested_sequence
        def ramsey_sequence(qubit: str, delay: str):
            """Ramsey sequence with variable delay.
 
@@ -1214,7 +971,7 @@ Best Practices
 
    .. code-block:: python
 
-       @nested_schedule
+       @nested_sequence
        def variable_amplitude_pulse(
            channel: str,
            duration: str,
@@ -1230,48 +987,6 @@ Best Practices
                    amplitude=amplitude,
                    frequency="5GHz"
                ))
-
-5. **Always use** :func:`add_block` **with** ``@nested_schedule``:
-
-   .. code-block:: python
-
-       # Wrong - creates unconsumed block
-       with build_schedule():
-           block = measure_qubit("drive", "readout", "result")  # Error!
-
-       # Correct
-       with build_schedule():
-           add_block(
-               measure_qubit("drive", "readout", "result"),
-               op_name="measure"
-           )
-
-6. **Don't mix sequence and schedule decorators**:
-
-   .. code-block:: python
-
-       @nested_sequence
-       def gate_sequence(qubit: str):
-           play(qubit, square_pulse(duration="20ns", amplitude="100mV"))
-
-       @nested_schedule
-       def calibration_block(qubit: str):
-           play(qubit, square_pulse(duration="100ns", amplitude="200mV"))
-
-       # WRONG - sequence decorator in schedule context
-       with build_schedule():
-           gate_sequence("q0")  # RuntimeError!
-
-       # WRONG - schedule decorator in sequence context
-       with build_sequence():
-           add_block(calibration_block("q0"), op_name="cal")  # RuntimeError!
-
-       # CORRECT - match decorator to context
-       with build_sequence():
-           gate_sequence("q0")  # ✓
-
-       with build_schedule():
-           add_block(calibration_block("q0"), op_name="cal")  # ✓
 
 Complete Example
 ~~~~~~~~~~~~~~~~
@@ -1301,15 +1016,8 @@ Here's a complete example combining both decorators for a multi-qubit experiment
         play(qubit, square_pulse(duration="20ns", amplitude="100mV"))
         shift_phase(qubit, "-90deg")
 
-    # ========== Calibration blocks (schedules) ==========
+    # ========== Readout ==========
 
-    @nested_schedule
-    def qubit_reset(qubit: str):
-        """Active reset protocol."""
-        play(qubit, square_pulse(duration="100ns", amplitude="200mV"))
-        wait(qubit, duration="1us")
-
-    @nested_schedule
     def dispersive_readout(drive: str, readout: str, result: str):
         """Standard dispersive readout."""
         play(drive, square_pulse(duration="2us", amplitude="40mV"))
@@ -1326,40 +1034,11 @@ Here's a complete example combining both decorators for a multi-qubit experiment
         y_gate("q0")
         x90_gate("q0")
 
-        # Manual readout (sequence context)
-        play("drive0", square_pulse(duration="2us", amplitude="40mV"))
-        record("readout0", "state", duration="2us", integration=full_integration())
-
-    # ========== Use in schedule context ==========
-
-    with build_schedule() as sched:
-        var_decl("r0", "complex", unit="mV")
-        var_decl("r1", "complex", unit="mV")
-
-        # Reset both qubits in parallel
-        reset0 = add_block(qubit_reset("q0"), op_name="reset0")
-        add_block(qubit_reset("q1"), op_name="reset1", ref_op=reset0, ref_pt="start")
-
-        # Entangling gate sequence
-        gate = add_block(
-            dispersive_readout("drive0", "readout0", "r0"),
-            op_name="readout0",
-            ref_op=reset0,
-            ref_pt="end",
-            rel_time="50ns"
-        )
-
-        # Simultaneous readout
-        add_block(
-            dispersive_readout("drive1", "readout1", "r1"),
-            op_name="readout1",
-            ref_op=gate,
-            ref_pt="start"
-        )
+        # Readout
+        dispersive_readout("drive0", "readout0", "state")
 
 This example demonstrates:
 
 - Simple gate operations as ``@nested_sequence`` blocks
-- Complex calibration routines as ``@nested_schedule`` blocks
-- Using sequence blocks in sequences (simple sequential composition)
-- Using schedule blocks in schedules (with explicit timing and parallelism)
+- Reusing plain building-block functions alongside decorated ones
+- Composing a complete experiment from small, named pieces

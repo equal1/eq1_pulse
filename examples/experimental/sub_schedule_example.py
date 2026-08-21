@@ -3,9 +3,15 @@
 This example shows how to use the sub_schedule context manager to create
 reusable, composable blocks of operations in a schedule. Sub-schedules are
 useful for organizing complex quantum programs into logical units.
+
+.. warning::
+
+    ``eq1_pulse.builder.experimental`` is unused and scheduled for removal
+    (equal1/eq1_pulse#8). New code should use :mod:`eq1_pulse.builder`
+    sequences instead.
 """
 
-from eq1_pulse.builder import (
+from eq1_pulse.builder.experimental import (
     build_schedule,
     full_integration,
     play,

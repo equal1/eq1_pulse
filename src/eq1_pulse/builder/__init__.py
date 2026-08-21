@@ -1,14 +1,16 @@
-"""Builder interface for constructing pulse sequences and schedules.
+"""Builder interface for constructing pulse sequences.
 
 This package provides a fluent API for creating pulse programs with:
 
 - Global context for building models
-- Context managers for sequences, schedules, iterations, and conditionals
+- Context managers for sequences, iterations, and conditionals
 - Function calls for operations like playing pulses, recording, and barriers
-- Token-based references for relative positioning in schedules
 - Shorthand functions for common pulse types
 - Measure function for simultaneous play + record operations
-- Sub-schedules and sub-sequences for creating modular, reusable operation blocks
+- Sub-sequences for creating modular, reusable operation blocks
+
+For the unused, experimental schedule API (explicit timing with reference points),
+see :mod:`eq1_pulse.builder.experimental`.
 
 Examples
 
@@ -22,12 +24,6 @@ Examples
         play("ch1", square_pulse(duration="10us", amplitude="100mV"))
         wait("ch1", duration="5us")
         play("ch1", sine_pulse(duration="20us", amplitude="50mV", frequency="5GHz"))
-
-    # Building a schedule with relative positioning
-    with build_schedule() as sched:
-        op1 = play("ch1", square_pulse(duration="10us", amplitude="100mV"))
-        op2 = play("ch2", square_pulse(duration="10us", amplitude="100mV"),
-                        ref_op=op1, ref_pt="start", rel_time="5us")
 
     # Using control flow in sequences
     with build_sequence() as seq:
@@ -56,40 +52,21 @@ Examples
         # Measurement block
         with sub_sequence():
             play("drive", square_pulse(duration="1us", amplitude="50mV"))
-
-    # Using sub-schedules for modular composition with timing
-    with build_schedule() as main:
-        # Create initialization block
-        with sub_schedule(op_name="init"):
-            play("qubit", square_pulse(duration="100ns", amplitude="200mV"))
-            wait("qubit", duration="50ns")
-
-        # Gate positioned after initialization
-        gate = play("qubit", square_pulse(duration="20ns", amplitude="150mV"),
-                   ref_op="init", ref_pt="end", rel_time="10ns")
-
-        # Measurement block positioned after gate
-        with sub_schedule(op_name="measure", ref_op=gate, ref_pt="end", rel_time="50ns"):
-            play("drive", square_pulse(duration="1us", amplitude="50mV"))
-            record("readout", "result", duration="1us", integration=full_integration())
 """
 
 from .core import (
-    ScheduleBlock,
-    add_block,
     arbitrary_pulse,
     barrier,
-    build_schedule,
     build_sequence,
     channel,
     demod_integration,
     discriminate,
+    external_block,
     external_pulse,
     for_,
     full_integration,
     if_,
     measure,
-    nested_schedule,
     nested_sequence,
     phase,
     play,
@@ -104,32 +81,25 @@ from .core import (
     sine_pulse,
     square_pulse,
     store,
-    sub_schedule,
     sub_sequence,
     var,
     var_decl,
     wait,
 )
-from .utils import OperationToken, ScheduleParams, resolve_schedule_params
 
 __all__ = (
-    "OperationToken",
-    "ScheduleBlock",
-    "ScheduleParams",
-    "add_block",
     "arbitrary_pulse",
     "barrier",
-    "build_schedule",
     "build_sequence",
     "channel",
     "demod_integration",
     "discriminate",
+    "external_block",
     "external_pulse",
     "for_",
     "full_integration",
     "if_",
     "measure",
-    "nested_schedule",
     "nested_sequence",
     "phase",
     "play",
@@ -137,7 +107,6 @@ __all__ = (
     "pulse_ref",
     "record",
     "repeat",
-    "resolve_schedule_params",
     "set_frequency",
     "set_phase",
     "shift_frequency",
@@ -145,7 +114,6 @@ __all__ = (
     "sine_pulse",
     "square_pulse",
     "store",
-    "sub_schedule",
     "sub_sequence",
     "var",
     "var_decl",

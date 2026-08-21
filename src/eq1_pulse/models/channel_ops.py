@@ -141,6 +141,19 @@ class Wait(ChannelsOpBase):
     The wait operations are scheduled to start as soon as possible on each channel.
 
     The relative timing between channels is not guaranteed.
+
+    ``Wait`` is the more primitive counterpart of OpenQASM's multi-resource ``delay``, which
+    conflates a barrier with a delay. The composite decomposes exactly:
+
+    .. code-block:: text
+
+        import:   delay[d] a, b;   ->   barrier(a, b) ; wait(a, b, d)
+        export:   wait(a, b, d)    ->   delay[d] a;  delay[d] b;
+
+    The import identity holds because after ``barrier(a, b)`` both channels' cursors are equal, so
+    an independent per-channel wait lands both ends at ``max(...) + d`` -- precisely the OpenQASM
+    semantics. The export identity holds because a single-resource ``delay`` advances only its own
+    cursor.
     """
 
     op_type: Literal["wait"] = "wait"

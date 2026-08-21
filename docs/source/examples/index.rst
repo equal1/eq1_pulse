@@ -10,7 +10,7 @@ This section provides practical examples of using the eq1_pulse library for comm
    basic_usage
    builder_examples
    sub_sequence_examples
-   sub_schedule_examples
+   external_block_examples
    spin_qubit_rabi
    spin_qubit_t2star
 
@@ -42,8 +42,13 @@ Complete examples of builder patterns and features:
 **Sub-Sequence Examples** (:doc:`sub_sequence_examples`)
     Modular composition with implicit timing using sub-sequences.
 
-**Sub-Schedule Examples** (:doc:`sub_schedule_examples`)
-    Modular composition with explicit timing using sub-schedules.
+**External Block Examples** (:doc:`external_block_examples`)
+    Reserving channels for opaque, externally defined operations.
+
+.. note::
+
+   Explicitly-timed schedules (``build_schedule()``) are an unused, experimental API pending
+   removal -- see :doc:`/experimental/schedule`.
 
 Spin Qubit Experiments
 ~~~~~~~~~~~~~~~~~~~~~~~
@@ -66,7 +71,7 @@ All example scripts are located in the ``examples/`` directory of the repository
     cd eq1_pulse
     python examples/builder_example.py
     python examples/sub_sequence_example.py
-    python examples/sub_schedule_example.py
+    python examples/external_block_example.py
     python examples/spin_qubit_rabi.py
     python examples/spin_qubit_t2star.py
 

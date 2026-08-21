@@ -3,15 +3,14 @@
 import pytest
 
 from eq1_pulse.builder import (
-    OperationToken,
-    add_block,
     arbitrary_pulse,
     barrier,
-    build_schedule,
     build_sequence,
     channel,
     demod_integration,
     discriminate,
+    experimental,
+    external_block,
     external_pulse,
     for_,
     full_integration,
@@ -30,7 +29,6 @@ from eq1_pulse.builder import (
     sine_pulse,
     square_pulse,
     store,
-    sub_schedule,
     sub_sequence,
     var,
     var_decl,
@@ -40,14 +38,13 @@ from eq1_pulse.models import (
     Barrier,
     Conditional,
     Discriminate,
+    ExternalBlock,
     Iteration,
     OpSequence,
     Play,
     PulseDecl,
     Record,
-    RefPt,
     Repetition,
-    Schedule,
     SetFrequency,
     SetPhase,
     ShiftFrequency,
@@ -129,135 +126,6 @@ class TestBuildSequence:
         with pytest.raises(RuntimeError, match="sub_sequence"):
             with sub_sequence():
                 play("ch1", square_pulse(duration="10us", amplitude="100mV"))
-
-    def test_sub_sequence_in_schedule_raises_error(self):
-        """Test that sub_sequence in a schedule context raises error."""
-        with pytest.raises(RuntimeError, match="can only be used within a sequence context"):
-            with build_schedule():
-                with sub_sequence():
-                    play("ch1", square_pulse(duration="10us", amplitude="100mV"))
-
-
-class TestBuildSchedule:
-    """Tests for build_schedule context manager."""
-
-    def test_empty_schedule(self):
-        """Test creating an empty schedule."""
-        with build_schedule() as sched:
-            pass
-        assert isinstance(sched, Schedule)
-        assert len(sched.items) == 0
-
-    def test_schedule_with_operations(self):
-        """Test schedule with operations and timing."""
-        with build_schedule() as sched:
-            op1 = play("ch1", square_pulse(duration="10us", amplitude="100mV"))
-            play("ch2", square_pulse(duration="10us", amplitude="100mV"), ref_op=op1, ref_pt="start", rel_time="5us")
-
-        assert len(sched.items) == 2
-
-    def test_nested_schedule_representation(self):
-        """Test nested schedule representation with sub_schedule context manager.
-
-        The sub_schedule context manager creates a nested schedule and automatically
-        adds it to the parent schedule with optional timing parameters.
-        """
-        with build_schedule() as outer:
-            # Create inner schedule with operations
-            with sub_schedule(op_name="sub_schedule") as _inner:
-                play("ch1", square_pulse(duration="10us", amplitude="100mV"))
-                play("ch2", square_pulse(duration="5us", amplitude="50mV"))
-
-            # Add another operation relative to the nested schedule
-            play(
-                "ch3",
-                square_pulse(duration="3us", amplitude="75mV"),
-                ref_op="sub_schedule",
-                ref_pt="end",
-                rel_time="2us",
-            )
-
-        # Outer schedule should have 2 items: the nested schedule and the play operation
-        assert len(outer.items) == 2
-
-        # First item should be the inner schedule wrapped in ScheduledOperation
-        assert isinstance(outer.items[0].op, Schedule)
-        inner_sched = outer.items[0].op
-        assert len(inner_sched.items) == 2
-        assert outer.items[0].name == "sub_schedule"
-
-        # Second item should be the play operation scheduled relative to the nested schedule
-        assert isinstance(outer.items[1].op, Play)
-        assert outer.items[1].ref_op == "sub_schedule"
-        assert outer.items[1].ref_pt == RefPt.End
-        assert outer.items[1].rel_time is not None
-
-    def test_nested_schedule_modular_blocks(self):
-        """Test using sub_schedule to create modular, reusable operation blocks.
-
-        This demonstrates how sub-schedules can be used to encapsulate
-        related operations (e.g., initialization, gates, readout) and
-        compose them into larger schedules with precise timing control.
-        """
-        with build_schedule() as main_schedule:
-            # Declare variable for measurement result
-            var_decl("result", "complex", unit="mV")
-
-            # Create initialization sub-schedule
-            with sub_schedule(op_name="initialization"):
-                play("qubit", square_pulse(duration="100ns", amplitude="200mV"))
-                wait("qubit", duration="50ns")
-
-            # Create gate operation positioned after initialization
-            gate_token = play(
-                "qubit",
-                square_pulse(duration="20ns", amplitude="150mV"),
-                ref_op="initialization",
-                ref_pt="end",
-                rel_time="10ns",
-            )
-
-            # Create measurement sub-schedule positioned after gate
-            with sub_schedule(op_name="measurement", ref_op=gate_token, ref_pt="end", rel_time="50ns"):
-                play("drive", square_pulse(duration="1us", amplitude="50mV"))
-                record("readout", var="result", duration="1us", integration=full_integration())
-
-        # Verify structure: var_decl + 2 sub-schedules + 1 gate operation
-        assert len(main_schedule.items) == 4
-
-        # Check var_decl is first
-        assert isinstance(main_schedule.items[0].op, VariableDecl)
-
-        # Check initialization block
-        assert isinstance(main_schedule.items[1].op, Schedule)
-        assert main_schedule.items[1].name == "initialization"
-        init = main_schedule.items[1].op
-        assert len(init.items) == 2  # play + wait
-
-        # Check gate operation timing
-        assert isinstance(main_schedule.items[2].op, Play)
-        assert main_schedule.items[2].ref_op == "initialization"
-        assert main_schedule.items[2].ref_pt == RefPt.End
-
-        # Check measurement block
-        assert isinstance(main_schedule.items[3].op, Schedule)
-        assert main_schedule.items[3].name == "measurement"
-        meas = main_schedule.items[3].op
-        assert len(meas.items) == 2  # play + record
-        assert main_schedule.items[3].ref_pt == RefPt.End
-
-    def test_sub_schedule_outside_schedule_raises_error(self):
-        """Test that sub_schedule outside a schedule context raises error."""
-        with pytest.raises(RuntimeError, match="sub_schedule"):
-            with sub_schedule(op_name="invalid"):
-                play("ch1", square_pulse(duration="10us", amplitude="100mV"))
-
-    def test_sub_schedule_in_sequence_raises_error(self):
-        """Test that sub_schedule in a sequence context raises error."""
-        with pytest.raises(RuntimeError, match="can only be used within a build_schedule"):
-            with build_sequence():
-                with sub_schedule(op_name="invalid"):
-                    play("ch1", square_pulse(duration="10us", amplitude="100mV"))
 
 
 class TestPulseCreation:
@@ -346,21 +214,6 @@ class TestBasicOperations:
         assert isinstance(seq.items[0], Wait)
         assert len(seq.items[0].channels) == 3
 
-    def test_wait_single_channel_in_schedule(self):
-        """Test that wait with single channel works in schedule."""
-        with build_schedule() as sched:
-            wait("ch1", duration="5us")
-
-        assert len(sched.items) == 1
-
-    def test_wait_multiple_channels_in_schedule_raises_error(self):
-        """Test that wait with multiple channels raises error in schedule."""
-        with (
-            pytest.raises(RuntimeError, match=r"Wait with multiple channels .* is not allowed in schedule context"),
-            build_schedule(),
-        ):
-            wait("ch1", "ch2", duration="5us")
-
     def test_barrier_in_sequence(self):
         """Test barrier operation in sequence."""
         with build_sequence() as seq:
@@ -368,11 +221,6 @@ class TestBasicOperations:
 
         assert len(seq.items) == 1
         assert isinstance(seq.items[0], Barrier)
-
-    def test_barrier_not_in_schedule(self):
-        """Test that barrier raises error in schedule."""
-        with pytest.raises(RuntimeError, match="Barrier operations are not supported in schedule"), build_schedule():
-            barrier("ch1", "ch2")
 
 
 class TestFrequencyAndPhase:
@@ -491,51 +339,6 @@ class TestVariables:
         assert isinstance(seq.items[0], VariableDecl)
         assert seq.items[0].shape == (100,)
 
-    def test_var_decl_in_schedule(self):
-        """Test variable declaration in schedule context."""
-        with build_schedule() as sched:
-            var_decl("result", "complex", unit="mV")
-
-        assert len(sched.items) == 1
-        assert isinstance(sched.items[0].op, VariableDecl)
-        assert sched.items[0].op.name == "result"
-        assert sched.items[0].op.dtype == "complex"
-        assert sched.items[0].op.unit == "mV"
-
-    def test_var_decl_in_schedule_with_timing(self):
-        """Test variable declaration in schedule with timing parameters."""
-        with build_schedule() as sched:
-            # Create a reference operation
-            token = play("ch1", square_pulse(duration="10us", amplitude="100mV"), op_name="pulse1")
-
-            # Declare variable positioned after the pulse
-            var_token = var_decl("data", "float", ref_op=token, ref_pt="end", rel_time="5us", op_name="var1")
-
-        assert len(sched.items) == 2
-        assert isinstance(sched.items[1].op, VariableDecl)
-        assert sched.items[1].op.name == "data"
-        assert sched.items[1].name == "var1"
-        assert sched.items[1].ref_op == "pulse1"
-        assert sched.items[1].ref_pt == RefPt.End
-        assert var_token is not None
-        assert var_token.name == "var1"
-
-    def test_var_decl_in_schedule_returns_token(self):
-        """Test that var_decl returns a token in schedule context."""
-        with build_schedule():
-            token = var_decl("test", "int", op_name="my_var")
-
-        assert token is not None
-        assert isinstance(token, OperationToken)
-        assert token.name == "my_var"
-
-    def test_var_decl_in_sequence_returns_none(self):
-        """Test that var_decl returns None in sequence context."""
-        with build_sequence():
-            result = var_decl("test", "int")
-
-        assert result is None
-
     def test_var_reference(self):
         """Test variable reference creation."""
         with build_sequence():
@@ -563,41 +366,6 @@ class TestVariables:
         assert seq.items[0].name == "my_pulse"
         assert isinstance(seq.items[0].pulse, SquarePulse)
 
-    def test_pulse_decl_in_schedule(self):
-        """Test pulse declaration in schedule context."""
-        with build_schedule() as sched:
-            pulse_decl("my_pulse", square_pulse(duration="100ns", amplitude="200mV"))
-
-        assert len(sched.items) == 1
-        assert isinstance(sched.items[0].op, PulseDecl)
-        assert sched.items[0].op.name == "my_pulse"
-        assert isinstance(sched.items[0].op.pulse, SquarePulse)
-
-    def test_pulse_decl_in_schedule_with_timing(self):
-        """Test pulse declaration in schedule with timing parameters."""
-        with build_schedule() as sched:
-            # Create a reference operation
-            token = play("ch1", square_pulse(duration="10us", amplitude="100mV"), op_name="pulse1")
-
-            # Declare pulse positioned after the play
-            pulse_token = pulse_decl(
-                "my_pulse",
-                sine_pulse(duration="5us", amplitude="50mV", frequency="5GHz"),
-                ref_op=token,
-                ref_pt="end",
-                rel_time="2us",
-                op_name="pulse_def",
-            )
-
-        assert len(sched.items) == 2
-        assert isinstance(sched.items[1].op, PulseDecl)
-        assert sched.items[1].op.name == "my_pulse"
-        assert sched.items[1].name == "pulse_def"
-        assert sched.items[1].ref_op == "pulse1"
-        assert sched.items[1].ref_pt == RefPt.End
-        assert pulse_token is not None
-        assert pulse_token.name == "pulse_def"
-
     def test_pulse_decl_and_reference(self):
         """Test declaring a pulse and using its reference."""
         with build_sequence() as seq:
@@ -609,22 +377,6 @@ class TestVariables:
         assert isinstance(seq.items[0], PulseDecl)
         assert isinstance(seq.items[1], Play)
         assert isinstance(seq.items[2], Play)
-
-    def test_pulse_decl_in_schedule_returns_token(self):
-        """Test that pulse_decl returns a token in schedule context."""
-        with build_schedule():
-            token = pulse_decl("test_pulse", square_pulse(duration="100ns", amplitude="200mV"), op_name="my_pulse_def")
-
-        assert token is not None
-        assert isinstance(token, OperationToken)
-        assert token.name == "my_pulse_def"
-
-    def test_pulse_decl_in_sequence_returns_none(self):
-        """Test that pulse_decl returns None in sequence context."""
-        with build_sequence():
-            result = pulse_decl("test_pulse", square_pulse(duration="100ns", amplitude="200mV"))
-
-        assert result is None
 
 
 class TestMeasurement:
@@ -730,157 +482,106 @@ class TestDataOperations:
         assert len(seq.items) == 3
         assert isinstance(seq.items[2], Store)
 
-    def test_store_in_schedule(self):
-        """Test store operation in schedule context."""
-        with build_schedule() as sched:
-            var_decl("result", "complex", unit="mV")
-            var_decl("stored", "complex", unit="mV")
-            store("stored", "result", mode="last")
 
-        assert len(sched.items) == 3
-        assert isinstance(sched.items[2].op, Store)
+class TestExternalBlock:
+    """Tests for the external_block() builder function."""
 
-    def test_store_in_schedule_with_timing(self):
-        """Test store operation in schedule with timing parameters."""
-        with build_schedule() as sched:
-            var_decl("result", "complex", unit="mV")
-            var_decl("stored", "complex", unit="mV")
-
-            # Create a reference operation
-            token = play("ch1", square_pulse(duration="10us", amplitude="100mV"), op_name="pulse1")
-
-            # Store positioned after the pulse
-            store_token = store(
-                "stored", "result", mode="last", ref_op=token, ref_pt="end", rel_time="2us", op_name="store1"
+    def test_named_channels_form(self):
+        """Test the channels= mapping form with params and results."""
+        with build_sequence() as seq:
+            var_decl("iq", "complex", unit="mV")
+            external_block(
+                program="eq1.cal.measure",
+                channels={"drive": "q0", "readout": "q0_ro"},
+                params={"amp": "50mV"},
+                results={"iq": var("iq")},
             )
 
-        assert len(sched.items) == 4
-        assert isinstance(sched.items[3].op, Store)
-        assert sched.items[3].name == "store1"
-        assert sched.items[3].ref_op == "pulse1"
-        assert sched.items[3].ref_pt == RefPt.End
-        assert store_token is not None
-        assert store_token.name == "store1"
+        assert len(seq.items) == 2
+        op = seq.items[1]
+        assert isinstance(op, ExternalBlock)
+        assert op.channels == {"drive": "q0", "readout": "q0_ro"}
+        assert op.results is not None
+        assert op.results["iq"].var == "iq"
 
-    def test_store_in_schedule_returns_token(self):
-        """Test that store returns a token in schedule context."""
-        with build_schedule():
-            var_decl("result", "complex", unit="mV")
-            var_decl("stored", "complex", unit="mV")
-            token = store("stored", "result", mode="last", op_name="my_store")
+    def test_positional_channels_form(self):
+        """Test the positional channels form generates deterministic role keys."""
+        with build_sequence() as seq:
+            external_block("q0", "q1", program="eq1.cal.cz")
 
-        assert token is not None
-        assert isinstance(token, OperationToken)
-        assert token.name == "my_store"
+        assert len(seq.items) == 1
+        op = seq.items[0]
+        assert isinstance(op, ExternalBlock)
+        assert op.channels == {"0": "q0", "1": "q1"}
+        assert op.duration is None
 
-    def test_store_in_sequence_returns_none(self):
-        """Test that store returns None in sequence context."""
-        with build_sequence():
-            var_decl("result", "complex", unit="mV")
-            var_decl("stored", "complex", unit="mV")
-            result = store("stored", "result", mode="last")
+    def test_pure_reservation(self):
+        """Test a pure reservation with no referenced program."""
+        with build_sequence() as seq:
+            external_block("q1", duration="1us")
 
-        assert result is None
+        assert len(seq.items) == 1
+        op = seq.items[0]
+        assert isinstance(op, ExternalBlock)
+        assert op.program is None
+        assert op.channels == {"0": "q1"}
 
-    def test_discriminate_in_schedule(self):
-        """Test discriminate operation in schedule context."""
-        with build_schedule() as sched:
-            var_decl("raw", "complex", unit="mV")
-            var_decl("state", "bool")
-            discriminate(target="state", source="raw", threshold="0.5mV")
+    def test_positional_and_channels_mapping_rejected(self):
+        """Test that supplying both positional channels and channels= raises."""
+        with build_sequence(), pytest.raises(ValueError, match="cannot accept both positional channels"):
+            external_block("q0", channels={"drive": "q1"}, program="eq1.cal.cz")
 
-        assert len(sched.items) == 3
-        assert isinstance(sched.items[2].op, Discriminate)
+    def test_no_channels_rejected(self):
+        """Test that omitting both positional channels and channels= raises."""
+        with build_sequence(), pytest.raises(ValueError, match="requires at least one channel"):
+            external_block(program="eq1.cal.cz")
 
-    def test_discriminate_in_schedule_with_timing(self):
-        """Test discriminate operation in schedule with timing parameters."""
-        with build_schedule() as sched:
-            var_decl("raw", "complex", unit="mV")
-            var_decl("state", "bool")
+    def test_undeclared_results_variable_rejected(self):
+        """Test that an undeclared results variable raises."""
+        with build_sequence(), pytest.raises(RuntimeError, match=r"not been declared|undeclared"):
+            external_block("q0", program="eq1.cal.measure", results={"iq": "undeclared_var"})
 
-            # Create a measurement operation
-            meas_token = measure(
-                "readout",
-                result_var="raw",
-                duration="1us",
-                amplitude="50mV",
-                integration=demod_integration(),
-                op_name="measurement",
-            )
+    def test_in_repeat(self):
+        """Test external_block inside a repeat loop."""
+        with build_sequence() as seq:
+            with repeat(3):
+                external_block("q0", program="eq1.cal.cz")
 
-            # Discriminate positioned after measurement
-            disc_token = discriminate(
-                target="state",
-                source="raw",
-                threshold="0.5mV",
-                ref_op=meas_token,
-                ref_pt="end",
-                rel_time="100ns",
-                op_name="discrimination",
-            )
+        assert isinstance(seq.items[0], Repetition)
+        assert isinstance(seq.items[0].body.items[0], ExternalBlock)
 
-        # Should have: 2 var_decls + play + record + discriminate = 5 items
-        assert len(sched.items) == 5
-        assert isinstance(sched.items[4].op, Discriminate)
-        assert sched.items[4].name == "discrimination"
-        assert sched.items[4].ref_op == "measurement"
-        assert sched.items[4].ref_pt == RefPt.End
-        assert disc_token is not None
-        assert disc_token.name == "discrimination"
+    def test_in_for_loop(self):
+        """Test external_block inside a for_ loop."""
+        with build_sequence() as seq:
+            var_decl("i", "int")
+            with for_("i", range(3)):
+                external_block("q0", program="eq1.cal.cz")
 
-    def test_discriminate_in_schedule_returns_token(self):
-        """Test that discriminate returns a token in schedule context."""
-        with build_schedule():
-            var_decl("raw", "complex", unit="mV")
-            var_decl("state", "bool")
-            token = discriminate(target="state", source="raw", threshold="0.5mV", op_name="my_disc")
+        assert isinstance(seq.items[1], Iteration)
+        assert isinstance(seq.items[1].body.items[0], ExternalBlock)
 
-        assert token is not None
-        assert isinstance(token, OperationToken)
-        assert token.name == "my_disc"
+    def test_in_if_conditional(self):
+        """Test external_block inside an if_ conditional."""
+        with build_sequence() as seq:
+            var_decl("result", "bool")
+            with if_("result"):
+                external_block("q0", program="eq1.cal.cz")
 
-    def test_discriminate_in_sequence_returns_none(self):
-        """Test that discriminate returns None in sequence context."""
-        with build_sequence():
-            var_decl("raw", "complex", unit="mV")
-            var_decl("state", "bool")
-            result = discriminate(target="state", source="raw", threshold="0.5mV")
+        assert isinstance(seq.items[1], Conditional)
+        assert isinstance(seq.items[1].body.items[0], ExternalBlock)
 
-        assert result is None
+    def test_in_sub_sequence(self):
+        """Test external_block inside a sub_sequence."""
+        with build_sequence() as seq:
+            with sub_sequence():
+                external_block("q0", program="eq1.cal.cz")
 
+        assert isinstance(seq.items[0], OpSequence)
+        assert isinstance(seq.items[0].items[0], ExternalBlock)
 
-class TestScheduleSpecific:
-    """Tests for schedule-specific features."""
-
-    def test_schedule_with_timing(self):
-        """Test schedule with relative timing."""
-        with build_schedule() as sched:
-            op1 = play("ch1", square_pulse(duration="10us", amplitude="100mV"), op_name="op1")
-            play(
-                "ch2",
-                square_pulse(duration="10us", amplitude="100mV"),
-                ref_op=op1,
-                ref_pt="start",
-                rel_time="5us",
-                op_name="op2",
-            )
-
-        assert len(sched.items) == 2
-
-    def test_schedule_operations_return_tokens(self):
-        """Test that schedule operations return tokens."""
-        with build_schedule():
-            token = play("ch1", square_pulse(duration="10us", amplitude="100mV"), op_name="pulse1")
-
-        assert token is not None
-        assert token.name == "pulse1"
-
-    def test_sequence_operations_return_none(self):
-        """Test that sequence operations return None."""
-        with build_sequence():
-            result = play("ch1", square_pulse(duration="10us", amplitude="100mV"))
-
-        assert result is None
+    def test_not_exported_from_experimental(self):
+        """Test that external_block is not part of the experimental builder API."""
+        assert not hasattr(experimental, "external_block")
 
 
 class TestErrorHandling:
@@ -890,11 +591,6 @@ class TestErrorHandling:
         """Test that operations outside context raise error."""
         with pytest.raises(RuntimeError, match="No active building context for play\\(\\)"):
             play("ch1", square_pulse(duration="10us", amplitude="100mV"))
-
-    def test_barrier_in_schedule_raises_error(self):
-        """Test that barrier in schedule raises error."""
-        with pytest.raises(RuntimeError, match="not supported in schedule"), build_schedule():
-            barrier("ch1")
 
     def test_repeat_without_context_raises_error(self):
         """Test that repeat outside context raises error."""
@@ -994,7 +690,7 @@ class TestComplexScenarios:
 
 
 class TestSerialization:
-    """Tests for sequence/schedule serialization."""
+    """Tests for sequence serialization."""
 
     def test_sequence_serialization(self):
         """Test that sequences can be serialized and deserialized."""
@@ -1010,22 +706,9 @@ class TestSerialization:
         restored = OpSequence.model_validate_json(json_str)
         assert len(restored.items) == len(seq.items)
 
-    def test_schedule_serialization(self):
-        """Test that schedules can be serialized and deserialized."""
-        with build_schedule() as sched:
-            play("ch1", square_pulse(duration="10us", amplitude="100mV"), op_name="op1")
-
-        # Serialize to JSON
-        json_str = sched.model_dump_json()
-        assert json_str is not None
-
-        # Deserialize
-        restored = Schedule.model_validate_json(json_str)
-        assert len(restored.items) == len(sched.items)
-
 
 class TestNestedDecorators:
-    """Tests for the @nested_sequence and @nested_schedule decorators."""
+    """Tests for the @nested_sequence decorator."""
 
     def test_nested_sequence_decorator_in_sequence(self):
         """Test @nested_sequence decorator creates sub_sequence in sequence context."""
@@ -1051,32 +734,6 @@ class TestNestedDecorators:
         sub_seq = seq.items[0]
         assert len(sub_seq.items) == 3
 
-    def test_nested_schedule_decorator_in_schedule(self):
-        """Test @nested_schedule decorator creates sub_schedule in schedule context."""
-        from eq1_pulse.builder import nested_schedule
-
-        @nested_schedule
-        def measurement_block(drive_ch: str, readout_ch: str, result_var: str):
-            """Perform readout measurement."""
-            play(drive_ch, square_pulse(duration="1us", amplitude="50mV"))
-            record(readout_ch, var=result_var, duration="1us", integration=full_integration())
-
-        with build_schedule() as sched:
-            var_decl("result", "complex", unit="mV")
-            op1 = play("qubit", square_pulse(duration="20ns", amplitude="100mV"))
-            add_block(measurement_block("drive0", "readout0", "result"), ref_op=op1, ref_pt="end", rel_time="100ns")
-
-        # Should have 3 items: var_decl + play + sub-schedule
-        assert len(sched.items) == 3
-        assert isinstance(sched.items[0].op, VariableDecl)
-        assert isinstance(sched.items[1].op, Play)
-        assert isinstance(sched.items[2].op, Schedule)  # sub_schedule
-
-        # Check the sub-schedule contains 2 operations
-        sub_sched = sched.items[2].op
-        assert isinstance(sub_sched, Schedule)
-        assert len(sub_sched.items) == 2
-
     def test_nested_sequence_with_parameters(self):
         """Test @nested_sequence decorator with function parameters."""
         from eq1_pulse.builder import nested_sequence
@@ -1095,21 +752,6 @@ class TestNestedDecorators:
         for item in seq.items:
             assert isinstance(item, OpSequence)
             assert len(item.items) == 2  # play + wait
-
-    def test_nested_schedule_returns_token(self):
-        """Test @nested_schedule decorator returns operation token in schedule context."""
-        from eq1_pulse.builder import nested_schedule
-
-        @nested_schedule
-        def gate_sequence(qubit: str):
-            """Apply gate sequence."""
-            play(qubit, square_pulse(duration="20ns", amplitude="100mV"))
-
-        with build_schedule() as sched:
-            token1 = add_block(gate_sequence("qubit0"), op_name="gate1")
-            add_block(gate_sequence("qubit1"), ref_op=token1, ref_pt="end", rel_time="50ns")
-
-        assert len(sched.items) == 2
 
     def test_nested_sequence_in_control_flow(self):
         """Test @nested_sequence decorator works inside control flow."""
@@ -1148,19 +790,6 @@ class TestNestedDecorators:
         assert result == 10
         assert call_count == 1
 
-    def test_nested_schedule_without_context(self):
-        """Test @nested_schedule decorator raises error outside building context."""
-        from eq1_pulse.builder import nested_schedule
-
-        @nested_schedule
-        def test_func(x: int) -> int:
-            """Test function."""
-            return x * 2
-
-        # Should raise error when called without context
-        with pytest.raises(RuntimeError, match=r"No active building context"):
-            test_func(5)
-
     def test_multiple_nested_sequence_functions(self):
         """Test using multiple @nested_sequence decorated functions."""
         from eq1_pulse.builder import nested_sequence
@@ -1189,71 +818,3 @@ class TestNestedDecorators:
         # Should have 3 sub-sequences
         assert len(seq.items) == 3
         assert all(isinstance(item, OpSequence) for item in seq.items)
-
-    def test_nested_sequence_in_schedule_raises_error(self):
-        """Test @nested_sequence raises error in schedule context."""
-        from eq1_pulse.builder import nested_sequence
-
-        @nested_sequence
-        def sequence_func(qubit: str):
-            """Function for sequences only."""
-            play(qubit, square_pulse(duration="20ns", amplitude="100mV"))
-
-        with (
-            pytest.raises(RuntimeError, match=r"@nested_sequence decorator cannot be used in schedule context"),
-            build_schedule(),
-        ):
-            sequence_func("qubit0")
-
-    def test_nested_schedule_in_sequence_raises_error(self):
-        """Test @nested_schedule raises error in sequence context."""
-        from eq1_pulse.builder import nested_schedule
-
-        @nested_schedule
-        def schedule_func(qubit: str):
-            """Function for schedules only."""
-            play(qubit, square_pulse(duration="20ns", amplitude="100mV"))
-
-        # ScheduleBlock can only be added in schedule contexts
-        with (
-            pytest.raises(RuntimeError, match=r"add_block\(\) can only be used within a build_schedule\(\) context"),
-            build_sequence(),
-        ):
-            block = schedule_func("qubit0")
-            add_block(block)
-
-    def test_unconsumed_schedule_block_raises_error(self):
-        """Test that unconsumed ScheduleBlock raises error on context close."""
-        from eq1_pulse.builder import nested_schedule
-
-        @nested_schedule
-        def test_block(qubit: str):
-            """Test block."""
-            play(qubit, square_pulse(duration="20ns", amplitude="100mV"))
-
-        # Should raise error when block is created but not added
-        with pytest.raises(
-            RuntimeError,
-            match=r"Schedule context closed with 1 unconsumed ScheduleBlock\(s\).*add_block\(\)",
-        ):
-            with build_schedule():
-                test_block("qubit0")  # Created but not added with add_block()
-
-    def test_multiple_unconsumed_blocks_raises_error(self):
-        """Test that multiple unconsumed ScheduleBlocks are detected."""
-        from eq1_pulse.builder import nested_schedule
-
-        @nested_schedule
-        def test_block(qubit: str):
-            """Test block."""
-            play(qubit, square_pulse(duration="20ns", amplitude="100mV"))
-
-        # Should report count of unconsumed blocks
-        with pytest.raises(
-            RuntimeError,
-            match=r"Schedule context closed with 2 unconsumed ScheduleBlock\(s\)",
-        ):
-            with build_schedule():
-                test_block("qubit0")
-                test_block("qubit1")
-                # Neither added with add_block()

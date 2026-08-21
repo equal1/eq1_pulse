@@ -3,9 +3,16 @@ from typing import Any
 import numpy as np
 from pydantic import TypeAdapter
 
-from eq1_pulse.models.basic_types import Amplitude, Duration, Frequency
-from eq1_pulse.models.pulse_types import ArbitrarySampledPulse, ExternalPulse, PulseType, SinePulse, SquarePulse
-from eq1_pulse.models.reference_types import VariableRef
+from eq1_pulse.models.basic_types import Amplitude, Duration, Frequency, Magnitude, Phase
+from eq1_pulse.models.pulse_types import (
+    ArbitrarySampledPulse,
+    ExternalParamValue,
+    ExternalPulse,
+    PulseType,
+    SinePulse,
+    SquarePulse,
+)
+from eq1_pulse.models.reference_types import PulseRef, VariableRef
 
 """Tests for pulse type models."""
 
@@ -435,3 +442,124 @@ def test_arbitrary_sample_pulse_json_serialization_with_complex_samples():
         + '"samples":[[0.0,0.0],[0.5,0.5],[1.0,1.0],[0.5,0.5],[0.0,0.0]]'
         + "}"
     )
+
+
+def test_external_param_value_amplitude():
+    """Test that an Amplitude instance round-trips through ExternalParamValue."""
+    value: Any = TypeAdapter(ExternalParamValue).validate_python(Amplitude(V=0.5))
+    assert isinstance(value, Amplitude)
+    assert value.V == 0.5
+
+
+def test_external_param_value_duration():
+    """Test that a Duration instance round-trips through ExternalParamValue."""
+    value: Any = TypeAdapter(ExternalParamValue).validate_python(Duration(s=1e-6))
+    assert isinstance(value, Duration)
+    assert value.s == 1e-6
+
+
+def test_external_param_value_frequency():
+    """Test that a Frequency instance round-trips through ExternalParamValue."""
+    value: Any = TypeAdapter(ExternalParamValue).validate_python(Frequency(Hz=1e6))
+    assert isinstance(value, Frequency)
+    assert value.Hz == 1e6
+
+
+def test_external_param_value_phase():
+    """Test that a Phase instance round-trips through ExternalParamValue."""
+    value: Any = TypeAdapter(ExternalParamValue).validate_python(Phase(rad=1.0))
+    assert isinstance(value, Phase)
+    assert value.rad == 1.0
+
+
+def test_external_param_value_magnitude():
+    """Test that a Magnitude instance round-trips through ExternalParamValue."""
+    value: Any = TypeAdapter(ExternalParamValue).validate_python(Magnitude(V=0.5))
+    assert isinstance(value, Magnitude)
+    assert value.V == 0.5
+
+
+def test_external_param_value_variable_ref():
+    """Test that a VariableRef instance round-trips through ExternalParamValue."""
+    value: Any = TypeAdapter(ExternalParamValue).validate_python(VariableRef(var="x"))
+    assert isinstance(value, VariableRef)
+    assert value.var == "x"
+
+
+def test_external_param_value_pulse_ref():
+    """Test that a PulseRef instance round-trips through ExternalParamValue."""
+    value: Any = TypeAdapter(ExternalParamValue).validate_python(PulseRef(pulse_name="p1"))
+    assert isinstance(value, PulseRef)
+    assert value.pulse_name == "p1"
+
+
+def test_external_param_value_pulse_type():
+    """Test that an inline PulseType instance round-trips through ExternalParamValue."""
+    inner = SquarePulse(duration=Duration(s=1e-6), amplitude=Amplitude(V=0.5))
+    value: Any = TypeAdapter(ExternalParamValue).validate_python(inner)
+    assert isinstance(value, SquarePulse)
+    assert value == inner
+
+
+def test_external_param_value_scalars():
+    """Test that bool, float, int, and complex scalars round-trip through ExternalParamValue."""
+    adapter: TypeAdapter[Any] = TypeAdapter(ExternalParamValue)
+    assert adapter.validate_python(True) is True
+    assert adapter.validate_python(1.5) == 1.5
+    assert adapter.validate_python(3) == 3
+    assert adapter.validate_python(1 + 2j) == 1 + 2j
+
+
+def test_external_param_value_unit_suffixed_strings_are_coerced():
+    """Test that unit-suffixed strings are coerced to their typed dimensional quantity."""
+    adapter: TypeAdapter[Any] = TypeAdapter(ExternalParamValue)
+    assert adapter.validate_python("10us") == Duration(us=10)
+    assert adapter.validate_python("100mV") == Amplitude(mV=100)
+    assert adapter.validate_python("5GHz") == Frequency(GHz=5)
+    assert adapter.validate_python("foo") == "foo"
+
+
+def test_external_param_value_variable_ref_round_trips_through_json():
+    """Test that a VariableRef survives a JSON round-trip through ExternalParamValue."""
+    adapter: TypeAdapter[Any] = TypeAdapter(ExternalParamValue)
+    dumped = adapter.dump_json(VariableRef(var="x"))
+    assert dumped == b'{"var_ref":"x"}'
+    restored = adapter.validate_json(dumped)
+    assert restored == VariableRef(var="x")
+
+
+def test_external_param_value_pulse_ref_round_trips_through_json():
+    """Test that a PulseRef survives a JSON round-trip through ExternalParamValue."""
+    adapter: TypeAdapter[Any] = TypeAdapter(ExternalParamValue)
+    dumped = adapter.dump_json(PulseRef(pulse_name="p1"))
+    assert dumped == b'{"pulse_ref":"p1"}'
+    restored = adapter.validate_json(dumped)
+    assert restored == PulseRef(pulse_name="p1")
+
+
+def test_external_param_value_complex_round_trips_through_json():
+    """Test that a complex scalar survives a JSON round-trip through ExternalParamValue."""
+    adapter: TypeAdapter[Any] = TypeAdapter(ExternalParamValue)
+    dumped = adapter.dump_json(1 + 2j)
+    restored = adapter.validate_json(dumped)
+    assert restored == 1 + 2j
+
+
+def test_external_pulse_params_widened_types():
+    """Test that ExternalPulse.params accepts the widened ExternalParamValue members."""
+    pulse = ExternalPulse(
+        function="gate",
+        duration=Duration(s=1e-6),
+        amplitude=Amplitude(V=1.0),
+        params={
+            "phase": Phase(rad=1.0),
+            "threshold": Magnitude(V=0.1),
+            "pulse_ref": PulseRef(pulse_name="p1"),
+            "label": "foo",
+        },
+    )
+    assert pulse.params is not None
+    assert isinstance(pulse.params["phase"], Phase)
+    assert isinstance(pulse.params["threshold"], Magnitude)
+    assert isinstance(pulse.params["pulse_ref"], PulseRef)
+    assert pulse.params["label"] == "foo"

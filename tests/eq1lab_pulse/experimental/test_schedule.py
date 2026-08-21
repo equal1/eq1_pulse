@@ -6,14 +6,14 @@ import numpy as np
 
 from eq1_pulse.models.basic_types import Amplitude, Duration
 from eq1_pulse.models.channel_ops import Play
-from eq1_pulse.models.pulse_types import SquarePulse
-from eq1_pulse.models.schedule import (
+from eq1_pulse.models.experimental.schedule import (
     RelTime,
     SchedConditional,
     SchedIteration,
     SchedRepetition,
     Schedule,
 )
+from eq1_pulse.models.pulse_types import SquarePulse
 
 # Previous tests remain unchanged...
 
