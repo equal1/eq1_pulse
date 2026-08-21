@@ -389,10 +389,11 @@ Tests that need a declared external symbol before `extern_decl()` exists (task 6
 ## Task 6 — Builder: `param_decl()`, `extern_decl()`, exports ✅ done
 
 **Status:** done, 2026-08-21. `ruff`'s configured rule set (`pyproject.toml`'s `[tool.ruff.lint]`)
-does not select the `A` (flake8-builtins) category, so the `# noqa: A002` on `min`/`max` is inert
-today but kept anyway per the task text, in case `A` is ever enabled. A private `_build_limits()`
-helper assembles the `ValueLimits` from the flat `min`/`max`/`allowed` keywords and is shared by
-both functions rather than duplicated. Both functions were also added to `builder/core.py`'s own
+does not select the `A` (flake8-builtins) category, so `min`/`max` shadowing the builtins raises
+nothing; the pre-commit `ruff` hook auto-removed the `# noqa: A002` markers as unused (`RUF100`) the
+first time it ran, so the final code has no `noqa` at all. A private `_build_limits()` helper
+assembles the `ValueLimits` from the flat `min`/`max`/`allowed` keywords and is shared by both
+functions rather than duplicated. Both functions were also added to `builder/core.py`'s own
 `__all__` (alphabetically, `extern_decl` sorts before `external_block`/`external_pulse` since `_`
 sorts below `a`), matching how `ext` was exported in task 5 — `core.py`'s `__all__` is otherwise
 unused (nothing does `from .core import *`) but task 5 established the convention of keeping it in
