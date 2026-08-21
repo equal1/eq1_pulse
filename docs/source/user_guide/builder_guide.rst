@@ -458,6 +458,47 @@ Example:
     # Use in pulse parameters
     play("qubit", square_pulse(duration="100ns", amplitude=var("amp")))
 
+Late-bound values
+-----------------
+
+A variable's value is computed *inside* the program (e.g. by a loop or a discrimination). Two
+further kinds of value are resolved *outside* it, at submission time, so the same serialized
+program can be resubmitted as those values change without rebuilding the IR:
+
+* A **parameter** (:func:`~eq1_pulse.builder.param_decl`) is supplied by the caller when the
+  program is submitted -- a shot count, a sweep range endpoint. It is declared with
+  ``param_decl()`` and referenced with the ordinary ``var()``, since a parameter shares the
+  variable namespace and is otherwise an ordinary variable.
+* An **external constant** (:func:`~eq1_pulse.builder.extern_decl`) is looked up by name in a
+  calibration store when the program is submitted -- a qubit's drive frequency, a readout
+  threshold. It is declared with ``extern_decl()`` and referenced with :func:`~eq1_pulse.builder.ext`,
+  never with ``var()``. Names follow ``identifier[index].attribute``, e.g. ``"q0.f01"``,
+  ``"q0[1].amp"``, ``"readout.threshold"`` -- only the leading identifier is mandatory.
+
+Both declarations accept an optional ``unit``, an optional ``default`` (used if no value is
+supplied or resolved at submission time), and optional ``min=``/``max=``/``allowed=`` limits.
+**eq1_pulse declares these but never enforces them** -- unit conversion and range checking are
+the responsibility of whatever submits the program.
+
+.. code-block:: python
+
+    from eq1_pulse.builder import *
+
+    with build_sequence():
+        # Supplied at submission time, with a fallback.
+        param_decl("n_shots", "int", default=1000, min=1, max=100_000)
+
+        # Resolved from the calibration store at submission time.
+        extern_decl("q0.f01", "float", unit="GHz")
+        extern_decl("q0.pi_amp", "float", unit="mV")
+
+        set_frequency("q0_drive", ext("q0.f01"))
+
+        with repeat(var("n_shots")):
+            play("q0_drive", square_pulse(duration="25ns", amplitude=ext("q0.pi_amp")))
+
+See ``examples/calibrated_rabi.py`` for a full sequence built from both kinds of late-bound value.
+
 Control Flow
 ------------
 

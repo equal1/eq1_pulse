@@ -443,7 +443,20 @@ Docs and the example file (task 7).
 
 ---
 
-## Task 7 — Schema checks, docs, example
+## Task 7 — Schema checks, docs, example ✅ done
+
+**Status:** done, 2026-08-21. The four §4 schema checks landed as
+`test_symbol_declarations_are_in_the_schema` and `test_variable_decl_schema_is_unchanged` in
+`tests/test_openapi_generator.py` — `test_external_ref_stays_an_object` already existed from task 1.
+`examples/calibrated_rabi.py` is the plan's §6 example, picked up automatically by
+`tests/test_examples.py`'s `rglob("*.py")` discovery — no explicit list to update. Added a
+"Late-bound values" section to `docs/source/user_guide/builder_guide.rst` after the existing
+"Variables" section, referencing the example by path rather than `:doc:` since there is no
+per-example rst page for it (unlike the Rabi/T2* experiments, which get their own page under
+`docs/source/examples/`). The docs build produces the same pre-existing autoapi
+"more than one target found for cross-reference" warnings seen on `main` (ambiguous refs like
+`Amplitude`, `ExternalRef`, `DataOp` resolving to both their module path and the `models`
+re-export) — none of them originate from this task's additions.
 
 **Read:** plan §4, §6, §8.
 **Goal:** the feature is visible in the generated schema and documented.

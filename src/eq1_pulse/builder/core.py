@@ -1012,9 +1012,9 @@ def record(
 def discriminate(
     target: VariableRefLike,
     source: VariableRefLike,
-    threshold: ThresholdLike,
+    threshold: ThresholdLike | SymbolRefLike,
     *,
-    rotation: PhaseLike = 0,
+    rotation: PhaseLike | SymbolRefLike = 0,
     compare: ComparisonModeLike = ">=",
     project: ComplexToRealProjectionModeLike = "real",
 ) -> None:
@@ -1025,8 +1025,8 @@ def discriminate(
 
     :param target: Variable to store the discrimination result (boolean)
     :param source: Source variable containing the measurement data
-    :param threshold: Threshold value for comparison
-    :param rotation: Phase rotation to apply before projection (default: 0)
+    :param threshold: Threshold value for comparison, or a variable/external reference
+    :param rotation: Phase rotation to apply before projection, or a variable/external reference (default: 0)
     :param compare: Comparison operator (default: ">=")
     :param project: Complex-to-real projection mode (default: "real")
 
@@ -1046,12 +1046,14 @@ def discriminate(
     # Validate variable references
     validated_target = _validate_variable_ref(target)
     validated_source = _validate_variable_ref(source)
+    validated_threshold = _validate_or_pass_through(threshold, param_name="threshold", context="discriminate()")
+    validated_rotation = _validate_or_pass_through(rotation, param_name="rotation", context="discriminate()")
 
     op = Discriminate(
         target=validated_target,
         source=validated_source,
-        threshold=threshold,
-        rotation=rotation,  # type: ignore[arg-type]
+        threshold=validated_threshold,  # type: ignore[arg-type]
+        rotation=validated_rotation,  # type: ignore[arg-type]
         compare=compare,  # type: ignore[arg-type]
         project=project,  # type: ignore[arg-type]
     )

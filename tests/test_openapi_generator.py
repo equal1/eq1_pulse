@@ -265,6 +265,32 @@ def test_external_ref_stays_an_object(generated_schemas):
         assert "anyOf" not in schema
 
 
+def test_symbol_declarations_are_in_the_schema(generated_schemas):
+    """``ValueLimits``, ``ParameterDecl`` and ``ExternalDecl`` are published; their shared base is not.
+
+    ``SymbolDeclBase`` exists only to factor out common fields and is excluded the same way
+    ``DataOpBase`` is -- it is never referenced by a discriminated union and has no wire form of
+    its own.
+    """
+    for name in ("ValueLimits", "ParameterDecl", "ExternalDecl"):
+        matches = [key for key in generated_schemas if key.removesuffix("-Input").removesuffix("-Output") == name]
+        assert matches, f"{name} should be present in components.schemas"
+
+    assert not any(
+        key.removesuffix("-Input").removesuffix("-Output") == "SymbolDeclBase" for key in generated_schemas
+    ), "SymbolDeclBase should not be published"
+
+
+def test_variable_decl_schema_is_unchanged(generated_schemas):
+    """Check that ``VariableDecl``'s schema survives its refactor onto ``SymbolDeclBase``.
+
+    That base class was introduced for ``ParameterDecl``/``ExternalDecl`` to share; it must not
+    change what ``VariableDecl`` itself publishes.
+    """
+    schema = generated_schemas["VariableDecl-Input"]
+    assert set(schema["properties"]) == {"op_type", "dtype", "shape", "unit", "name"}
+
+
 def test_generated_schema_agrees_with_the_direct_call():
     """The same customisation must apply whether a model is asked directly or generated in bulk.
 
