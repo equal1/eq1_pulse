@@ -3,7 +3,10 @@
 **Issue:** [#6 — Feature: external constants and pulse parameter variables](https://github.com/equal1/eq1_pulse/issues/6)
 **Status:** **implemented** — landed as designed; all open questions closed (§9), deltas recorded in §10
 **Date:** 2026-08-21
-**Successors:** [expressions-plan.md](expressions-plan.md) (#3) builds directly on the `SymbolRef` alias introduced here.
+**Successors:** [#3 (expressions)](https://github.com/equal1/eq1_pulse/issues/3) builds directly on
+the `SymbolRef` alias introduced here; [#5 (additional pulse types)](https://github.com/equal1/eq1_pulse/issues/5)
+declares its new fields at that alias. Both are planned on their own branch and are not part of this
+plan's delivery.
 
 ---
 
