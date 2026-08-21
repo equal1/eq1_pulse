@@ -8,11 +8,11 @@ Note:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypedDict
+from typing import TYPE_CHECKING, Any, ClassVar, TypedDict
 
-from pydantic import BaseModel, model_serializer, model_validator
-from pydantic.json_schema import DEFAULT_REF_TEMPLATE, GenerateJsonSchema, JsonSchemaMode
-from pydantic_core import PydanticSerializationUnexpectedValue
+from pydantic import BaseModel, GetJsonSchemaHandler, model_serializer, model_validator
+from pydantic.json_schema import JsonSchemaValue
+from pydantic_core import CoreSchema, PydanticSerializationUnexpectedValue
 
 from .identifier_str import ExternalSymbolStr, IdentifierStr
 
@@ -35,7 +35,8 @@ class Reference(BaseModel):
 
     Note:
         A descendant that keeps the wrapped object form instead must set :attr:`_serializes_bare`
-        to :obj:`False` *and* override both :meth:`_wrap_serializer` and :meth:`model_json_schema`;
+        to :obj:`False` *and* override both :meth:`_wrap_serializer` and
+        :meth:`__get_pydantic_json_schema__`;
         see :class:`ExternalRef`. All three go together: the flag drives union dispatch, the
         serializer produces the wire form, and the schema describes it. Declaring one without the
         others is rejected when the class is created — see :meth:`__pydantic_init_subclass__`.
@@ -74,7 +75,9 @@ class Reference(BaseModel):
                 )
         else:
             missing = [
-                name for name in ("_wrap_serializer", "model_json_schema") if not cls._overrides_below_reference(name)
+                name
+                for name in ("_wrap_serializer", "__get_pydantic_json_schema__")
+                if not cls._overrides_below_reference(name)
             ]
             if missing:
                 raise TypeError(
@@ -131,30 +134,33 @@ class Reference(BaseModel):
         return getattr(self, self._first_field_name())
 
     @classmethod
-    def model_json_schema(
-        cls,
-        by_alias: bool = True,
-        ref_template: str = DEFAULT_REF_TEMPLATE,
-        schema_generator: type[GenerateJsonSchema] = GenerateJsonSchema,
-        mode: JsonSchemaMode = "validation",
-        *,
-        union_format: Literal["any_of", "primitive_type_array"] = "any_of",
-    ) -> dict[str, Any]:
-        """Generate the JSON schema for the model, wrapping it to allow direct values.
+    def __get_pydantic_json_schema__(cls, core_schema: CoreSchema, handler: GetJsonSchemaHandler) -> JsonSchemaValue:
+        """Add the bare field value to the accepted input forms.
 
-        :see: :obj:`pydantic.BaseModel.model_json_schema` for more details.
+        :meth:`_wrap_validator` passes a dict through and wraps anything else, so both the bare
+        value and the ``{"<field>": ...}`` object are accepted; :meth:`_wrap_serializer` only ever
+        produces the bare value.
+
+        :param core_schema: the core schema the JSON schema is generated from.
+        :param handler: the handler producing the default JSON schema.
+        :return: the JSON schema, with the bare value added when describing accepted input.
         """
-        base_schema = super().model_json_schema(
-            by_alias=by_alias,
-            ref_template=ref_template,
-            schema_generator=schema_generator,
-            mode=mode,
-            union_format=union_format,
-        )
+        json_schema = handler(core_schema)
+        target = handler.resolve_ref_schema(json_schema)
 
-        first_field_schema = base_schema["properties"][cls._first_field_name()]
-        assert isinstance(first_field_schema, dict)
-        return first_field_schema
+        # Falsy also covers Reference itself, which declares no field to unwrap to.
+        if not (properties := target.get("properties")):
+            return json_schema
+
+        bare_schema = dict(properties[cls._first_field_name()])
+        title = target.pop("title", None)
+        object_schema = dict(target)
+        target.clear()
+        target["anyOf"] = [bare_schema, object_schema]
+        if title is not None:
+            target["title"] = title
+
+        return json_schema
 
     def __eq__(self, value):  # noqa: D105
         if not isinstance(value, Reference):
@@ -214,29 +220,19 @@ class ExternalRef(Reference):
         return {"ext": self.ext}
 
     @classmethod
-    def model_json_schema(
-        cls,
-        by_alias: bool = True,
-        ref_template: str = DEFAULT_REF_TEMPLATE,
-        schema_generator: type[GenerateJsonSchema] = GenerateJsonSchema,
-        mode: JsonSchemaMode = "validation",
-        *,
-        union_format: Literal["any_of", "primitive_type_array"] = "any_of",
-    ) -> dict[str, Any]:
-        """Generate the JSON schema for the model, keeping the wrapped object form.
+    def __get_pydantic_json_schema__(cls, core_schema: CoreSchema, handler: GetJsonSchemaHandler) -> JsonSchemaValue:
+        """Keep the wrapped object schema, bypassing :meth:`Reference.__get_pydantic_json_schema__`.
 
-        This bypasses :meth:`Reference.model_json_schema`, which unwraps the schema of the single
-        field, for the reason given in the class docstring.
+        A bare string is accepted by :meth:`_wrap_validator` for constructor convenience, but it is
+        deliberately not advertised: on the wire a bare string is always a :class:`VariableRef`, so
+        listing it here would describe an input that the :obj:`SymbolRef` union never resolves to an
+        external reference.
 
-        :see: :obj:`pydantic.BaseModel.model_json_schema` for more details.
+        :param core_schema: the core schema the JSON schema is generated from.
+        :param handler: the handler producing the default JSON schema.
+        :return: the default object schema, unmodified.
         """
-        return super(Reference, cls).model_json_schema(
-            by_alias=by_alias,
-            ref_template=ref_template,
-            schema_generator=schema_generator,
-            mode=mode,
-            union_format=union_format,
-        )
+        return handler(core_schema)
 
 
 class ChannelRef(Reference):

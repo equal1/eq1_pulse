@@ -33,7 +33,11 @@ def test_threshold_schema():
         ],
         "title": "Threshold",
     }
-    assert Threshold.model_json_schema() == expected_schema
+    schema = Threshold.model_json_schema()
+    definitions = schema.pop("$defs")
+    assert schema == expected_schema
+    # the definitions travel with the schema, so every $ref above resolves
+    assert {"Volts", "Millivolts"} <= definitions.keys()
 
 
 def test_threshold_zero_init():
@@ -101,7 +105,11 @@ def test_angle_schema():
         ],
         "title": "Angle",
     }
-    assert Angle.model_json_schema() == expected_schema
+    schema = Angle.model_json_schema()
+    definitions = schema.pop("$defs")
+    assert schema == expected_schema
+    # the definitions travel with the schema, so every $ref above resolves
+    assert {"Degrees", "Radians", "Turns", "HalfTurns"} <= definitions.keys()
 
 
 def test_angle_zero_init():

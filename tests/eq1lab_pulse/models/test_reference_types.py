@@ -1,7 +1,9 @@
 from typing import Any, ClassVar
 
 import pytest
-from pydantic import TypeAdapter, ValidationError, model_serializer
+from pydantic import GetJsonSchemaHandler, TypeAdapter, ValidationError, model_serializer
+from pydantic.json_schema import JsonSchemaValue
+from pydantic_core import CoreSchema
 
 from eq1_pulse.models.identifier_str import str_is_external_symbol
 from eq1_pulse.models.reference_types import (
@@ -188,14 +190,14 @@ def test_reference_subclass_overriding_the_serializer_must_declare_it():
 
 
 def test_wrapped_reference_must_override_the_serializer_and_the_schema():
-    with pytest.raises(TypeError, match="_wrap_serializer, model_json_schema"):
+    with pytest.raises(TypeError, match="_wrap_serializer, __get_pydantic_json_schema__"):
 
         class Liar(Reference):
             _serializes_bare: ClassVar[bool] = False
 
             a: str
 
-    with pytest.raises(TypeError, match="does not override model_json_schema"):
+    with pytest.raises(TypeError, match="does not override __get_pydantic_json_schema__"):
 
         class HalfDone(Reference):
             _serializes_bare: ClassVar[bool] = False
@@ -220,9 +222,11 @@ def test_a_wrapped_reference_other_than_external_ref_also_dispatches_correctly()
             return {"tag": self.tag}
 
         @classmethod
-        def model_json_schema(cls, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        def __get_pydantic_json_schema__(
+            cls, core_schema: CoreSchema, handler: GetJsonSchemaHandler
+        ) -> JsonSchemaValue:
             """Keep the wrapped object schema."""
-            return super(Reference, cls).model_json_schema(*args, **kwargs)
+            return handler(core_schema)
 
     adapter: TypeAdapter[VariableRef | TagRef] = TypeAdapter(VariableRef | TagRef)
     assert adapter.dump_python(TagRef(tag="t")) == {"tag": "t"}

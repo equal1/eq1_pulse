@@ -207,3 +207,90 @@ if __name__ == "__main__":
         print("✓ test_schema_contains_expected_models passed")
 
         print("\nAll tests passed!")
+
+
+@pytest.fixture(scope="module")
+def generated_schemas():
+    """The ``components.schemas`` section of the generated OpenAPI document."""
+    return generate_openapi_schema()["components"]["schemas"]
+
+
+def test_wrapped_models_are_not_described_by_their_internal_shape(generated_schemas):
+    """A wrapped value model must not appear as ``{"value": ...}``; that form is never accepted.
+
+    This is the regression guard for customising the schema via ``__get_pydantic_json_schema__``
+    rather than by overriding ``model_json_schema()``: the latter is bypassed for nested models,
+    so the generated document described the internal representation instead of the wire form.
+    """
+    for name in ("Duration", "Amplitude", "Frequency"):
+        schema = generated_schemas[name]
+        assert "properties" not in schema, f"{name} is described by its internal object shape"
+        assert "anyOf" in schema, f"{name} should offer its accepted input forms"
+
+
+def test_unit_models_accept_the_suffixed_string_form(generated_schemas):
+    """``Seconds`` and friends accept ``"10s"`` as well as ``{"s": 10}``; both must be advertised."""
+    schema = generated_schemas["Seconds"]
+    branches = schema["anyOf"]
+    assert any(branch.get("type") == "object" for branch in branches), "the object form is missing"
+    assert any(branch.get("type") == "string" for branch in branches), "the string form is missing"
+
+
+def test_bare_references_advertise_the_bare_form(generated_schemas):
+    """A reference serializes bare, so the generated schema must accept the bare form."""
+    for name in ("VariableRef", "ChannelRef", "PulseRef"):
+        branches = generated_schemas[name]["anyOf"]
+        assert len(branches) == 2, f"{name} should accept the bare value and the object form"
+        assert any("$ref" in branch for branch in branches), f"{name} does not advertise the bare form"
+
+
+def test_external_ref_stays_an_object(generated_schemas):
+    """``ExternalRef`` keeps the wrapped form; a bare string is always a variable reference."""
+    schema = generated_schemas["ExternalRef"]
+    assert schema["type"] == "object"
+    assert "ext" in schema["properties"]
+    assert "anyOf" not in schema
+
+
+def test_generated_schema_agrees_with_the_direct_call():
+    """The same customisation must apply whether a model is asked directly or generated in bulk.
+
+    Overriding ``model_json_schema()`` made these two disagree, which is what let the published
+    document drift away from what the models actually accept.
+    """
+    from eq1_pulse.models.basic_types import Duration
+
+    direct = Duration.model_json_schema()
+    generated = generate_openapi_schema()["components"]["schemas"]["Duration"]
+
+    def ref_names(schema):
+        return [branch["$ref"].rsplit("/", 1)[-1] for branch in schema["anyOf"] if "$ref" in branch]
+
+    assert ref_names(direct) == ref_names(generated)
+    assert direct["anyOf"][0] == generated["anyOf"][0] == {"const": 0, "type": "integer"}
+
+
+def test_serialization_mode_schema_can_be_generated():
+    """``mode="serialization"`` used to raise ``KeyError`` on every reference model."""
+    from eq1_pulse.models.reference_types import VariableRef
+
+    assert VariableRef.model_json_schema(mode="serialization") is not None
+
+
+def test_serialized_operations_validate_against_the_generated_schema():
+    """What the models emit must validate against the document the generator publishes."""
+    jsonschema = pytest.importorskip("jsonschema", reason="jsonschema is not a declared dependency")
+
+    from eq1_pulse.models.channel_ops import Play, Wait
+
+    schemas = json.loads(
+        json.dumps(generate_openapi_schema()["components"]["schemas"]).replace("#/components/schemas/", "#/$defs/")
+    )
+    operations = [
+        (Play(channel="ch1", pulse="p1"), "Play"),
+        (Wait(channels=["ch1"], duration="10us"), "Wait"),
+        (Wait(channels=["ch1"], duration={"ns": 100}), "Wait"),
+    ]
+    for operation, name in operations:
+        document = json.loads(operation.model_dump_json())
+        jsonschema.validate(document, {"$defs": schemas, **schemas[name]})

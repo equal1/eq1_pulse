@@ -10,11 +10,11 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from functools import cache
-from typing import TYPE_CHECKING, Any, Final, Literal, cast, get_args, override
+from typing import TYPE_CHECKING, Any, Final, Literal, get_args, override
 
-from pydantic import BaseModel, ConfigDict, TypeAdapter, model_serializer, model_validator
-from pydantic.json_schema import DEFAULT_REF_TEMPLATE, GenerateJsonSchema, JsonSchemaMode
-from pydantic_core import PydanticUndefinedType
+from pydantic import BaseModel, ConfigDict, GetJsonSchemaHandler, TypeAdapter, model_serializer, model_validator
+from pydantic.json_schema import JsonSchemaValue
+from pydantic_core import CoreSchema, PydanticUndefinedType
 
 if TYPE_CHECKING:
     from pydantic.config import ExtraValues
@@ -103,38 +103,35 @@ class WrappedValueModel(NoExtrasModel):
         super().__init__(**kwargs)
 
     @classmethod
-    def model_json_schema(
-        cls,
-        by_alias: bool = True,
-        ref_template: str = DEFAULT_REF_TEMPLATE,
-        schema_generator: type[GenerateJsonSchema] = GenerateJsonSchema,
-        mode: JsonSchemaMode = "validation",
-        *,
-        union_format: Literal["any_of", "primitive_type_array"] = "any_of",
-    ) -> dict[str, Any]:
-        """Generate the JSON schema for the model, adjusting for wrapped value representation.
+    def __get_pydantic_json_schema__(cls, core_schema: CoreSchema, handler: GetJsonSchemaHandler) -> JsonSchemaValue:
+        """Describe the model by its wrapped value rather than by the ``{"value": ...}`` object.
 
-        :see: :obj:`pydantic.BaseModel.model_json_schema` for more details.
+        The object shape is an internal representation that is never valid on the wire in either
+        direction: :meth:`_wrap_validator` wraps whatever it is given, so an explicit
+        ``{"value": ...}`` would be wrapped a second time and rejected, and :meth:`_wrap_serializer`
+        unwraps it again on the way out.
+
+        :param core_schema: the core schema the JSON schema is generated from.
+        :param handler: the handler producing the default JSON schema.
+        :return: the JSON schema, with the definition replaced by the wrapped value's schema.
         """
-        base_schema = super().model_json_schema(
-            by_alias=by_alias,
-            ref_template=ref_template,
-            schema_generator=schema_generator,
-            mode=mode,
-            union_format=union_format,
-        )
+        json_schema = handler(core_schema)
+        target = handler.resolve_ref_schema(json_schema)
 
-        if (properties := base_schema.get("properties")) is not None and (
-            len(properties) == 1
-            and (value_schema := properties.get("value")) is not None
-            and isinstance(value_schema, dict)
+        if (
+            (properties := target.get("properties")) is None
+            or len(properties) != 1
+            or not isinstance(value_schema := properties.get("value"), dict)
         ):
-            return cast(
-                dict[str, Any],
-                value_schema | {"title": title} if (title := base_schema.get("title")) is not None else value_schema,
-            )
+            return json_schema
 
-        return base_schema
+        replacement = dict(value_schema)
+        if (title := target.get("title")) is not None:
+            replacement["title"] = title
+
+        target.clear()
+        target.update(replacement)
+        return json_schema
 
 
 class LeanModel(NoExtrasModel):
@@ -249,37 +246,40 @@ class WrappedValueOrZeroModel(WrappedValueModel):
     """
 
     @classmethod
-    def model_json_schema(
-        cls,
-        by_alias: bool = True,
-        ref_template: str = DEFAULT_REF_TEMPLATE,
-        schema_generator: type[GenerateJsonSchema] = GenerateJsonSchema,
-        mode: JsonSchemaMode = "validation",
-        *,
-        union_format: Literal["any_of"] | Literal["primitive_type_array"] = "any_of",
-    ) -> dict[str, Any]:
-        """Generate the JSON schema for the model, adjusting for wrapped value or zero representation.
+    def __get_pydantic_json_schema__(cls, core_schema: CoreSchema, handler: GetJsonSchemaHandler) -> JsonSchemaValue:
+        """Add the literal ``0`` to the accepted input forms.
 
-        :see: :obj:`pydantic.BaseModel.model_json_schema` for more details.
-        :see: :obj:`WrappedValueModel.model_json_schema` for details on wrapped value handling.
+        Zero is accepted in place of a value in any unit, but it is never produced: it is stored in
+        the unit registered by :func:`register_unit_of_zero` and serialized in that unit. It
+        therefore belongs to the validation schema only.
+
+        :param core_schema: the core schema the JSON schema is generated from.
+        :param handler: the handler producing the default JSON schema.
+        :return: the JSON schema, with the literal ``0`` added when describing accepted input.
+        :see: :meth:`WrappedValueModel.__get_pydantic_json_schema__` for the unwrapping this
+            builds on.
         """
-        base_schema = super().model_json_schema(
-            by_alias, ref_template, schema_generator, mode, union_format=union_format
-        )
+        json_schema = super().__get_pydantic_json_schema__(core_schema, handler)
+        if handler.mode == "serialization":
+            return json_schema
 
-        if "anyOf" in base_schema:
-            any_of = base_schema["anyOf"]
-            if isinstance(any_of, list):
-                zero_schema = _LiteralZeroTypeAdapter.json_schema(
-                    by_alias=by_alias,
-                    ref_template=ref_template,
-                    schema_generator=schema_generator,
-                    mode=mode,
-                    union_format=union_format,
-                )
-                any_of.insert(0, zero_schema)
+        target = handler.resolve_ref_schema(json_schema)
+        if not target:
+            return json_schema
 
-        return base_schema
+        zero_schema = _LiteralZeroTypeAdapter.json_schema()
+        if isinstance(any_of := target.get("anyOf"), list):
+            any_of.insert(0, zero_schema)
+            return json_schema
+
+        title = target.pop("title", None)
+        value_schema = dict(target)
+        target.clear()
+        target["anyOf"] = [zero_schema, value_schema]
+        if title is not None:
+            target["title"] = title
+
+        return json_schema
 
     @model_validator(mode="before")
     @classmethod
