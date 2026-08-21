@@ -227,7 +227,9 @@ Builder functions. Widening any operation field. `ExternalRef` use anywhere.
    `external_block.py`.
 
 2. Add `ExternalRef` to the `ExternalParamValue` union and `ExtRefDict` to `ExternalParamValueLike`,
-   in `pulse_types.py`.
+   in `pulse_types.py`. Preserve the parameter wire contract: `VariableRef` uses
+   `{"var_ref": ...}`, `PulseRef` uses `{"pulse_ref": ...}`, `ExternalRef` uses `{"ext": ...}`,
+   and a bare parameter string remains `str`.
 
 3. **Do not touch the write sites.** `IterationBase.var`, `Record.var`, `Trace.var`,
    `Discriminate.target`, `Discriminate.source`, `Store.source`, `ExternalBlock.results` keep
@@ -238,15 +240,18 @@ Builder functions. Widening any operation field. `ExternalRef` use anywhere.
    tests — `Iteration(var=ExternalRef("q0"), ...)`, `Record(..., var=ExternalRef("q0"))` and
    `Discriminate(target=ExternalRef("q0"), ...)` must each raise `ValidationError`.
 
-5. A sequence containing an `ExternalRef` in a pulse parameter round-trips through JSON —
+5. A sequence containing `VariableRef`, `PulseRef`, and `ExternalRef` values in external parameters
+   round-trips through JSON without any reference degrading to `str` —
    `tests/eq1lab_pulse/models/test_sequence.py`.
 
 ### Acceptance
 
 - `./qa/run_all_qa.sh` passes.
-- The existing coercion tests in `test_pulse_types.py` pass **unchanged**: `"10us"` is still a
-  `Duration`, `{"ns": 100}` is still a `Duration`, a bare identifier string is still a
-  `VariableRef`. Widening a smart union is exactly the change that breaks these.
+- The existing coercion tests for ordinary typed read fields in `test_pulse_types.py` pass
+   **unchanged**: `"10us"` is still a `Duration`, `{"ns": 100}` is still a `Duration`, and a bare
+   identifier at a `SymbolRef` read site is still a `VariableRef`. In `ExternalParamValue`, an
+   arbitrary bare string stays `str`, while explicit references preserve their tagged/wrapped JSON
+   forms. Widening either union is exactly the change that can break these distinctions.
 
 ### Out of scope
 

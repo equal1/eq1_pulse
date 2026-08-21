@@ -141,10 +141,13 @@ Three consequences to handle explicitly:
    `sequence`, and `experimental/schedule`. A test that imports the package and validates one model
    of each family catches a missed rebuild immediately.
 3. **Union resolution cost.** `Duration | VariableRef | ExternalRef | Expression` is a six-way smart
-   union at every pulse parameter. Concrete values (`"10us"`, `{"ns": 100}`) must still resolve to
-   `Duration`, and a bare identifier string must still resolve to `VariableRef`. This is the highest
-   regression risk in the plan; the existing `tests/eq1lab_pulse/models/test_pulse_types.py` coercion
-   cases are the guard and must be run unchanged.
+   union at ordinary typed pulse read sites. Concrete values (`"10us"`, `{"ns": 100}`) must still
+   resolve to `Duration`, and a bare identifier there must still resolve to `VariableRef`.
+   `ExternalParamValue` dictionaries are deliberately different: unit-suffixed strings are
+   pre-coerced, arbitrary strings stay `str`, and references use tagged/wrapped JSON objects. These
+   distinctions are the highest regression risk in the plan; the existing
+   `tests/eq1lab_pulse/models/test_pulse_types.py` coercion cases are the guard and must be run
+   unchanged.
 
 ---
 

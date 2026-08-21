@@ -180,10 +180,12 @@ Using `Expression` in any operation model. Any builder change. Adding the module
 ### Acceptance
 
 - `./qa/run_all_qa.sh` passes.
-- **The existing coercion tests in `test_pulse_types.py` pass unchanged.** `"10us"` is still a
-  `Duration`, `{"ns": 100}` is still a `Duration`, a bare identifier string is still a
-  `VariableRef`, `{"ext": ...}` is still an `ExternalRef`. A six-way smart union at every pulse
-  parameter is the highest regression risk in this plan and these tests are the guard.
+- **The existing coercion tests in `test_pulse_types.py` pass unchanged.** At ordinary typed read
+   sites, `"10us"` is still a `Duration`, `{"ns": 100}` is still a `Duration`, a bare identifier is
+   still a `VariableRef`, and `{"ext": ...}` is still an `ExternalRef`. In `ExternalParamValue`,
+   unit-suffixed strings are pre-coerced, arbitrary strings stay `str`, and references retain their
+   tagged/wrapped JSON forms. The widened unions are the highest regression risk in this plan and
+   these tests are the guard.
 
 ### Out of scope
 
