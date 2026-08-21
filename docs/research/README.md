@@ -10,7 +10,6 @@ expensive to reproduce.
 | --------------------------------------------------------------------- | --------------------------------------------------------------------------- |
 | [openpulse-alignment-assessment.md](openpulse-alignment-assessment.md) | How eq1_pulse's builder and models align with OpenPulse / OpenQASM 3, and whether `Schedule` can be eliminated. **Start here.** |
 | [PR #7](https://github.com/equal1/eq1_pulse/pull/7) | The work that came out of it: isolate `Schedule`, unify on `OpSequence`, add the opaque `ExternalBlock`. Remaining follow-on work is tracked in [#8](https://github.com/equal1/eq1_pulse/issues/8). |
-| [../plans/schedule-isolation-plan.md](../plans/schedule-isolation-plan.md) | The work plan that came out of it: isolate `Schedule`, unify on `OpSequence`, add the opaque `Box`. |
 | [pydantic-json-schema-assessment.md](pydantic-json-schema-assessment.md) | Why every `model_json_schema()` override in `models/` was silently bypassed, what the published OpenAPI document was actually describing, and the conversion to `__get_pydantic_json_schema__`. |
 
 ## Raw research dumps
