@@ -44,6 +44,7 @@ pytest = [
     "pytest",
     "pytest-cov",
     "coverage>=7.7.0",
+    "jsonschema>=4", # <-- to validate the generated OpenAPI document (Draft 2020-12)
     # "pytest-asyncio",
     "pytest-mock",
     # "pytest-xdist",

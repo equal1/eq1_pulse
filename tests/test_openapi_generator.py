@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 import json
 from tempfile import TemporaryDirectory
 
+import jsonschema
 import pytest
 from pydantic import BaseModel
 
@@ -279,8 +280,6 @@ def test_serialization_mode_schema_can_be_generated():
 
 def test_serialized_operations_validate_against_the_generated_schema():
     """What the models emit must validate against the document the generator publishes."""
-    jsonschema = pytest.importorskip("jsonschema", reason="jsonschema is not a declared dependency")
-
     from eq1_pulse.models.channel_ops import Play, Wait
 
     schemas = json.loads(

@@ -119,9 +119,7 @@ Closing it properly is a separate piece of work:
    FastAPI's `separate_input_output_schemas` produces `Item-Input` / `Item-Output` components.
 
 Not done here because it changes the shape of the published document, which is a decision rather
-than a fix. Also worth noting: `jsonschema` is used by the end-to-end test via
-`pytest.importorskip` because it is currently only a transitive dependency — declaring it as a dev
-dependency would make that guard enforced rather than optional.
+than a fix.
 
 ## 5. Rules of thumb for this codebase
 
