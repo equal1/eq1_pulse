@@ -54,7 +54,17 @@ from ..models.channel_ops import (
     ShiftPhase,
     Wait,
 )
-from ..models.data_ops import Discriminate, PulseDecl, Store, StoreMode, StoreModeLiteral, VariableDecl
+from ..models.data_ops import (
+    Discriminate,
+    ExternalDecl,
+    ParameterDecl,
+    PulseDecl,
+    Store,
+    StoreMode,
+    StoreModeLiteral,
+    ValueLimits,
+    VariableDecl,
+)
 from ..models.external_block import ExternalBlock
 from ..models.pulse_types import PulseType
 from ..models.reference_types import VariableRef
@@ -82,6 +92,7 @@ from ._state import (
     _in_sequence,
     _pop_context,
     _push_context,
+    _register_external,
     _register_variable,
 )
 from ._state import _get_state as _get_state
@@ -90,7 +101,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
 
     from ..models.basic_types import AmplitudeLike, DurationLike, FrequencyLike, PhaseLike, ThresholdLike
-    from ..models.data_ops import ComparisonModeLike, ComplexToRealProjectionModeLike
+    from ..models.data_ops import ComparisonModeLike, ComplexToRealProjectionModeLike, SymbolValueLike
     from ..models.reference_types import ChannelRefLike, PulseRefLike, SymbolRefLike, VariableRefLike
 
 __all__ = (
@@ -101,6 +112,7 @@ __all__ = (
     "demod_integration",
     "discriminate",
     "ext",
+    "extern_decl",
     "external_block",
     "external_pulse",
     "for_",
@@ -108,6 +120,7 @@ __all__ = (
     "if_",
     "measure",
     "nested_sequence",
+    "param_decl",
     "phase",
     "play",
     "pulse_ref",
@@ -480,6 +493,148 @@ def var_decl(
     if not _in_sequence(context):
         raise _not_a_sequence_context("var_decl()")
     _add_to_sequence(context, var_decl_obj)
+
+
+def _build_limits(
+    min: SymbolValueLike | None,
+    max: SymbolValueLike | None,
+    allowed: list[SymbolValueLike] | None,
+) -> ValueLimits | None:
+    """Assemble a :class:`ValueLimits` from flat ``min``/``max``/``allowed`` keywords.
+
+    :param min: Smallest allowed value, or :obj:`None` if unbounded below
+    :param max: Largest allowed value, or :obj:`None` if unbounded above
+    :param allowed: Set of allowed values, or :obj:`None` if not restricted to a fixed set
+
+    :return: The assembled limits, or :obj:`None` if all three are :obj:`None`
+    """
+    if min is None and max is None and allowed is None:
+        return None
+    return ValueLimits(minimum=min, maximum=max, allowed=allowed)
+
+
+def param_decl(
+    name: str,
+    dtype: Literal["bool", "int", "float", "complex"],
+    *,
+    shape: tuple[int, ...] | None = None,
+    unit: str | None = None,
+    default: SymbolValueLike | None = None,
+    min: SymbolValueLike | None = None,
+    max: SymbolValueLike | None = None,
+    allowed: list[SymbolValueLike] | None = None,
+) -> None:
+    """Declare a parameter for use in the current context.
+
+    A parameter is a variable whose value is supplied by the caller when the program is
+    submitted, rather than computed inside the program. It is otherwise an ordinary variable:
+    reference it with :func:`var`, it obeys the same lexical scoping, and it shares the variable
+    namespace, so declaring a parameter and then a variable of the same name (or vice versa) is a
+    redeclaration error.
+
+    ``min``, ``max`` and ``allowed`` are declared and never enforced by eq1_pulse itself; see
+    :class:`~eq1_pulse.models.ValueLimits`.
+
+    :param name: Name of the parameter (must be a valid identifier)
+    :param dtype: Data type of the parameter ("bool", "int", "float", or "complex")
+    :param shape: Optional shape for array parameters (e.g., (10,) for 1D array)
+    :param unit: Optional unit string (e.g., "mV", "ns", "GHz") for the parameter
+    :param default: Value used if none is supplied at submission time, or :obj:`None` if required
+    :param min: Smallest allowed value, or :obj:`None` if unbounded below
+    :param max: Largest allowed value, or :obj:`None` if unbounded above
+    :param allowed: Set of allowed values, or :obj:`None` if not restricted to a fixed set
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import *
+
+        with build_sequence():
+            # A required parameter, supplied at submission time
+            param_decl("n_shots", "int", min=1, max=100_000)
+
+            # An optional parameter with a fallback default
+            param_decl("amp", "float", unit="mV", default=50, min=0, max=200)
+
+            with repeat(var("n_shots")):
+                play("qubit", square_pulse(duration="50ns", amplitude=var("amp")))
+    """
+    param_decl_obj = ParameterDecl(
+        name=name,
+        dtype=dtype,
+        shape=shape,
+        unit=unit,
+        default=default,
+        limits=_build_limits(min, max, allowed),
+    )
+
+    # Parameters share the variable namespace: a var_decl() of the same name is a redeclaration error.
+    _register_variable(name)
+
+    context = _current_context("param_decl()")
+    if not _in_sequence(context):
+        raise _not_a_sequence_context("param_decl()")
+    _add_to_sequence(context, param_decl_obj)
+
+
+def extern_decl(
+    name: str,
+    dtype: Literal["bool", "int", "float", "complex"],
+    *,
+    shape: tuple[int, ...] | None = None,
+    unit: str | None = None,
+    default: SymbolValueLike | None = None,
+    min: SymbolValueLike | None = None,
+    max: SymbolValueLike | None = None,
+    allowed: list[SymbolValueLike] | None = None,
+) -> None:
+    """Declare an external constant for use in the current context.
+
+    An external constant is a symbol resolved outside the program: its value is looked up per
+    submission in a calibration store by name, rather than supplied directly by the caller. It is
+    referenced with :func:`ext`. External symbols are declared in their own namespace, separate
+    from variables and parameters.
+
+    ``min``, ``max`` and ``allowed`` are declared and never enforced by eq1_pulse itself; see
+    :class:`~eq1_pulse.models.ValueLimits`.
+
+    :param name: Name of the external symbol, e.g. ``"q0.f01"``
+    :param dtype: Data type of the external symbol ("bool", "int", "float", or "complex")
+    :param shape: Optional shape for array-valued external symbols (e.g., (10,) for 1D array)
+    :param unit: Optional unit string (e.g., "mV", "ns", "GHz") for the external symbol
+    :param default: Value used if none is resolved at submission time, or :obj:`None` if required
+    :param min: Smallest allowed value, or :obj:`None` if unbounded below
+    :param max: Largest allowed value, or :obj:`None` if unbounded above
+    :param allowed: Set of allowed values, or :obj:`None` if not restricted to a fixed set
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import *
+
+        with build_sequence():
+            extern_decl("q0.f01", "float", unit="GHz")
+            extern_decl("readout.threshold", "float", unit="mV", default=0)
+
+            set_frequency("q0_drive", ext("q0.f01"))
+    """
+    extern_decl_obj = ExternalDecl(
+        name=name,
+        dtype=dtype,
+        shape=shape,
+        unit=unit,
+        default=default,
+        limits=_build_limits(min, max, allowed),
+    )
+
+    _register_external(name)
+
+    context = _current_context("extern_decl()")
+    if not _in_sequence(context):
+        raise _not_a_sequence_context("extern_decl()")
+    _add_to_sequence(context, extern_decl_obj)
 
 
 def pulse_decl(
