@@ -210,6 +210,39 @@ def example_complex_program():
     return seq
 
 
+def example_builder_vs_model():
+    """Example 8: the builder takes what you mean; the model takes what the wire says.
+
+    ``play()`` here accepts a channel as a bare string and a duration/amplitude as unit-suffixed
+    strings -- authoring conveniences the builder resolves into canonical model values. The model
+    underneath accepts none of those forms: it only ever validates the object shapes its schema
+    publishes, and only ever emits those same shapes. Re-reading the JSON the builder produced
+    with ``model_validate_json`` proves the two agree on what the wire form actually is.
+    """
+    print("=" * 70)
+    print("Example 8: The Builder vs. the Model")
+    print("=" * 70)
+
+    with build_sequence() as seq:
+        play("qubit", square_pulse(duration="10us", amplitude="100mV"))
+
+    # The builder produced this canonical JSON document -- durations and amplitudes as unit
+    # objects, the channel as its bare name -- not the "10us" / "100mV" strings that were written.
+    document = seq.model_dump_json(indent=2)
+    print("Canonical JSON produced by the builder:")
+    print(document)
+
+    # Anything that produces this same document, from any source, re-reads into an identical
+    # sequence: model_validate() never sees or accepts the authoring strings, only the wire form.
+    from eq1_pulse.models.sequence import OpSequence
+
+    round_tripped = OpSequence.model_validate_json(document)
+    assert round_tripped == seq
+    print("Re-read with OpSequence.model_validate_json(): matches the original sequence")
+    print()
+    return seq
+
+
 def main():
     """Run all examples."""
     print("\n")
@@ -226,6 +259,7 @@ def main():
     example_with_conditional()
     example_measurement()
     example_complex_program()
+    example_builder_vs_model()
 
     print("*" * 70)
     print("All examples completed successfully!")

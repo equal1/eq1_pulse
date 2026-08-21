@@ -30,11 +30,9 @@ See :class:`~.channel_ops.Wait` for why both identities hold.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import TYPE_CHECKING, Annotated, ClassVar, Literal, overload
+from typing import TYPE_CHECKING, Annotated, ClassVar, Literal
 
-from pydantic import Discriminator
-
-from .basic_types import LinSpace, OpBase, Range
+from .basic_types import LinSpace, OpBase, OperationDiscriminator, Range
 from .channel_ops import ChannelOp
 from .control_flow import ConditionalBase, IterationBase, RepetitionBase, SequenceBase
 from .data_ops import DataOp
@@ -43,16 +41,22 @@ from .nd_array import NumpyArray
 
 if TYPE_CHECKING:
     from .basic_types import LinSpaceLike, RangeLike
+    from .expressions import ValueRefLike
     from .nd_array import NumpyArrayLike
-    from .reference_types import SymbolRefLike, VariableRefLike
+    from .reference_types import VariableRefLike
 
 type DiscriminableOp = Annotated[
-    ChannelOp | DataOp | ExternalBlock | Repetition | Iteration | Conditional, Discriminator("op_type")
+    ChannelOp | DataOp | ExternalBlock | Repetition | Iteration | Conditional, OperationDiscriminator()
 ]
-"""All operations that can be discriminated by the "op_type" field."""
+"""Every operation, selected by the sole key of its ``{op_type: payload}`` wire object."""
 
 type OpSequenceItem = DiscriminableOp | OpSequence
-"""A type alias for an operation sequence item."""
+"""An item of an operation sequence: an operation, or a nested sequence.
+
+The two are told apart by JSON type with no tag of their own -- an operation is a single-key
+object, a nested sequence is an array -- so :func:`~.basic_types.op_tag_of` reports no tag for an
+array and this plain union falls through to :class:`OpSequence`.
+"""
 
 
 class OpSequence(SequenceBase[OpSequenceItem]):
@@ -68,16 +72,12 @@ class OpSequence(SequenceBase[OpSequenceItem]):
     _context_kind: ClassVar[Literal["sequence"]] = "sequence"
 
     if TYPE_CHECKING:  # mypy food
-        items: list[OpSequenceItem]
-        """List of operation sequence items."""
+        # Restating the inherited field defers the pydantic mypy plugin until the recursive
+        # OpSequenceItem alias has resolved, instead of crashing on it; restating the inherited
+        # __init__ stops the same plugin synthesizing a root-only one over it.
+        root: list[OpSequenceItem]
 
-        @overload
-        def __init__(self, items: Iterable[OpSequenceItem], **data): ...
-
-        @overload
-        def __init__(self, **data): ...
-
-        def __init__(self, *args, **data): ...
+        def __init__(self, items: Iterable[OpSequenceItem] = (), /, **data): ...
 
 
 if TYPE_CHECKING:
@@ -87,7 +87,7 @@ if TYPE_CHECKING:
 class Repetition(RepetitionBase[OpSequence]):
     """Represents a repeated sequence of operations.
 
-    :ivar op_type: Operation type, always "repeat"
+    :ivar op_type: Operation type, always "repeat" -- the sole key of its wire object
     :ivar count: Number of times to repeat the sequence
     :ivar body: The sequence of operations to repeat
     """
@@ -96,13 +96,13 @@ class Repetition(RepetitionBase[OpSequence]):
 
     if TYPE_CHECKING:
 
-        def __init__(self, /, *, count: int | SymbolRefLike, body: OpSequenceLike, **data): ...
+        def __init__(self, /, *, count: int | ValueRefLike, body: OpSequenceLike, **data): ...
 
 
 class Iteration(IterationBase[OpSequence]):
     """Represents an iteration over a sequence of operations.
 
-    :ivar op_type: Operation type, always "for"
+    :ivar op_type: Operation type, always "for" -- the sole key of its wire object
     :ivar var: The variable reference for the iterated value.
     :ivar items: The range or array over which to iterate.
     :ivar body: The sequence of operations to execute in each iteration
@@ -130,8 +130,8 @@ class Iteration(IterationBase[OpSequence]):
 class Conditional(ConditionalBase[OpSequence]):
     """Represents a conditional sequence of operations.
 
-    :ivar op_type: Operation type, always "if"
-    :ivar var: The variable reference for the condition.
+    :ivar op_type: Operation type, always "if" -- the sole key of its wire object
+    :ivar var: The predicate for the condition.
     :ivar body: The sequence of operations to execute if the condition is met
     """
 
@@ -139,7 +139,7 @@ class Conditional(ConditionalBase[OpSequence]):
 
     if TYPE_CHECKING:
 
-        def __init__(self, /, *, var: SymbolRefLike, body: OpSequenceLike, **data): ...
+        def __init__(self, /, *, var: ValueRefLike, body: OpSequenceLike, **data): ...
 
 
 __all__ = (

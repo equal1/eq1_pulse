@@ -1,7 +1,7 @@
 param (
     [string]$Deps,
     [string]$CondaEnvName,
-    [string]$Editable
+    [switch]$Editable
 )
 
 # Change to the directory where the script is located
@@ -23,8 +23,13 @@ if (-not [string]::IsNullOrEmpty($CondaEnvName)) {
     }
 }
 
+if ($Editable) {
+    $editableFlag = "--editable"
+} else {
+    $editableFlag = ""
+}
 
-uv pip install --force-reinstall $Editable ../..[$Deps]
+uv pip install --force-reinstall $editableFlag ../..[$Deps]
 
 if ($Deps -eq "dev") {
     pre-commit install

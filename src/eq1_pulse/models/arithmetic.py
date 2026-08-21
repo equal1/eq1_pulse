@@ -1,10 +1,17 @@
-"""Helper classes to support arithmetic operations on unit classes."""
+"""The registry of unit value fields, and the helper classes built on top of it.
+
+Every unit class registers the name and numeric type of its single value field here. That one
+registry is what lets the operator mixins below, the unit discriminator in :mod:`~.units` and the
+``"<number><unit>"`` parser in this module all be written once rather than once per unit.
+"""
 
 from __future__ import annotations
 
-from collections.abc import Callable, MutableMapping
-from typing import Any, Self, overload
+from collections.abc import Callable, Iterable, MutableMapping
+from typing import Any, Self, Union, overload
 from weakref import WeakKeyDictionary
+
+from pydantic import TypeAdapter, ValidationError
 
 type _SupportedScalarTypes = int | float | complex
 
@@ -54,6 +61,36 @@ def get_unit_value_field_name_and_type(cls: type) -> tuple[str, tuple[type, ...]
     err = KeyError(cls)
     err.add_note("The class is not registered. Did you forget to use the @register_value_field decorator?")
     raise err
+
+
+def parse_unit_suffixed_value(text: str, units: Iterable[type]) -> dict[str, Any]:
+    """Read a ``"<number><unit>"`` string as the ``{unit: number}`` object it denotes.
+
+    Longer unit names are tried first, so that ``"10ms"`` is read as milliseconds rather than as
+    ``"10m"`` seconds. A unit whose name matches but whose numeric part does not parse is passed
+    over rather than reported, for the same reason: ``"10ms"`` also ends in ``"s"``.
+
+    :param text: The string to read, e.g. ``"10us"`` or ``"5 GHz"``.
+    :param units: The unit classes to read *text* against, each registered with
+        :func:`register_unit_value_field`.
+    :return: The single-key object form, e.g. ``{"us": 10}``.
+    :raises ValueError: If *text* does not end in any of the units' names, or the numeric part
+        does not parse as that unit's value type.
+    """
+    value = text.strip()
+    names = {unit: get_unit_value_field_name_and_type(unit) for unit in units}
+    for name, dtype in sorted(names.values(), key=lambda item: len(item[0]), reverse=True):
+        if not value.endswith(name):
+            continue
+        adapter: TypeAdapter[Any] = TypeAdapter(dtype[0]) if len(dtype) == 1 else TypeAdapter(Union[*dtype])
+        try:
+            number = adapter.validate_python(value.removesuffix(name).strip(), strict=False)
+        except ValidationError:
+            continue
+        return {name: number}
+
+    expected = ", ".join(sorted(name for name, _ in names.values()))
+    raise ValueError(f"{text!r} is not a number followed by one of the units {expected}")
 
 
 class SupportScalarMulDiv[ScalarType: _SupportedScalarTypes]:

@@ -5,7 +5,7 @@
 
 ### Architecture: Three-Layer Model System
 1. **Models Layer** (`src/eq1_pulse/models/`): Core Pydantic data models defining the pulse program IR
-   - `base_models.py`: Base model hierarchy (`NoExtrasModel`, `FrozenModel`, `LeanModel`, `WrappedValueModel`)
+   - `base_models.py`: Base model hierarchy (`NoExtrasModel`, `FrozenModel`, `LeanModel`, `NestedWireModel`, `WrappedValueModel`)
    - `basic_types.py`: Fundamental types (`Duration`, `Frequency`, `Amplitude`, `Phase`, `Time`)
    - `pulse_types.py`: Pulse definitions (`SquarePulse`, `SinePulse`, `ArbitrarySampledPulse`, `ExternalPulse`)
    - `channel_ops.py`: Channel operations (`Play`, `Record`, `Wait`, `Barrier`, `SetFrequency`, `SetPhase`)
@@ -84,11 +84,15 @@ cd docs && ./generate_pdf.sh   # Builds LaTeX/PDF docs
 ### Type Hints
 - Models define `*Like` type aliases for flexible inputs (e.g., `DurationLike = Duration | dict[str, float] | str`)
 - Use `@overload` for multiple constructor signatures in `TYPE_CHECKING` blocks
-- Discriminated unions via `Discriminator("op_type")` or `Discriminator("pulse_type")`
+- Discriminated unions: operations are `{op_type: payload}` single-key objects selected by
+  `OperationDiscriminator()` (`basic_types.py`); pulses and integrations stay flat and keep
+  `Discriminator("pulse_type")` / `Discriminator("integration_type")`; references use
+  `ReferenceDiscriminator()`
 
 ## Testing
 - Tests in `tests/` mirror `src/` structure
-- `pytest.ini_options` in `pyproject.toml`: `pythonpath = "src"`, `addopts = "--cov=src"`
+- `pytest.ini_options` in `pyproject.toml`: `pythonpath = "src"`, `addopts` carries `--cov=src`
+  plus quiet-output flags; do not add `--no-summary`, it hides failures and the coverage report
 - Example files in `examples/` demonstrate builder API patterns
 
 ## CI/CD

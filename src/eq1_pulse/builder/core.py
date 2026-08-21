@@ -53,8 +53,10 @@ from ..models.channel_ops import (
     ShiftFrequency,
     ShiftPhase,
     Wait,
+    WaitForTrigger,
 )
 from ..models.data_ops import (
+    Assign,
     Discriminate,
     ExternalDecl,
     ParameterDecl,
@@ -67,8 +69,12 @@ from ..models.data_ops import (
 )
 from ..models.external_block import ExternalBlock
 from ..models.pulse_types import PulseType
-from ..models.reference_types import VariableRef
+from ..models.reference_types import PulseRef, VariableRef
 from ..models.sequence import Conditional, Iteration, OpSequence, Repetition
+from ._coerce import as_channel_ref, as_duration, as_frequency, as_phase, as_pulse_ref, as_symbol_value, as_threshold
+from ._expressions import call_expr_ as call_expr_
+from ._expressions import expr as expr
+from ._factories import _coerce_or_ref as _coerce_or_ref
 from ._factories import (
     _convert_range_to_model,
     _validate_variable_ref,
@@ -82,6 +88,8 @@ from ._factories import (
     pulse_ref,
     sine_pulse,
     square_pulse,
+    step_pulse,
+    trigger_pulse,
     var,
 )
 from ._factories import _validate_explicit_variable_ref as _validate_explicit_variable_ref
@@ -93,6 +101,7 @@ from ._state import (
     _pop_context,
     _push_context,
     _register_external,
+    _register_pulse,
     _register_variable,
 )
 from ._state import _get_state as _get_state
@@ -103,14 +112,18 @@ if TYPE_CHECKING:
     from ..models.basic_types import AmplitudeLike, DurationLike, FrequencyLike, PhaseLike, ThresholdLike
     from ..models.data_ops import ComparisonModeLike, ComplexToRealProjectionModeLike, SymbolValueLike
     from ..models.reference_types import ChannelRefLike, PulseRefLike, SymbolRefLike, VariableRefLike
+    from ._expressions import ExprLike
 
 __all__ = (
     "arbitrary_pulse",
+    "assign",
     "barrier",
     "build_sequence",
+    "call_expr_",
     "channel",
     "demod_integration",
     "discriminate",
+    "expr",
     "ext",
     "extern_decl",
     "external_block",
@@ -132,11 +145,14 @@ __all__ = (
     "shift_phase",
     "sine_pulse",
     "square_pulse",
+    "step_pulse",
     "store",
     "sub_sequence",
+    "trigger_pulse",
     "var",
     "var_decl",
     "wait",
+    "wait_for_trigger",
 )
 
 
@@ -199,7 +215,7 @@ def build_sequence() -> Iterator[OpSequence]:
             "Schedules are built with eq1_pulse.builder.experimental and cannot contain "
             "sequence operations."
         )
-    seq = OpSequence(items=[])
+    seq = OpSequence([])
     _push_context(seq)
     try:
         yield seq
@@ -244,7 +260,7 @@ def sub_sequence() -> Iterator[OpSequence]:
         raise _not_a_sequence_context("sub_sequence()")
 
     # Create the nested sequence
-    nested_seq = OpSequence(items=[])
+    nested_seq = OpSequence([])
 
     # Add it to the parent sequence
     _add_to_sequence(context, nested_seq)
@@ -258,7 +274,7 @@ def sub_sequence() -> Iterator[OpSequence]:
 
 
 @contextmanager
-def repeat(count: int | SymbolRefLike) -> Iterator[Repetition]:
+def repeat(count: int | str | SymbolRefLike | ExprLike) -> Iterator[Repetition]:
     """Context manager for building a repetition block.
 
     :param count: Number of times to repeat, or a variable/external reference resolved at run time
@@ -287,7 +303,7 @@ def repeat(count: int | SymbolRefLike) -> Iterator[Repetition]:
         raise _not_a_sequence_context("repeat()")
 
     count = _validate_or_pass_through(count, param_name="count", context="repeat()")
-    rep = Repetition(count=count, body=OpSequence(items=[]))
+    rep = Repetition(count=count, body=OpSequence([]))  # type: ignore[arg-type]
     _add_to_sequence(parent, rep)
     _push_context(rep)
     try:
@@ -299,7 +315,7 @@ def repeat(count: int | SymbolRefLike) -> Iterator[Repetition]:
 @overload
 @contextmanager
 def for_(
-    var: VariableRefLike,
+    var: str | VariableRefLike,
     items: Iterable[Any] | Range | LinSpace,
 ) -> Iterator[Iteration]: ...
 
@@ -307,14 +323,14 @@ def for_(
 @overload
 @contextmanager
 def for_(
-    var: list[VariableRefLike],
+    var: list[str | VariableRefLike],
     items: list[Iterable[Any] | Range | LinSpace] | Iterable[Any] | Range | LinSpace,
 ) -> Iterator[Iteration]: ...
 
 
 @contextmanager
 def for_(
-    var: VariableRefLike | list[VariableRefLike],
+    var: str | VariableRefLike | list[str | VariableRefLike],
     items: Iterable[Any] | Range | LinSpace | list[Iterable[Any] | Range | LinSpace],
 ) -> Iterator[Iteration]:
     """Context manager for building an iteration (for loop).
@@ -397,7 +413,7 @@ def for_(
     if not _in_sequence(parent):
         raise _not_a_sequence_context("for_()")
 
-    iter_obj = Iteration(var=validated_vars, items=validated_items, body=OpSequence(items=[]))
+    iter_obj = Iteration(var=validated_vars, items=validated_items, body=OpSequence([]))
     _add_to_sequence(parent, iter_obj)
     _push_context(iter_obj)
     try:
@@ -407,14 +423,19 @@ def for_(
 
 
 @contextmanager
-def if_(var: SymbolRefLike) -> Iterator[Conditional]:
+def if_(var: str | SymbolRefLike | ExprLike) -> Iterator[Conditional]:
     """Context manager for building a conditional block.
 
-    :param var: Variable or external reference for the condition
+    :param var: The predicate for the condition: a variable/external reference, an expression
+        built with :func:`~eq1_pulse.builder.expr` (a comparison or boolean connective -- an
+        arithmetic expression is rejected), or a bare :data:`~.expressions.Expression` fragment
 
     :yield: The conditional being built
 
-    :raises RuntimeError: If not called within a sequence context
+    :raises RuntimeError: If not called within a sequence context, or *var* is an expression
+        naming an undeclared variable or external symbol
+    :raises pydantic.ValidationError: If *var* is an expression but not a predicate (e.g. an
+        arithmetic node)
 
     Examples
 
@@ -427,6 +448,10 @@ def if_(var: SymbolRefLike) -> Iterator[Conditional]:
             # ... perform measurement to populate result ...
             with if_("result"):
                 play("qubit", square_pulse(duration="50ns", amplitude="100mV"))
+
+            var_decl("count", "int")
+            with if_(expr(var("count")) > 5):
+                play("qubit", square_pulse(duration="50ns", amplitude="100mV"))
     """
     validated_var = _validate_or_pass_through(var, param_name="var", context="if_()")
 
@@ -435,7 +460,7 @@ def if_(var: SymbolRefLike) -> Iterator[Conditional]:
     if not _in_sequence(parent):
         raise _not_a_sequence_context("if_()")
 
-    cond = Conditional(var=validated_var, body=OpSequence(items=[]))  # type: ignore[arg-type]
+    cond = Conditional(var=validated_var, body=OpSequence([]))  # type: ignore[arg-type]
     _add_to_sequence(parent, cond)
     _push_context(cond)
     try:
@@ -509,7 +534,11 @@ def _build_limits(
     """
     if min is None and max is None and allowed is None:
         return None
-    return ValueLimits(minimum=min, maximum=max, allowed=allowed)
+    return ValueLimits(
+        minimum=None if min is None else as_symbol_value(min),
+        maximum=None if max is None else as_symbol_value(max),
+        allowed=None if allowed is None else [as_symbol_value(value) for value in allowed],
+    )
 
 
 def param_decl(
@@ -564,7 +593,7 @@ def param_decl(
         dtype=dtype,
         shape=shape,
         unit=unit,
-        default=default,
+        default=None if default is None else as_symbol_value(default),
         limits=_build_limits(min, max, allowed),
     )
 
@@ -624,7 +653,7 @@ def extern_decl(
         dtype=dtype,
         shape=shape,
         unit=unit,
-        default=default,
+        default=None if default is None else as_symbol_value(default),
         limits=_build_limits(min, max, allowed),
     )
 
@@ -664,6 +693,8 @@ def pulse_decl(
             play("qubit", pulse_ref("my_square"))  # Reuse the same pulse
     """
     pulse_decl_obj = PulseDecl(name=name, pulse=pulse)
+
+    _register_pulse(name)
 
     context = _current_context("pulse_decl()")
     if not _in_sequence(context):
@@ -748,10 +779,10 @@ def nested_sequence[R, **P](func: Callable[P, R]) -> Callable[P, R]:
 
 def play(
     channel: ChannelRefLike,
-    pulse: PulseType | PulseRefLike,
+    pulse: PulseType | str | PulseRefLike,
     *,
-    scale_amp: float | complex | SymbolRefLike | None = None,
-    cond: SymbolRefLike | None = None,
+    scale_amp: float | complex | str | SymbolRefLike | ExprLike | None = None,
+    cond: str | SymbolRefLike | ExprLike | None = None,
 ) -> None:
     """Play a pulse on a channel.
 
@@ -768,6 +799,9 @@ def play(
 
         play("ch1", square_pulse(duration="10us", amplitude="100mV"))
     """
+    channel = as_channel_ref(channel)
+    if isinstance(pulse, PulseRef | str) or (isinstance(pulse, dict) and "pulse_name" in pulse):
+        pulse = as_pulse_ref(pulse)
     scale_amp = _validate_or_pass_through(scale_amp, param_name="scale_amp", context="play()")
     cond = _validate_or_pass_through(cond, param_name="cond", context="play()")
 
@@ -781,7 +815,7 @@ def play(
 
 def wait(
     *channels: ChannelRefLike,
-    duration: DurationLike | SymbolRefLike,
+    duration: DurationLike | SymbolRefLike | ExprLike,
 ) -> None:
     """Add wait operation on channel(s).
 
@@ -808,7 +842,8 @@ def wait(
     if not _in_sequence(context):
         raise _not_a_sequence_context("wait()")
 
-    duration = _validate_or_pass_through(duration, param_name="duration", context="wait()")
+    channels = tuple(as_channel_ref(ch) for ch in channels)  # type: ignore[assignment]
+    duration = _coerce_or_ref(duration, coerce=as_duration, param_name="duration", context="wait()")  # type: ignore[assignment]
 
     op = Wait(*channels, duration=duration)  # type: ignore[arg-type]
 
@@ -843,7 +878,7 @@ def barrier(
             play("drive", square_pulse(duration="20us", amplitude="80mV"))
             play("readout", square_pulse(duration="20us", amplitude="40mV"))
     """
-    op = Barrier(*channels)
+    op = Barrier(*(as_channel_ref(ch) for ch in channels))
 
     context = _current_context("barrier()")
     if not _in_sequence(context):
@@ -851,9 +886,45 @@ def barrier(
     _add_to_sequence(context, op)
 
 
+def wait_for_trigger(
+    channel: ChannelRefLike,
+) -> None:
+    """Wait on a channel until a digital trigger line goes high.
+
+    The channel must be a digital input line. This blocks only its own channel's timeline --
+    it is not a barrier, other channels continue independently. To make several channels wait
+    on one trigger, combine :func:`barrier` with a ``wait_for_trigger`` on each:
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import *
+
+        with build_sequence():
+            barrier("ch1", "ch2")
+            wait_for_trigger("ch1")
+            wait_for_trigger("ch2")
+
+    :param channel: Digital input channel to wait on
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import wait_for_trigger
+
+        wait_for_trigger("trig_in")
+    """
+    op = WaitForTrigger(as_channel_ref(channel))
+
+    context = _current_context("wait_for_trigger()")
+    if not _in_sequence(context):
+        raise _not_a_sequence_context("wait_for_trigger()")
+    _add_to_sequence(context, op)
+
+
 def set_frequency(
     channel: ChannelRefLike,
-    frequency: FrequencyLike | SymbolRefLike,
+    frequency: FrequencyLike | SymbolRefLike | ExprLike,
 ) -> None:
     """Set channel frequency.
 
@@ -868,9 +939,10 @@ def set_frequency(
 
         set_frequency("qubit", "5GHz")
     """
-    frequency = _validate_or_pass_through(frequency, param_name="frequency", context="set_frequency()")
+    channel = as_channel_ref(channel)
+    frequency = _coerce_or_ref(frequency, coerce=as_frequency, param_name="frequency", context="set_frequency()")  # type: ignore[assignment]
 
-    op = SetFrequency(channel=channel, frequency=frequency)
+    op = SetFrequency(channel=channel, frequency=frequency)  # type: ignore[arg-type]
 
     context = _current_context("set_frequency()")
     if not _in_sequence(context):
@@ -880,7 +952,7 @@ def set_frequency(
 
 def shift_frequency(
     channel: ChannelRefLike,
-    frequency: FrequencyLike | SymbolRefLike,
+    frequency: FrequencyLike | SymbolRefLike | ExprLike,
 ) -> None:
     """Shift channel frequency.
 
@@ -895,9 +967,10 @@ def shift_frequency(
 
         shift_frequency("qubit", "100MHz")
     """
-    frequency = _validate_or_pass_through(frequency, param_name="frequency", context="shift_frequency()")
+    channel = as_channel_ref(channel)
+    frequency = _coerce_or_ref(frequency, coerce=as_frequency, param_name="frequency", context="shift_frequency()")  # type: ignore[assignment]
 
-    op = ShiftFrequency(channel=channel, frequency=frequency)
+    op = ShiftFrequency(channel=channel, frequency=frequency)  # type: ignore[arg-type]
 
     context = _current_context("shift_frequency()")
     if not _in_sequence(context):
@@ -907,7 +980,7 @@ def shift_frequency(
 
 def set_phase(
     channel: ChannelRefLike,
-    phase: PhaseLike | SymbolRefLike,
+    phase: PhaseLike | SymbolRefLike | ExprLike,
 ) -> None:
     """Set channel phase.
 
@@ -922,9 +995,10 @@ def set_phase(
 
         set_phase("qubit", "90deg")
     """
-    phase = _validate_or_pass_through(phase, param_name="phase", context="set_phase()")
+    channel = as_channel_ref(channel)
+    phase = _coerce_or_ref(phase, coerce=as_phase, param_name="phase", context="set_phase()")  # type: ignore[assignment]
 
-    op = SetPhase(channel=channel, phase=phase)
+    op = SetPhase(channel=channel, phase=phase)  # type: ignore[arg-type]
 
     context = _current_context("set_phase()")
     if not _in_sequence(context):
@@ -934,7 +1008,7 @@ def set_phase(
 
 def shift_phase(
     channel: ChannelRefLike,
-    phase: PhaseLike | SymbolRefLike,
+    phase: PhaseLike | SymbolRefLike | ExprLike,
 ) -> None:
     """Shift channel phase.
 
@@ -949,9 +1023,10 @@ def shift_phase(
 
         shift_phase("qubit", "45deg")
     """
-    phase = _validate_or_pass_through(phase, param_name="phase", context="shift_phase()")
+    channel = as_channel_ref(channel)
+    phase = _coerce_or_ref(phase, coerce=as_phase, param_name="phase", context="shift_phase()")  # type: ignore[assignment]
 
-    op = ShiftPhase(channel=channel, phase=phase)
+    op = ShiftPhase(channel=channel, phase=phase)  # type: ignore[arg-type]
 
     context = _current_context("shift_phase()")
     if not _in_sequence(context):
@@ -961,9 +1036,9 @@ def shift_phase(
 
 def record(
     channel: ChannelRefLike,
-    var: VariableRefLike,
+    var: str | VariableRefLike,
     *,
-    duration: DurationLike | SymbolRefLike,
+    duration: DurationLike | SymbolRefLike | ExprLike,
     integration: FullIntegration | DemodIntegration,
 ) -> None:
     """Record (acquire) data from a channel.
@@ -994,7 +1069,8 @@ def record(
     """
     # Validate variable reference
     validated_var = _validate_variable_ref(var)
-    validated_duration = _validate_or_pass_through(duration, param_name="duration", context="record()")
+    channel = as_channel_ref(channel)
+    validated_duration = _coerce_or_ref(duration, coerce=as_duration, param_name="duration", context="record()")
 
     op = Record(channel=channel, var=validated_var, duration=validated_duration, integration=integration)  # type: ignore[arg-type]
 
@@ -1005,11 +1081,11 @@ def record(
 
 
 def discriminate(
-    target: VariableRefLike,
-    source: VariableRefLike,
-    threshold: ThresholdLike | SymbolRefLike,
+    target: str | VariableRefLike,
+    source: str | VariableRefLike,
+    threshold: ThresholdLike | SymbolRefLike | ExprLike,
     *,
-    rotation: PhaseLike | SymbolRefLike = 0,
+    rotation: PhaseLike | SymbolRefLike | ExprLike = 0,
     compare: ComparisonModeLike = ">=",
     project: ComplexToRealProjectionModeLike = "real",
 ) -> None:
@@ -1041,8 +1117,10 @@ def discriminate(
     # Validate variable references
     validated_target = _validate_variable_ref(target)
     validated_source = _validate_variable_ref(source)
-    validated_threshold = _validate_or_pass_through(threshold, param_name="threshold", context="discriminate()")
-    validated_rotation = _validate_or_pass_through(rotation, param_name="rotation", context="discriminate()")
+    validated_threshold = _coerce_or_ref(
+        threshold, coerce=as_threshold, param_name="threshold", context="discriminate()"
+    )
+    validated_rotation = _coerce_or_ref(rotation, coerce=as_phase, param_name="rotation", context="discriminate()")
 
     op = Discriminate(
         target=validated_target,
@@ -1061,7 +1139,7 @@ def discriminate(
 
 def store(
     key: str,
-    source: VariableRefLike,
+    source: str | VariableRefLike,
     *,
     mode: StoreMode | StoreModeLiteral = "last",
 ) -> None:
@@ -1110,10 +1188,48 @@ def store(
     _add_to_sequence(context, op)
 
 
+def assign(
+    target: str | VariableRefLike,
+    value: SymbolValueLike | SymbolRefLike | ExprLike,
+) -> None:
+    """Write a computed value into an already-declared variable.
+
+    ``for_``'s loop variable, :func:`record`'s ``var`` and :func:`discriminate`'s ``target`` each
+    write a variable as a side effect of doing something else; ``assign()`` is the general form,
+    with no other effect -- computing a value and remembering it under a name.
+
+    :param target: The variable to write to. Must already be declared with :func:`var_decl`
+    :param value: The value to write: a literal, a variable/external reference, or an expression
+        built with :func:`expr`
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import *
+
+        with build_sequence():
+            var_decl("count", "int")
+            assign("count", 0)
+
+            var_decl("doubled", "int")
+            assign("doubled", expr(var("count")) * 2)
+    """
+    validated_target = _validate_variable_ref(target)
+    validated_value = _coerce_or_ref(value, coerce=as_symbol_value, param_name="value", context="assign()")
+
+    op = Assign(target=validated_target, value=validated_value)  # type: ignore[arg-type]
+
+    context = _current_context("assign()")
+    if not _in_sequence(context):
+        raise _not_a_sequence_context("assign()")
+    _add_to_sequence(context, op)
+
+
 def measure(
     channel: ChannelRefLike | tuple[ChannelRefLike, ChannelRefLike],
     *,
-    result_var: VariableRefLike,
+    result_var: str | VariableRefLike,
     duration: DurationLike,
     amplitude: AmplitudeLike,
     integration: FullIntegration | DemodIntegration,
@@ -1182,8 +1298,8 @@ def external_block(
     program: str | None = None,
     channels: dict[str, ChannelRefLike] | None = None,
     params: dict[str, Any] | None = None,
-    results: dict[str, VariableRefLike] | None = None,
-    duration: DurationLike | SymbolRefLike | None = None,
+    results: dict[str, str | VariableRefLike] | None = None,
+    duration: DurationLike | SymbolRefLike | ExprLike | None = None,
 ) -> None:
     """Reserve channels for an opaque, externally defined block of operations.
 
@@ -1253,7 +1369,8 @@ def external_block(
     if results is not None:
         results = {key: _validate_variable_ref(value) for key, value in results.items()}
 
-    duration = _validate_or_pass_through(duration, param_name="duration", context="external_block()")
+    resolved_channels = {role: as_channel_ref(ch) for role, ch in resolved_channels.items()}  # type: ignore[assignment]
+    duration = _coerce_or_ref(duration, coerce=as_duration, param_name="duration", context="external_block()")
 
     op = ExternalBlock(
         program=program,

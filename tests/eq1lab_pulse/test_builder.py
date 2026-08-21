@@ -1,15 +1,19 @@
 """Tests for the builder interface."""
 
+import re
+
 import pytest
 
 from eq1_pulse.builder import (
     arbitrary_pulse,
+    assign,
     barrier,
     build_sequence,
     channel,
     demod_integration,
     discriminate,
     experimental,
+    expr,
     ext,
     extern_decl,
     external_block,
@@ -31,16 +35,23 @@ from eq1_pulse.builder import (
     shift_phase,
     sine_pulse,
     square_pulse,
+    step_pulse,
     store,
     sub_sequence,
+    trigger_pulse,
     var,
     var_decl,
     wait,
+    wait_for_trigger,
 )
 from eq1_pulse.models import (
+    Amplitude,
+    Assign,
     Barrier,
     Conditional,
+    DigitalTriggerPulse,
     Discriminate,
+    Duration,
     ExternalBlock,
     ExternalDecl,
     Iteration,
@@ -55,11 +66,16 @@ from eq1_pulse.models import (
     ShiftFrequency,
     ShiftPhase,
     SquarePulse,
+    StepPulse,
     Store,
+    Time,
     ValueLimits,
     VariableDecl,
     VariableRef,
+    Voltage,
+    WaitForTrigger,
 )
+from eq1_pulse.models.reference_types import ChannelRef, ExternalRef
 
 
 class TestBuildSequence:
@@ -230,6 +246,42 @@ class TestBasicOperations:
         assert isinstance(seq.items[0], Barrier)
 
 
+class TestStepAndTriggerPulses:
+    """Tests for step_pulse(), trigger_pulse() and wait_for_trigger()."""
+
+    def test_step_pulse(self):
+        """Test step_pulse happy path."""
+        pulse = step_pulse(duration="1us", amplitude="150mV")
+        assert isinstance(pulse, StepPulse)
+        assert pulse.duration == Duration("1us")
+        assert pulse.amplitude == Amplitude("150mV")
+
+    def test_trigger_pulse(self):
+        """Test trigger_pulse happy path."""
+        pulse = trigger_pulse(duration="100ns")
+        assert isinstance(pulse, DigitalTriggerPulse)
+        assert pulse.duration == Duration("100ns")
+
+    def test_trigger_pulse_rejects_amplitude(self):
+        """trigger_pulse() has no amplitude keyword to pass."""
+        with pytest.raises(TypeError):
+            trigger_pulse(duration="100ns", amplitude="1V")  # type: ignore[call-arg]
+
+    def test_wait_for_trigger_in_sequence(self):
+        """Test wait_for_trigger operation in sequence."""
+        with build_sequence() as seq:
+            wait_for_trigger("trig_in")
+
+        assert len(seq.items) == 1
+        assert isinstance(seq.items[0], WaitForTrigger)
+        assert seq.items[0].channel == ChannelRef("trig_in")
+
+    def test_wait_for_trigger_outside_sequence_raises_error(self):
+        """Test that wait_for_trigger outside a sequence context raises RuntimeError."""
+        with pytest.raises(RuntimeError, match="No active building context for wait_for_trigger\\(\\)"):
+            wait_for_trigger("trig_in")
+
+
 class TestFrequencyAndPhase:
     """Tests for frequency and phase operations."""
 
@@ -368,12 +420,14 @@ class TestVariables:
     def test_channel_reference(self):
         """Test channel reference creation."""
         ch = channel("qubit")
-        assert ch.channel == "qubit"
+        assert ch.root == "qubit"
 
     def test_pulse_reference(self):
         """Test pulse reference creation."""
-        pref = pulse_ref("my_pulse")
-        assert pref.pulse_name == "my_pulse"
+        with build_sequence():
+            pulse_decl("my_pulse", square_pulse(duration="100ns", amplitude="200mV"))
+            pref = pulse_ref("my_pulse")
+            assert pref.pulse_name == "my_pulse"
 
     def test_pulse_decl_in_sequence(self):
         """Test pulse declaration in sequence context."""
@@ -435,6 +489,22 @@ class TestParamAndExternDecl:
         assert isinstance(seq.items[0].limits, ValueLimits)
         assert seq.items[0].limits.allowed == [0, 1, 2]
 
+    def test_param_decl_coerces_unit_suffixed_string_default_and_limits(self):
+        """A unit-suffixed string default/min/max/allowed is coerced to the dimensional quantity."""
+        with build_sequence() as seq:
+            param_decl("amp", "float", unit="mV", default="10us", min="5us", max="20us", allowed=["10us", "15us"])
+
+        assert isinstance(seq.items[0], ParameterDecl)
+        assert isinstance(seq.items[0].default, Time)
+        assert seq.items[0].default.us == 10
+        assert isinstance(seq.items[0].limits, ValueLimits)
+        assert isinstance(seq.items[0].limits.minimum, Time)
+        assert seq.items[0].limits.minimum.us == 5
+        assert isinstance(seq.items[0].limits.maximum, Time)
+        assert seq.items[0].limits.maximum.us == 20
+        assert seq.items[0].limits.allowed is not None
+        assert [value.us for value in seq.items[0].limits.allowed] == [10, 15]  # type: ignore[union-attr]
+
     def test_param_decl_registers_into_variable_namespace(self):
         """A parameter is referenced with var() and shares the variable namespace."""
         with build_sequence():
@@ -480,6 +550,15 @@ class TestParamAndExternDecl:
         assert seq.items[0].limits.minimum == -100
         assert seq.items[0].limits.maximum == 100
 
+    def test_extern_decl_coerces_unit_suffixed_string_default(self):
+        """A unit-suffixed string default is coerced to the dimensional quantity."""
+        with build_sequence() as seq:
+            extern_decl("readout.threshold", "float", unit="mV", default="100mV")
+
+        assert isinstance(seq.items[0], ExternalDecl)
+        assert isinstance(seq.items[0].default, Voltage)
+        assert seq.items[0].default.mV == 100
+
     def test_extern_decl_registers_into_external_namespace(self):
         """An external constant is referenced with ext(), never var()."""
         with build_sequence():
@@ -497,7 +576,7 @@ class TestParamAndExternDecl:
     def test_ext_on_undeclared_symbol_raises(self):
         """Using ext() on an undeclared external symbol raises RuntimeError."""
         with build_sequence():
-            with pytest.raises(RuntimeError, match="External symbol 'q0.f01' has not been declared"):
+            with pytest.raises(RuntimeError, match=re.escape("External symbol 'q0.f01' has not been declared")):
                 ext("q0.f01")
 
 
@@ -604,6 +683,43 @@ class TestDataOperations:
         assert len(seq.items) == 3
         assert isinstance(seq.items[2], Store)
 
+    def test_assign_operation_with_literal(self):
+        """Test assign operation writing a plain literal."""
+        with build_sequence() as seq:
+            var_decl("count", "int")
+            assign("count", 0)
+
+        assert len(seq.items) == 2
+        op = seq.items[1]
+        assert isinstance(op, Assign)
+        assert op.target.var == "count"
+        assert op.value == 0
+
+    def test_assign_operation_with_expression(self):
+        """Test assign operation writing an expression over another variable."""
+        with build_sequence() as seq:
+            var_decl("count", "int")
+            var_decl("doubled", "int")
+            assign("count", 0)
+            assign("doubled", expr(var("count")) * 2)
+
+        assert len(seq.items) == 4
+        op = seq.items[3]
+        assert isinstance(op, Assign)
+        assert op.target.var == "doubled"
+
+    def test_assign_operation_with_variable_ref(self):
+        """Test assign operation copying another variable's value directly."""
+        with build_sequence() as seq:
+            var_decl("source", "int")
+            var_decl("dest", "int")
+            assign("dest", var("source"))
+
+        op = seq.items[2]
+        assert isinstance(op, Assign)
+        assert isinstance(op.value, VariableRef)
+        assert op.value.var == "source"
+
 
 class TestExternalBlock:
     """Tests for the external_block() builder function."""
@@ -625,6 +741,21 @@ class TestExternalBlock:
         assert op.channels == {"drive": "q0", "readout": "q0_ro"}
         assert op.results is not None
         assert op.results["iq"].var == "iq"
+
+    def test_channels_accept_an_externally_supplied_name(self):
+        """A channel name the calibration store owns is an ``ext()``, declared like any other."""
+        with build_sequence() as seq:
+            extern_decl("q0.drive", "float")
+            external_block(program="eq1.cal.cz", channels={"drive": ext("q0.drive"), "readout": "q0_ro"})
+
+        op = seq.items[1]
+        assert isinstance(op, ExternalBlock)
+        assert op.channels == {"drive": ExternalRef("q0.drive"), "readout": ChannelRef("q0_ro")}
+
+    def test_an_undeclared_external_channel_is_rejected(self):
+        """The declaration check that guards every other external symbol guards this one too."""
+        with build_sequence(), pytest.raises(RuntimeError, match="has not been declared"):
+            external_block(program="eq1.cal.cz", channels={"drive": ext("q0.drive")})
 
     def test_positional_channels_form(self):
         """Test the positional channels form generates deterministic role keys."""

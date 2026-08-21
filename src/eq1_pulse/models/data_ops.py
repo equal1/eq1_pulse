@@ -1,30 +1,49 @@
 # ruff: noqa: D100, D107
 from __future__ import annotations
 
+from collections.abc import Mapping
 from enum import StrEnum
 from typing import TYPE_CHECKING, Annotated, Any, Final, Literal
 
-from pydantic import BeforeValidator, Discriminator, PlainSerializer, TypeAdapter, ValidationError
+import numpy as np
+from pydantic import Discriminator, Tag
 
 from .base_models import LeanModel
-from .basic_types import Amplitude, Duration, Frequency, Magnitude, OpBase, Phase, Threshold, Voltage
+from .basic_types import (
+    COMPLEX_VOLTAGE_TAG,
+    Angle,
+    ComplexVoltage,
+    Frequency,
+    OpBase,
+    OperationDiscriminator,
+    Phase,
+    Threshold,
+    Time,
+    Voltage,
+    dimension_tag_of,
+    dimension_tag_of_unit_mapping,
+    dimension_unit_tag_map,
+)
+from .complex import complex_from_tuple
 from .identifier_str import ExternalSymbolStr, IdentifierStr
 from .pulse_types import PulseType
-from .reference_types import SymbolRef, VariableRef
+from .reference_types import VarName
 
 if TYPE_CHECKING:
     from .basic_types import (
-        AmplitudeLike,
-        DurationLike,
+        AngleLike,
+        ComplexVoltageLike,
         FrequencyLike,
-        MagnitudeLike,
         PhaseLike,
         ThresholdLike,
+        TimeLike,
         VoltageLike,
     )
-    from .reference_types import SymbolRefLike, VariableRefLike
+    from .expressions import ValueRefLike
+    from .reference_types import VariableRefLike
 
 __all__ = (
+    "Assign",
     "ComparisonMode",
     "ComplexToRealProjectionMode",
     "DataOp",
@@ -53,58 +72,65 @@ class DataOpBase(OpBase):
 type VariableDTypeType = Literal["bool", "int", "float", "complex"]
 
 
-_SYMBOL_VALUE_DIMENSIONAL_TYPES: Final = (Amplitude, Duration, Frequency, Phase, Magnitude, Voltage, Threshold)
-_SYMBOL_VALUE_DIMENSIONAL_TYPE_ADAPTERS: Final = tuple(TypeAdapter(t) for t in _SYMBOL_VALUE_DIMENSIONAL_TYPES)
+_SYMBOL_VALUE_UNIT_TAGS: Final = dimension_unit_tag_map()
+"""Unit key -> dimension tag (``"time"``, ``"voltage"``, ``"frequency"`` or ``"angle"``), read from
+the shared unit registry."""
 
 
-def _coerce_symbol_value_string(value: Any) -> Any:
-    """Coerce a unit-suffixed string to its typed dimensional quantity, if it matches one.
-
-    :data:`SymbolValue` has no plain :obj:`str` member, unlike
-    :data:`~.pulse_types.ExternalParamValue`, so an unmatched string is left as-is here and fails
-    validation against the rest of the union, rather than being kept as :obj:`str`.
+def _symbol_value_tag(value: Any) -> str | None:
+    """Return the tag *value* is spelled with, or :obj:`None` to report an unknown tag.
 
     :param value: Raw input for a :data:`SymbolValue`
-
-    :return: The parsed dimensional quantity if *value* is a matching unit-suffixed string,
-        otherwise *value* unchanged
     """
-    if not isinstance(value, str):
-        return value
-    for adapter in _SYMBOL_VALUE_DIMENSIONAL_TYPE_ADAPTERS:
-        try:
-            return adapter.validate_python(value)
-        except ValidationError:
-            continue
-    return value
+    if isinstance(value, Mapping):
+        return dimension_tag_of_unit_mapping(value, _SYMBOL_VALUE_UNIT_TAGS)
+    if isinstance(value, bool):
+        return "bool"
+    if isinstance(value, int):
+        return "int"
+    if isinstance(value, float):
+        return "float"
+    if isinstance(value, complex | list | tuple | np.complexfloating):
+        return "complex"
+    if isinstance(value, np.ndarray) and value.shape == (2,) and issubclass(value.dtype.type, np.integer | np.floating):
+        return "complex"
+    return dimension_tag_of(value)
 
 
 type SymbolValue = Annotated[
-    Amplitude | Duration | Frequency | Phase | Magnitude | Voltage | Threshold | bool | int | float | complex,
-    BeforeValidator(_coerce_symbol_value_string),
+    Annotated[Time, Tag("time")]
+    | Annotated[Voltage, Tag("voltage")]
+    | Annotated[ComplexVoltage, Tag(COMPLEX_VOLTAGE_TAG)]
+    | Annotated[Frequency, Tag("frequency")]
+    | Annotated[Angle, Tag("angle")]
+    | Annotated[bool, Tag("bool")]
+    | Annotated[int, Tag("int")]
+    | Annotated[float, Tag("float")]
+    | Annotated[complex_from_tuple, Tag("complex")],
+    Discriminator(_symbol_value_tag),
 ]
 """The value of a declared symbol (a parameter default or external constant): dimensional, boolean,
 or plain numeric.
 
-Unit-suffixed strings are coerced to their typed dimensional quantity the same way as in
-:data:`~.pulse_types.ExternalParamValue`: ``"10us"`` becomes a :class:`~.basic_types.Duration`,
-``"100mV"`` an :class:`~.basic_types.Amplitude` (tried before :class:`~.basic_types.Voltage`,
-:class:`~.basic_types.Threshold` and :class:`~.basic_types.Magnitude`, since all four accept the
-same ``V``/``mV`` suffixes), and so on.
+Lists one type per dimension -- :class:`~.basic_types.Time`, :class:`~.basic_types.Voltage`,
+:class:`~.basic_types.ComplexVoltage`, :class:`~.basic_types.Frequency`, :class:`~.basic_types.Angle`
+-- rather than per refinement: :class:`~.basic_types.Duration`, :class:`~.basic_types.Amplitude`,
+:class:`~.basic_types.Threshold`, :class:`~.basic_types.Magnitude` and :class:`~.basic_types.Phase`
+are indistinguishable on the wire from their base dimension, so listing them here would make
+resolution depend on declaration order.
+
+The two voltage dimensions share their unit keys, so they are told apart by the shape of the value:
+``{"mV": 100}`` is a :class:`~.basic_types.Voltage` and ``{"mV": [1, 2]}`` a
+:class:`~.basic_types.ComplexVoltage`. A real-valued :class:`~.basic_types.Amplitude` therefore
+narrows to :class:`~.basic_types.Voltage` on the way back in, the same narrowing
+:class:`~.basic_types.Duration` gets, and for the same reason: on the wire the two are one document.
+
+Unlike :data:`~.pulse_types.ExternalParamValue`, there is no plain :obj:`str` member: a unit-suffixed
+string is not a wire form for either union any more, so it is rejected here rather than kept as-is.
 """
 
 type SymbolValueLike = (
-    AmplitudeLike
-    | DurationLike
-    | FrequencyLike
-    | PhaseLike
-    | MagnitudeLike
-    | VoltageLike
-    | ThresholdLike
-    | bool
-    | int
-    | float
-    | complex
+    TimeLike | VoltageLike | ComplexVoltageLike | FrequencyLike | AngleLike | bool | int | float | complex
 )
 """Acceptable input types for :data:`SymbolValue`."""
 
@@ -292,17 +318,17 @@ class Discriminate(DataOpBase):
 
     op_type: Literal["discriminate"] = "discriminate"
     """The type discriminator, always "discriminate"."""
-    target: VariableRef
+    target: VarName
     """The target variable to store the discrimination result."""
-    source: VariableRef
+    source: VarName
     """The source variable containing the data to discriminate."""
-    threshold: Threshold | SymbolRef
+    threshold: Threshold | ValueRef
     """The threshold value for discrimination."""
-    rotation: Phase | SymbolRef = Phase(0)
+    rotation: Phase | ValueRef = Phase(0)
     """Phase rotation to apply before discrimination."""
-    compare: Annotated[ComparisonMode, PlainSerializer(str)] = ComparisonMode.GreaterEqual
+    compare: ComparisonMode = ComparisonMode.GreaterEqual
     """The comparison mode to use."""
-    project: Annotated[ComplexToRealProjectionMode, PlainSerializer(str)] = ComplexToRealProjectionMode.RealPart
+    project: ComplexToRealProjectionMode = ComplexToRealProjectionMode.RealPart
     """The projection mode for complex to real conversion."""
 
     if TYPE_CHECKING:
@@ -313,8 +339,8 @@ class Discriminate(DataOpBase):
             *,
             target: VariableRefLike,
             source: VariableRefLike,
-            threshold: ThresholdLike | SymbolRefLike,
-            rotation: PhaseLike | SymbolRefLike = 0,
+            threshold: ThresholdLike | ValueRefLike,
+            rotation: PhaseLike | ValueRefLike = 0,
             compare: ComparisonModeLike = ComparisonMode.GreaterEqual,
             project: ComplexToRealProjectionModeLike = ComplexToRealProjectionMode.RealPart,
             **data,
@@ -341,9 +367,9 @@ class Store(DataOpBase):
     """The type discriminator, always "store"."""
     key: str
     """The key to identify the stored data."""
-    source: VariableRef
+    source: VarName
     """The source variable to store."""
-    mode: Annotated[StoreMode, PlainSerializer(str)]
+    mode: StoreMode
     """The storage mode to use."""
 
     if TYPE_CHECKING:
@@ -359,12 +385,53 @@ class Store(DataOpBase):
         ): ...
 
 
+class Assign(DataOpBase):
+    """Assign operation: write a computed value into an already-declared variable.
+
+    ``for_``'s loop variable, :class:`~.channel_ops.Record`'s ``var`` and :class:`Discriminate`'s
+    ``target`` each write a variable as a side effect of doing something else; ``assign`` is the
+    general form, with no other effect -- computing a value and remembering it under a name.
+
+    Assignment is scoped like every other operation: :attr:`target` must already be declared in
+    the current context or an enclosing one, exactly as :func:`~eq1_pulse.builder.var_decl`
+    requires for any other read or write of a variable.
+    """
+
+    op_type: Literal["assign"] = "assign"
+    """The type discriminator, always "assign"."""
+
+    target: VarName
+    """The variable being written to. Must already be declared."""
+    value: SymbolValue | ValueRef
+    """The value to write: a literal, a symbol reference, or an expression over symbols."""
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            /,
+            *,
+            target: VariableRefLike,
+            value: SymbolValueLike | ValueRefLike,
+            **data,
+        ): ...
+
+
 DataOp = Annotated[
-    VariableDecl | ParameterDecl | ExternalDecl | PulseDecl | Discriminate | Store, Discriminator("op_type")
+    VariableDecl | ParameterDecl | ExternalDecl | PulseDecl | Discriminate | Store | Assign, OperationDiscriminator()
 ]
 """Data operation type.
 
 This is a closed set of data operations that can be used in a sequence of operations.
-All data operation types have a common discriminator field `op_type` (inherited from `OpBase`)
-that is used to distinguish between them.
+Each one is spelled as the single-key object ``{op_type: payload}`` -- ``{"var_decl": {...}}`` --
+and :class:`~.basic_types.OperationDiscriminator` selects the member by that sole key.
 """
+
+# Deferred: `expressions` imports `SymbolValue` from this module, so importing it back at module
+# top would be a real cycle rather than a forward reference. By the time this runs, `expressions`
+# has already defined `ValueRef`/`ValueRefLike` (see its own bottom-of-module comment), so this
+# succeeds regardless of which of the two modules is imported first.
+from .expressions import ValueRef  # noqa: E402
+
+Discriminate.model_rebuild()
+Assign.model_rebuild()

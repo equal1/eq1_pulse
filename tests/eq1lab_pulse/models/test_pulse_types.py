@@ -1,16 +1,29 @@
 from typing import Any
 
 import numpy as np
-from pydantic import TypeAdapter
+import pytest
+from pydantic import TypeAdapter, ValidationError
 
-from eq1_pulse.models.basic_types import Amplitude, Duration, Frequency, Magnitude, Phase
+from eq1_pulse.models.basic_types import Amplitude, ComplexVoltage, Duration, Frequency, Magnitude, Phase, Voltage
+from eq1_pulse.models.expressions import (
+    BinaryExpr,
+    CallExpr,
+    CompareExpr,
+    LiteralExpr,
+    LogicalExpr,
+    NotExpr,
+    SymbolExpr,
+    UnaryExpr,
+)
 from eq1_pulse.models.pulse_types import (
     ArbitrarySampledPulse,
+    DigitalTriggerPulse,
     ExternalParamValue,
     ExternalPulse,
     PulseType,
     SinePulse,
     SquarePulse,
+    StepPulse,
 )
 from eq1_pulse.models.reference_types import ExternalRef, PulseRef, VariableRef
 
@@ -129,6 +142,19 @@ def test_pulse_with_external_refs():
     assert isinstance(sine.duration, ExternalRef)
     assert isinstance(sine.amplitude, ExternalRef)
     assert isinstance(sine.frequency, ExternalRef)
+
+
+def test_pulse_with_expression():
+    """Test that a widened pulse field accepts an Expression, not just a bare SymbolRef."""
+    duration = BinaryExpr(binary_op="+", lhs=SymbolExpr(symbol=VariableRef("d")), rhs=LiteralExpr(value={"ns": 10}))
+    square = SquarePulse(duration=duration, amplitude=Amplitude(V=0.5))
+    assert isinstance(square.duration, BinaryExpr)
+
+    document = square.model_dump()
+    reloaded: Any = TypeAdapter(PulseType).validate_python(document)
+    assert isinstance(reloaded, SquarePulse)
+    assert isinstance(reloaded.duration, BinaryExpr)
+    assert isinstance(reloaded.duration.lhs, SymbolExpr)
 
 
 def test_sine_pulse_frequency_sweep():
@@ -458,11 +484,128 @@ def test_arbitrary_sample_pulse_json_serialization_with_complex_samples():
     )
 
 
-def test_external_param_value_amplitude():
-    """Test that an Amplitude instance round-trips through ExternalParamValue."""
+def test_step_pulse_creation():
+    """Test creating a step pulse with basic parameters."""
+    pulse = StepPulse(
+        duration=Duration(s=1e-6),
+        amplitude=Amplitude(V=0.5),
+    )
+    assert pulse.pulse_type == "step"
+    assert isinstance(pulse.duration, Duration)
+    assert isinstance(pulse.amplitude, Amplitude)
+    assert pulse.duration.s == 1e-6
+    assert pulse.amplitude.V == 0.5
+
+
+def test_step_pulse_json_serialization():
+    """Test serializing a step pulse to JSON."""
+    pulse = StepPulse(
+        duration=Duration(s=1e-6),
+        amplitude=Amplitude(V=0.5),
+    )
+    assert pulse.model_dump_json() == ('{"pulse_type":"step","duration":{"s":1e-6},"amplitude":{"V":0.5}}')
+
+
+def test_step_pulse_json_validation():
+    """Test deserializing a step pulse from JSON, discriminated inside PulseType."""
+    pulse: Any = TypeAdapter(PulseType).validate_json(
+        '{"pulse_type":"step","duration":{"s":1e-6},"amplitude":{"V":0.5}}'
+    )
+    assert isinstance(pulse, StepPulse)
+    assert isinstance(pulse.duration, Duration)
+    assert isinstance(pulse.amplitude, Amplitude)
+    assert pulse.duration.s == 1e-6
+    assert pulse.amplitude.V == 0.5
+
+
+def test_step_pulse_requires_amplitude():
+    """Test that StepPulse still requires amplitude, inherited from AnalogPulseBase."""
+    with pytest.raises(ValidationError):
+        StepPulse(duration=Duration(s=1e-6))  # type: ignore[call-arg]
+
+
+def test_digital_trigger_pulse_creation():
+    """Test creating a digital trigger pulse with basic parameters."""
+    pulse = DigitalTriggerPulse(duration=Duration(s=1e-7))
+    assert pulse.pulse_type == "trigger"
+    assert isinstance(pulse.duration, Duration)
+    assert pulse.duration.s == 1e-7
+
+
+def test_digital_trigger_pulse_json_serialization():
+    """Test serializing a digital trigger pulse to JSON."""
+    pulse = DigitalTriggerPulse(duration=Duration(s=1e-7))
+    assert pulse.model_dump_json() == ('{"pulse_type":"trigger","duration":{"s":1e-7}}')
+
+
+def test_digital_trigger_pulse_json_validation():
+    """Test deserializing a digital trigger pulse from JSON, discriminated inside PulseType."""
+    pulse: Any = TypeAdapter(PulseType).validate_json('{"pulse_type":"trigger","duration":{"s":1e-7}}')
+    assert isinstance(pulse, DigitalTriggerPulse)
+    assert isinstance(pulse.duration, Duration)
+    assert pulse.duration.s == 1e-7
+
+
+def test_digital_trigger_pulse_rejects_amplitude():
+    """Test that DigitalTriggerPulse rejects an amplitude keyword.
+
+    :obj:`extra="forbid"` on :class:`~eq1_pulse.models.base_models.LeanModel` gives this for free --
+    asserted here rather than assumed.
+    """
+    with pytest.raises(ValidationError):
+        DigitalTriggerPulse(duration=Duration(s=1e-7), amplitude=Amplitude(V=1.0))  # type: ignore[call-arg]
+
+
+def test_square_pulse_requires_amplitude():
+    """Test that SquarePulse still requires amplitude after the AnalogPulseBase split."""
+    with pytest.raises(ValidationError):
+        SquarePulse(duration=Duration(s=1e-6))  # type: ignore[call-arg]
+
+
+def test_external_param_value_voltage():
+    """Test that a Voltage instance round-trips through ExternalParamValue."""
+    value: Any = TypeAdapter(ExternalParamValue).validate_python(Voltage(V=0.5))
+    assert isinstance(value, Voltage)
+    assert value.V == 0.5
+
+
+def test_external_param_value_amplitude_instance_survives_as_amplitude():
+    """An Amplitude instance is tagged by its type, so it stays an Amplitude.
+
+    The complex-voltage member is what admits it: :class:`~.basic_types.Amplitude` derives from
+    :class:`~.basic_types.ComplexVoltage`, which is not a :class:`~.basic_types.Voltage` subclass,
+    so before it was added the union rejected the most common pulse parameter outright.
+    """
     value: Any = TypeAdapter(ExternalParamValue).validate_python(Amplitude(V=0.5))
     assert isinstance(value, Amplitude)
     assert value.V == 0.5
+
+
+def test_external_param_value_complex_voltage_wire_form():
+    """A ``(real, imag)`` pair under a voltage unit key is a ComplexVoltage and dumps back unchanged."""
+    adapter: TypeAdapter[Any] = TypeAdapter(ExternalParamValue)
+    value = adapter.validate_python({"mV": [1, 2]})
+    assert isinstance(value, ComplexVoltage)
+    assert value.mV == 1 + 2j
+    assert adapter.dump_python(value) == {"mV": (1.0, 2.0)}
+
+
+def test_external_param_value_real_voltage_key_is_still_a_voltage():
+    """A real number under the same unit key still resolves to the real dimension."""
+    value: Any = TypeAdapter(ExternalParamValue).validate_python({"mV": 100})
+    assert type(value) is Voltage
+    assert value.mV == 100
+
+
+def test_external_param_value_unit_typo_reports_one_error():
+    """An unknown unit key is one union_tag_not_found, not one error per member.
+
+    The complex-voltage member is decided by value shape rather than by its own unit key, so it adds
+    no second way for a typo to be reported.
+    """
+    with pytest.raises(ValidationError) as excinfo:
+        TypeAdapter(ExternalParamValue).validate_python({"usec": 3})
+    assert [error["type"] for error in excinfo.value.errors()] == ["union_tag_not_found"]
 
 
 def test_external_param_value_duration():
@@ -531,20 +674,39 @@ def test_external_param_value_scalars():
     assert adapter.validate_python(1 + 2j) == 1 + 2j
 
 
-def test_external_param_value_unit_suffixed_strings_are_coerced():
-    """Test that unit-suffixed strings are coerced to their typed dimensional quantity."""
+def test_external_param_value_numpy_complex_forms_are_tagged_as_complex():
+    """A 2-element numpy array or a numpy complex scalar is recognized as the complex tag.
+
+    :func:`~eq1_pulse.models.complex.validate_complex_tuple` accepts both, so the discriminator
+    must route them there instead of falling through to :obj:`None`.
+    """
     adapter: TypeAdapter[Any] = TypeAdapter(ExternalParamValue)
-    assert adapter.validate_python("10us") == Duration(us=10)
-    assert adapter.validate_python("100mV") == Amplitude(mV=100)
-    assert adapter.validate_python("5GHz") == Frequency(GHz=5)
+    assert adapter.validate_python(np.array([1.0, 2.0])) == 1 + 2j
+    assert adapter.validate_python(np.complex128(1 + 2j)) == 1 + 2j
+
+
+def test_external_param_value_strings_are_kept_as_plain_strings():
+    """Test that a unit-suffixed string is kept as a plain string, not coerced to a dimensional quantity.
+
+    A bare string in :data:`ExternalParamValue` is opaque data passed to an external program, not an
+    authored quantity, so it is never coerced -- however unit-suffixed it looks.
+    """
+    adapter: TypeAdapter[Any] = TypeAdapter(ExternalParamValue)
+    assert adapter.validate_python("10us") == "10us"
+    assert adapter.validate_python("100mV") == "100mV"
+    assert adapter.validate_python("5GHz") == "5GHz"
     assert adapter.validate_python("foo") == "foo"
 
 
 def test_external_param_value_variable_ref_round_trips_through_json():
-    """Test that a VariableRef survives a JSON round-trip through ExternalParamValue."""
+    """Test that a VariableRef survives a JSON round-trip through ExternalParamValue.
+
+    It is spelled ``{"var": ...}`` here and everywhere else: the ``{"var_ref": ...}`` spelling
+    this union used to invent for itself went with the rest of the ad-hoc tagging.
+    """
     adapter: TypeAdapter[Any] = TypeAdapter(ExternalParamValue)
     dumped = adapter.dump_json(VariableRef(var="x"))
-    assert dumped == b'{"var_ref":"x"}'
+    assert dumped == b'{"var":"x"}'
     restored = adapter.validate_json(dumped)
     assert restored == VariableRef(var="x")
 
@@ -553,7 +715,7 @@ def test_external_param_value_pulse_ref_round_trips_through_json():
     """Test that a PulseRef survives a JSON round-trip through ExternalParamValue."""
     adapter: TypeAdapter[Any] = TypeAdapter(ExternalParamValue)
     dumped = adapter.dump_json(PulseRef(pulse_name="p1"))
-    assert dumped == b'{"pulse_ref":"p1"}'
+    assert dumped == b'{"pulse_name":"p1"}'
     restored = adapter.validate_json(dumped)
     assert restored == PulseRef(pulse_name="p1")
 
@@ -574,6 +736,60 @@ def test_external_param_value_complex_round_trips_through_json():
     dumped = adapter.dump_json(1 + 2j)
     restored = adapter.validate_json(dumped)
     assert restored == 1 + 2j
+
+
+@pytest.mark.parametrize(
+    ("expr_mapping", "expr_type"),
+    [
+        pytest.param({"value": 1}, LiteralExpr, id="literal"),
+        pytest.param({"symbol": {"var": "x"}}, SymbolExpr, id="symbol"),
+        pytest.param(
+            {"unary_op": {"op": "-", "rhs": {"value": 1}}},
+            UnaryExpr,
+            id="unary",
+        ),
+        pytest.param(
+            {"binary_op": {"op": "+", "lhs": {"value": 1}, "rhs": {"value": 2}}},
+            BinaryExpr,
+            id="binary",
+        ),
+        pytest.param(
+            {"compare_op": {"op": "<", "lhs": {"value": 1}, "rhs": {"value": 2}}},
+            CompareExpr,
+            id="compare",
+        ),
+        pytest.param(
+            {"logical_op": {"op": "and", "lhs": {"value": 1}, "rhs": {"value": 2}}},
+            LogicalExpr,
+            id="logical",
+        ),
+        pytest.param(
+            {"not_op": {"rhs": {"value": 1}}},
+            NotExpr,
+            id="not",
+        ),
+        pytest.param(
+            {"function": {"name": "abs", "args": [{"value": 1}]}},
+            CallExpr,
+            id="call",
+        ),
+    ],
+)
+def test_external_param_value_expression(expr_mapping: dict[str, Any], expr_type: type):
+    """An Expression is tagged on its own node key and survives round-tripping from a mapping.
+
+    Its dict shape (a single key naming the node type) is what the ``_external_param_value_tag``
+    branch has to recognize -- via :func:`~.expressions.expression_tag_of` -- before falling
+    through to the single-key-mapping checks the rest of the union relies on.
+    """
+    adapter: TypeAdapter[Any] = TypeAdapter(ExternalParamValue)
+    value = adapter.validate_python(expr_mapping)
+    assert isinstance(value, expr_type)
+
+    dumped = adapter.dump_python(value)
+    restored = adapter.validate_python(dumped)
+    assert isinstance(restored, expr_type)
+    assert restored == value
 
 
 def test_external_pulse_params_widened_types():

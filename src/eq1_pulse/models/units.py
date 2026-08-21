@@ -7,13 +7,10 @@ conversion between the units should be automatic.
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING, Any, Union
+from collections.abc import Mapping
+from typing import Annotated, Any, Union, get_args
 
-if TYPE_CHECKING:
-    pass
-
-from pydantic import GetJsonSchemaHandler, TypeAdapter, model_validator
-from pydantic.json_schema import JsonSchemaValue
+from pydantic import Discriminator, GetCoreSchemaHandler, Tag
 from pydantic_core import CoreSchema
 
 from .arithmetic import (
@@ -50,58 +47,60 @@ __all__ = (
 )
 
 
-class BaseUnit(FrozenModel):
-    """Base class for units, a model that accepts a numeric string followed by a property name.
+class UnitDiscriminator:
+    """Annotation marker turning a union of unit models into a union tagged by unit name.
 
-    It will be stripped of whitespace and converted to a dictionary where the key is the property name.
+    Written once and applied to every quantity's unit union::
+
+        root: Annotated[Seconds | Milliseconds | Microseconds | Nanoseconds, UnitDiscriminator()]
+
+    The tags come from :func:`~.arithmetic.register_unit_value_field`'s registry -- the same one
+    the operator mixins and the ``"<number><unit>"`` parser read -- so a new unit is tagged by
+    declaring it, with nothing here to keep in step.
+
+    The tag function is bound to the units of the union it is applied to rather than being global:
+    :class:`Volts` and :class:`ComplexVolts` both key on ``V`` and are only ever in *different*
+    unions (:class:`~.basic_types.Voltage` and :class:`~.basic_types.ComplexVoltage`), where each
+    union's keys are unique.
+
+    Selection is a lookup on the sole key rather than a scoring pass over every member, so a unit
+    typo is one ``union_tag_invalid`` error naming the units that exist, not one error per member.
     """
 
-    @model_validator(mode="before")
-    @classmethod
-    def _model_validate(cls, data: Any) -> Any:
-        if isinstance(data, str):
-            value = data.strip()
-            unit_name, unit_type = get_unit_value_field_name_and_type(cls)
-            if value.endswith(unit_name):
-                value = value.removesuffix(unit_name)
-                unit_type_adapter: TypeAdapter[Any] = (
-                    TypeAdapter(unit_type) if len(unit_type) == 1 else TypeAdapter(Union[*unit_type])
-                )
-                return {unit_name: unit_type_adapter.validate_python(value.strip(), strict=False)}
-        return data
+    def __get_pydantic_core_schema__(self, source_type: Any, handler: GetCoreSchemaHandler) -> CoreSchema:
+        """Build the tagged union's core schema from *source_type*'s members.
 
-    @classmethod
-    def __get_pydantic_json_schema__(cls, core_schema: CoreSchema, handler: GetJsonSchemaHandler) -> JsonSchemaValue:
-        """Add the ``"<value><unit>"`` string form to the accepted input forms.
-
-        :meth:`_model_validate` accepts the unit as a suffix on a string, e.g. ``"10us"``, as well
-        as the ``{"us": 10}`` object. Only the object form is ever produced, so the string
-        alternative belongs to the validation schema only.
-
-        :param core_schema: the core schema the JSON schema is generated from.
-        :param handler: the handler producing the default JSON schema.
-        :return: the JSON schema, with the string form added when describing accepted input.
+        :param source_type: The union of unit models this annotates.
+        :param handler: The handler generating core schemas, reused for the rebuilt annotation.
+        :return: The core schema of the equivalent :class:`~pydantic.Discriminator`-keyed union.
+        :raises TypeError: If applied to anything but a union -- there is nothing to discriminate.
         """
-        json_schema = handler(core_schema)
-        if handler.mode == "serialization":
-            return json_schema
+        if not (units := get_args(source_type)):
+            raise TypeError(f"{type(self).__name__} annotates a union of unit models, not {source_type!r}")
 
-        target = handler.resolve_ref_schema(json_schema)
-        # Falsy properties also cover BaseUnit itself, which declares no unit field.
-        if not target.get("properties"):
-            return json_schema
+        tags = {unit: get_unit_value_field_name_and_type(unit)[0] for unit in units}
 
-        unit, _ = get_unit_value_field_name_and_type(cls)
-        assert str.isidentifier(unit)
+        def unit_of(value: Any) -> str | None:
+            """Return the unit *value* is spelled in, or :obj:`None` to report an unknown tag."""
+            if isinstance(value, Mapping):
+                return next(iter(value)) if len(value) == 1 else None
+            return tags.get(type(value))
 
-        title = target.pop("title", None)
-        object_schema = dict(target)
-        target.clear()
-        target["anyOf"] = [object_schema, {"type": "string", "pattern": unit + r"\s*$"}]
-        if title is not None:
-            target["title"] = title
+        members = tuple(Annotated[unit, Tag(tag)] for unit, tag in tags.items())
+        return handler.generate_schema(Annotated[Union[*members], Discriminator(unit_of)])
 
-        return json_schema
+
+class BaseUnit(FrozenModel):
+    """Base class for units: a frozen model whose single field is named for the unit itself.
+
+    ``extra="forbid"``, inherited from :class:`~.base_models.FrozenModel`, is what makes that one
+    key exclusive, and so what lets :class:`UnitDiscriminator` select a unit by it.
+
+    The unit-suffixed string (``"10us"``) used to be accepted here, by a before-validator paired
+    with a schema hook that advertised a form nothing ever produced. It is now read only where it
+    is authored, by :meth:`~.base_models.WrappedValueModel.parse` and the quantity constructors,
+    over :func:`~.arithmetic.parse_unit_suffixed_value`.
+    """
 
 
 @register_unit_value_field("deg")

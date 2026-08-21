@@ -52,7 +52,9 @@ from ...models.experimental.schedule import (
     ScheduledOperation,
 )
 from ...models.pulse_types import PulseType
-from ...models.reference_types import VariableRef
+from ...models.reference_types import PulseRef, VariableRef
+from .._coerce import as_channel_ref, as_duration, as_frequency, as_phase, as_pulse_ref, as_threshold
+from .._factories import _coerce_or_ref as _coerce_or_ref
 from .._factories import (
     _convert_range_to_model,
     _validate_variable_ref,
@@ -86,6 +88,7 @@ if TYPE_CHECKING:
     from ...models.basic_types import AmplitudeLike, DurationLike, FrequencyLike, PhaseLike, ThresholdLike
     from ...models.data_ops import ComparisonModeLike, ComplexToRealProjectionModeLike
     from ...models.reference_types import ChannelRefLike, PulseRefLike, SymbolRefLike, VariableRefLike
+    from .._expressions import ExprLike
 
 __all__ = (
     "ScheduleBlock",
@@ -220,7 +223,7 @@ def _sub_schedule_with_token(
     if not _in_schedule(context):
         raise RuntimeError("sub_schedule can only be used within a build_schedule() context")
 
-    nested_sched = Schedule(items=[])
+    nested_sched = Schedule([])
 
     # Add it to the parent schedule with timing parameters
     token = _add_to_schedule(context, nested_sched, **schedule_params)
@@ -269,7 +272,7 @@ def build_schedule() -> Iterator[Schedule]:
         FutureWarning,
         stacklevel=3,
     )
-    sched = Schedule(items=[])
+    sched = Schedule([])
     _push_context(sched)
     try:
         yield sched
@@ -350,7 +353,7 @@ def repeat(count: int, **schedule_params: Unpack[ScheduleParams]) -> Iterator[Sc
     if not _in_schedule(parent):
         raise _not_a_schedule_context("repeat()")
 
-    sched_rep = SchedRepetition(count=count, body=Schedule(items=[]))
+    sched_rep = SchedRepetition(count=count, body=Schedule([]))
     _add_to_schedule(parent, sched_rep, **schedule_params)
     _push_context(sched_rep)
     try:
@@ -366,7 +369,7 @@ def repeat(count: int, **schedule_params: Unpack[ScheduleParams]) -> Iterator[Sc
 
 @contextmanager
 def for_(
-    var: VariableRefLike | list[VariableRefLike],
+    var: str | VariableRefLike | list[str | VariableRefLike],
     items: Iterable[Any] | Range | LinSpace | list[Iterable[Any] | Range | LinSpace],
     **schedule_params: Unpack[ScheduleParams],
 ) -> Iterator[SchedIteration]:
@@ -437,7 +440,7 @@ def for_(
     if not _in_schedule(parent):
         raise _not_a_schedule_context("for_()")
 
-    sched_iter = SchedIteration(var=validated_vars, items=validated_items, body=Schedule(items=[]))
+    sched_iter = SchedIteration(var=validated_vars, items=validated_items, body=Schedule([]))
     _add_to_schedule(parent, sched_iter, **schedule_params)
     _push_context(sched_iter)
     try:
@@ -452,7 +455,7 @@ def for_(
 
 
 @contextmanager
-def if_(var: VariableRefLike, **schedule_params: Unpack[ScheduleParams]) -> Iterator[SchedConditional]:
+def if_(var: str | VariableRefLike, **schedule_params: Unpack[ScheduleParams]) -> Iterator[SchedConditional]:
     """Context manager for building a schedule conditional block.
 
     :param var: Variable reference for the condition
@@ -481,7 +484,7 @@ def if_(var: VariableRefLike, **schedule_params: Unpack[ScheduleParams]) -> Iter
     if not _in_schedule(parent):
         raise _not_a_schedule_context("if_()")
 
-    sched_cond = SchedConditional(var=validated_var, body=Schedule(items=[]))
+    sched_cond = SchedConditional(var=validated_var, body=Schedule([]))
     _add_to_schedule(parent, sched_cond, **schedule_params)
     _push_context(sched_cond)
     try:
@@ -750,10 +753,10 @@ def nested_schedule[**P](func: Callable[P, Any]) -> Callable[P, ScheduleBlock]:
 
 def play(
     channel: ChannelRefLike,
-    pulse: PulseType | PulseRefLike,
+    pulse: PulseType | str | PulseRefLike,
     *,
-    scale_amp: float | complex | SymbolRefLike | None = None,
-    cond: VariableRefLike | None = None,
+    scale_amp: float | complex | str | SymbolRefLike | ExprLike | None = None,
+    cond: str | VariableRefLike | None = None,
     **schedule_params: Unpack[ScheduleParams],
 ) -> OperationToken:
     """Play a pulse on a channel.
@@ -784,6 +787,10 @@ def play(
     # cond is variable-only - use strict validation
     if cond is not None:
         cond = _validate_variable_ref(cond)
+
+    channel = as_channel_ref(channel)
+    if isinstance(pulse, PulseRef | str) or (isinstance(pulse, dict) and "pulse_name" in pulse):
+        pulse = as_pulse_ref(pulse)
 
     op = Play(channel=channel, pulse=pulse, scale_amp=scale_amp, cond=cond)
 
@@ -834,9 +841,9 @@ def wait(
             "the sequence definition. Use single-channel wait in schedules."
         )
 
-    duration = _validate_or_pass_through(duration, param_name="duration", context="wait()")
+    duration = _coerce_or_ref(duration, coerce=as_duration, param_name="duration", context="wait()")  # type: ignore[assignment]
 
-    op = Wait(*channels, duration=duration)  # type: ignore[arg-type]
+    op = Wait(*(as_channel_ref(ch) for ch in channels), duration=duration)  # type: ignore[arg-type]
 
     return _add_to_schedule(context, op, **schedule_params)
 
@@ -888,7 +895,8 @@ def set_frequency(
 
         set_frequency("qubit", "5GHz")
     """
-    frequency = _validate_or_pass_through(frequency, param_name="frequency", context="set_frequency()")
+    channel = as_channel_ref(channel)
+    frequency = _coerce_or_ref(frequency, coerce=as_frequency, param_name="frequency", context="set_frequency()")  # type: ignore[assignment]
 
     op = SetFrequency(channel=channel, frequency=frequency)
 
@@ -921,7 +929,8 @@ def shift_frequency(
 
         shift_frequency("qubit", "100MHz")
     """
-    frequency = _validate_or_pass_through(frequency, param_name="frequency", context="shift_frequency()")
+    channel = as_channel_ref(channel)
+    frequency = _coerce_or_ref(frequency, coerce=as_frequency, param_name="frequency", context="shift_frequency()")  # type: ignore[assignment]
 
     op = ShiftFrequency(channel=channel, frequency=frequency)
 
@@ -954,7 +963,8 @@ def set_phase(
 
         set_phase("qubit", "90deg")
     """
-    phase = _validate_or_pass_through(phase, param_name="phase", context="set_phase()")
+    channel = as_channel_ref(channel)
+    phase = _coerce_or_ref(phase, coerce=as_phase, param_name="phase", context="set_phase()")  # type: ignore[assignment]
 
     op = SetPhase(channel=channel, phase=phase)
 
@@ -987,7 +997,8 @@ def shift_phase(
 
         shift_phase("qubit", "45deg")
     """
-    phase = _validate_or_pass_through(phase, param_name="phase", context="shift_phase()")
+    channel = as_channel_ref(channel)
+    phase = _coerce_or_ref(phase, coerce=as_phase, param_name="phase", context="shift_phase()")  # type: ignore[assignment]
 
     op = ShiftPhase(channel=channel, phase=phase)
 
@@ -999,7 +1010,7 @@ def shift_phase(
 
 def record(
     channel: ChannelRefLike,
-    var: VariableRefLike,
+    var: str | VariableRefLike,
     *,
     duration: DurationLike,
     integration: FullIntegration | DemodIntegration,
@@ -1033,6 +1044,8 @@ def record(
     """
     # Validate variable reference
     validated_var = _validate_variable_ref(var)
+    channel = as_channel_ref(channel)
+    duration = as_duration(duration)
 
     op = Record(channel=channel, var=validated_var, duration=duration, integration=integration)  # type: ignore[arg-type]
 
@@ -1043,8 +1056,8 @@ def record(
 
 
 def discriminate(
-    target: VariableRefLike,
-    source: VariableRefLike,
+    target: str | VariableRefLike,
+    source: str | VariableRefLike,
     threshold: ThresholdLike,
     *,
     rotation: PhaseLike = 0,
@@ -1081,6 +1094,8 @@ def discriminate(
     # Validate variable references
     validated_target = _validate_variable_ref(target)
     validated_source = _validate_variable_ref(source)
+    threshold = as_threshold(threshold)
+    rotation = as_phase(rotation)
 
     op = Discriminate(
         target=validated_target,
@@ -1099,7 +1114,7 @@ def discriminate(
 
 def store(
     key: str,
-    source: VariableRefLike,
+    source: str | VariableRefLike,
     *,
     mode: StoreMode | StoreModeLiteral = "last",
     **schedule_params: Unpack[ScheduleParams],
@@ -1146,7 +1161,7 @@ def store(
 def measure(
     channel: ChannelRefLike | tuple[ChannelRefLike, ChannelRefLike],
     *,
-    result_var: VariableRefLike,
+    result_var: str | VariableRefLike,
     duration: DurationLike,
     amplitude: AmplitudeLike,
     integration: FullIntegration | DemodIntegration,

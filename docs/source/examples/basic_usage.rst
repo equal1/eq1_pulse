@@ -48,38 +48,34 @@ JSON Output
 
     [
       {
-        "op_type": "play",
-        "channel": "drive",
-        "pulse": {
-          "pulse_type": "square",
-          "duration": {
-            "us": 10.0
-          },
-          "amplitude": {
-            "V": [
-              0.1,
-              0.0
-            ]
-          },
+        "play": {
+          "channel": "drive",
+          "pulse": {
+            "pulse_type": "square",
+            "duration": {
+              "us": 10
+            },
+            "amplitude": {
+              "mV": 100
+            }
+          }
         }
       },
       {
-        "op_type": "play",
-        "channel": "readout",
-        "pulse": {
-          "pulse_type": "sine",
-          "duration": {
-            "us": 5.0
-          },
-          "amplitude": {
-            "V": [
-              0.05,
-              0.0
-            ]
-          },
-          "frequency": {
-            "GHz": 5.0
-          },
+        "play": {
+          "channel": "readout",
+          "pulse": {
+            "pulse_type": "sine",
+            "duration": {
+              "us": 5
+            },
+            "amplitude": {
+              "mV": 50
+            },
+            "frequency": {
+              "GHz": 5
+            }
+          }
         }
       }
     ]
@@ -118,77 +114,69 @@ JSON Output
 
 .. code-block:: json
 
-
     [
       {
-        "op_type": "play",
-        "channel": "drive",
-        "pulse": {
-          "pulse_type": "square",
-          "duration": {
-            "us": 10.0
-          },
-          "amplitude": {
-            "V": [
-              0.1,
-              0.0
-            ]
-          },
-        }
-      },
-      {
-        "op_type": "play",
-        "channel": "readout",
-        "pulse": {
-          "pulse_type": "square",
-          "duration": {
-            "us": 5.0
-          },
-          "amplitude": {
-            "V": [
-              0.05,
-              0.0
-            ]
+        "play": {
+          "channel": "drive",
+          "pulse": {
+            "pulse_type": "square",
+            "duration": {
+              "us": 10
+            },
+            "amplitude": {
+              "mV": 100
+            }
           }
         }
       },
       {
-        "op_type": "barrier",
-        "channels": [
-          "drive",
-          "readout"
-        ]
-      },
-      {
-        "op_type": "play",
-        "channel": "drive",
-        "pulse": {
-          "pulse_type": "square",
-          "duration": {
-            "us": 20.0
-          },
-          "amplitude": {
-            "V": [
-              0.08,
-              0.0
-            ]
-          },
+        "play": {
+          "channel": "readout",
+          "pulse": {
+            "pulse_type": "square",
+            "duration": {
+              "us": 5
+            },
+            "amplitude": {
+              "mV": 50
+            }
+          }
         }
       },
       {
-        "op_type": "play",
-        "channel": "readout",
-        "pulse": {
-          "pulse_type": "square",
-          "duration": {
-            "us": 20.0
-          },
-          "amplitude": {
-            "V": [
-              0.04,
-              0.0
-            ]
-          },
+        "barrier": {
+          "channels": [
+            "drive",
+            "readout"
+          ]
+        }
+      },
+      {
+        "play": {
+          "channel": "drive",
+          "pulse": {
+            "pulse_type": "square",
+            "duration": {
+              "us": 20
+            },
+            "amplitude": {
+              "mV": 80
+            }
+          }
+        }
+      },
+      {
+        "play": {
+          "channel": "readout",
+          "pulse": {
+            "pulse_type": "square",
+            "duration": {
+              "us": 20
+            },
+            "amplitude": {
+              "mV": 40
+            }
+          }
         }
       }
     ]
@@ -216,33 +204,35 @@ JSON Output
 
     [
       {
-        "op_type": "repeat",
-        "count": 10,
-        "body": [
+        "repeat": {
+          "count": 10,
+          "body": [
             {
-              "op_type": "play",
-              "channel": "qubit",
-              "pulse": {
-                "pulse_type": "square",
-                "duration": {
-                  "ns": 50.0
-                },
-                "amplitude": {
-                  "V": [
-                    0.1,
-                    0.0
-                  ]
-                },
+              "play": {
+                "channel": "qubit",
+                "pulse": {
+                  "pulse_type": "square",
+                  "duration": {
+                    "ns": 50
+                  },
+                  "amplitude": {
+                    "mV": 100
+                  }
+                }
               }
             },
             {
-              "op_type": "wait",
-              "channel": "qubit",
-              "duration": {
-                "ns": 50.0
+              "wait": {
+                "channels": [
+                  "qubit"
+                ],
+                "duration": {
+                  "ns": 50
+                }
               }
             }
           ]
+        }
       }
     ]
 
@@ -322,52 +312,50 @@ JSON Output
 
     [
       {
-        "op_type": "var_decl",
-        "name": "result",
-        "dtype": "complex",
-        "unit": "mV"
-      },
-      {
-        "op_type": "play",
-        "channel": "qubit",
-        "pulse": {
-          "pulse_type": "square",
-          "duration": {
-            "ns": 100.0
-          },
-          "amplitude": {
-            "V": [
-              0.05,
-              0.0
-            ]
-          },
+        "var_decl": {
+          "dtype": "complex",
+          "unit": "mV",
+          "name": "result"
         }
       },
       {
-        "op_type": "play",
-        "channel": "qubit",
-        "pulse": {
-          "pulse_type": "square",
-          "duration": {
-            "us": 1.0
-          },
-          "amplitude": {
-            "V": [
-              0.03,
-              0.0
-            ]
-          },
+        "play": {
+          "channel": "qubit",
+          "pulse": {
+            "pulse_type": "square",
+            "duration": {
+              "ns": 100
+            },
+            "amplitude": {
+              "mV": 50
+            }
+          }
         }
       },
       {
-        "op_type": "record",
-        "channel": "qubit",
-        "duration": {
-          "us": 1.0
-        },
-        "var": "result",
-        "integration": {
-          "type": "demod"
+        "play": {
+          "channel": "qubit",
+          "pulse": {
+            "pulse_type": "square",
+            "duration": {
+              "us": 1
+            },
+            "amplitude": {
+              "mV": 30
+            }
+          }
+        }
+      },
+      {
+        "record": {
+          "channel": "qubit",
+          "var": "result",
+          "duration": {
+            "us": 1
+          },
+          "integration": {
+            "integration_type": "demod"
+          }
         }
       }
     ]

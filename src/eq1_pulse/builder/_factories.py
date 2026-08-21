@@ -9,19 +9,41 @@ between the sequence builder (:mod:`eq1_pulse.builder.core`) and the schedule bu
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Literal, overload
 
 from eq1_pulse.models import Phase
 
 from ..models.basic_types import Range
 from ..models.channel_ops import DemodIntegration, FullIntegration
-from ..models.pulse_types import ArbitrarySampledPulse, ExternalPulse, SinePulse, SquarePulse
+from ..models.expressions import (
+    BinaryExpr,
+    CallExpr,
+    CompareExpr,
+    ExprBase,
+    LogicalExpr,
+    NotExpr,
+    SymbolExpr,
+    UnaryExpr,
+)
+from ..models.pulse_types import (
+    ArbitrarySampledPulse,
+    DigitalTriggerPulse,
+    ExternalPulse,
+    SinePulse,
+    SquarePulse,
+    StepPulse,
+)
 from ..models.reference_types import ChannelRef, ExternalRef, PulseRef, VariableRef
-from ._state import _check_external_declared, _check_variable_declared, _is_variable_declared
+from ._coerce import as_amplitude, as_duration, as_frequency, as_phase, as_symbol_ref
+from ._expressions import Expr
+from ._state import _check_external_declared, _check_pulse_declared, _check_variable_declared
 
 if TYPE_CHECKING:
     from ..models.basic_types import AmplitudeLike, DurationLike, FrequencyLike, PhaseLike
+    from ..models.expressions import Expression, ValueRef
     from ..models.reference_types import SymbolRef, SymbolRefLike, VariableRefLike
+    from ._expressions import ExprLike
 
 # ============================================================================
 # Basic model builders
@@ -72,12 +94,12 @@ def phase(*args, **kwargs) -> Phase:
         case 1:
             if len(kwargs):
                 raise TypeError("keyword arguments cannot follow positional argument")
-            return Phase.model_validate(*args)
+            return Phase(*args)
         case _:
             raise TypeError("at most one positional argument is allowed")
 
 
-def _validate_variable_ref(var_ref: VariableRefLike) -> VariableRef:
+def _validate_variable_ref(var_ref: str | VariableRefLike) -> VariableRef:
     """Validate a variable reference and convert to VariableRef object.
 
     :param var_ref: Variable reference (string, dict, or VariableRef)
@@ -103,12 +125,43 @@ def _validate_variable_ref(var_ref: VariableRefLike) -> VariableRef:
     return var_ref
 
 
+def _check_expression_leaves(node: Expression) -> None:
+    """Walk an expression tree and check every :class:`~.expressions.SymbolExpr` leaf is declared.
+
+    The only new traversal this plan adds: every other validation helper here checks a single
+    reference, but an :class:`~.expressions.Expression` can bury references arbitrarily deep, so it
+    needs its own walk rather than reusing :func:`_check_variable_declared` /
+    :func:`_check_external_declared` directly.
+
+    :param node: The expression tree to walk.
+
+    :raises RuntimeError: If a :class:`~.expressions.SymbolExpr` leaf names an undeclared variable
+        or external symbol.
+    """
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        if isinstance(current, SymbolExpr):
+            symbol = current.symbol
+            if isinstance(symbol, VariableRef):
+                _check_variable_declared(symbol.var)
+            else:
+                _check_external_declared(symbol.ext)
+        elif isinstance(current, UnaryExpr | NotExpr):
+            stack.append(current.rhs)
+        elif isinstance(current, BinaryExpr | CompareExpr | LogicalExpr):
+            stack.append(current.lhs)
+            stack.append(current.rhs)
+        elif isinstance(current, CallExpr):
+            stack.extend(current.args)
+
+
 def _validate_or_pass_through[T](
-    value: T | SymbolRef,
+    value: T | SymbolRef | ExprLike,
     *,
     param_name: str,
     context: str,
-) -> T | SymbolRef:
+) -> T | ValueRef:
     """Validate a parameter that can be a variable/external reference or literal value.
 
     - If value is :obj:`None`: pass through
@@ -119,6 +172,10 @@ def _validate_or_pass_through[T](
     - If value is dict without ``"var"``/``"ext"`` key: pass through unchanged
     - If value is string AND identifier: treat as variable, validate, return :class:`VariableRef`
     - If value is string AND not identifier: pass through (e.g., ``"10us"``)
+    - If value is :class:`~eq1_pulse.builder._expressions.Expr`: unwrap, check its leaves are
+      declared, return the :data:`~.expressions.Expression`
+    - If value is a bare :data:`~.expressions.Expression` model: check its leaves are declared,
+      pass through unchanged -- a user deserializing a fragment should not have to re-wrap it
     - Otherwise: pass through unchanged (for model validation)
 
     This handles parameters like ``duration="10us"`` vs ``duration="my_var"`` vs ``duration=var("my_var")``.
@@ -126,50 +183,81 @@ def _validate_or_pass_through[T](
     An identifier-like string is always treated as a variable, never an external symbol -- an
     external symbol must be spelled out explicitly with :func:`ext` or a ``{"ext": ...}`` dict.
 
+    The reference-shaped branches delegate their conversion and declaration-check to
+    :func:`~eq1_pulse.builder._coerce.as_symbol_ref`; this function's own job is only to decide
+    whether *value* is reference-shaped in the first place.
+
     :param value: Parameter value
     :param param_name: Name of the parameter being validated (for error messages)
     :param context: Context/function name where validation occurs (for error messages)
 
-    :return: :class:`VariableRef`/:class:`ExternalRef` if a reference, else unchanged value
+    :return: :class:`VariableRef`/:class:`ExternalRef`/:data:`~.expressions.Expression` if a
+        reference or expression, else unchanged value
 
-    :raises RuntimeError: If a reference names an undeclared variable or external symbol
+    :raises RuntimeError: If a reference names an undeclared variable or external symbol, or an
+        expression contains one
     """
     if value is None:
         return None  # type: ignore[return-value]
 
-    if isinstance(value, VariableRef):
-        _check_variable_declared(value.var)
+    if isinstance(value, Expr):
+        node = value.unwrap()
+        _check_expression_leaves(node)
+        return node
+
+    if isinstance(value, ExprBase):
+        _check_expression_leaves(value)  # type: ignore[arg-type]
         return value
 
-    if isinstance(value, ExternalRef):
-        _check_external_declared(value.ext)
-        return value
+    if isinstance(value, VariableRef | ExternalRef):
+        return as_symbol_ref(value, param_name=param_name, context=context)  # type: ignore[arg-type]
 
     if isinstance(value, dict):
-        if "var" in value:
-            var_ref = VariableRef(**value)
-            _check_variable_declared(var_ref.var)
-            return var_ref
-        if "ext" in value:
-            ext_ref = ExternalRef(**value)
-            _check_external_declared(ext_ref.ext)
-            return ext_ref
+        if "var" in value or "ext" in value:
+            return as_symbol_ref(value, param_name=param_name, context=context)  # type: ignore[arg-type]
         # Dict without "var"/"ext" key - pass through (e.g., {"ns": 100})
         return value  # type: ignore[return-value]
 
     if isinstance(value, str) and value.isidentifier():
-        if not _is_variable_declared(value):
-            raise RuntimeError(
-                f"Parameter '{param_name}' in {context} references undeclared variable '{value}'. "
-                f"Use var_decl('{value}', dtype, ...) before referencing this variable."
-            )
-        return VariableRef(value)
+        return as_symbol_ref(value, param_name=param_name, context=context)  # type: ignore[arg-type]
 
     return value
 
 
-def _validate_explicit_variable_ref[T](value: T, *, param_name: str) -> T | SymbolRef:
-    """Validate only *explicit* references, passing everything else through.
+def _coerce_or_ref[T](
+    value: T | str | SymbolRefLike | ExprLike | None,
+    *,
+    coerce: Callable[[Any], T],
+    param_name: str,
+    context: str,
+) -> T | ValueRef | None:
+    """Resolve a parameter to a concrete model, a checked symbol reference, or an expression.
+
+    Delegates reference/expression-recognition to :func:`_validate_or_pass_through`; whatever it
+    leaves untouched (a literal, not a reference or expression) is handed to *coerce* -- one of the
+    ``as_*`` functions in :mod:`eq1_pulse.builder._coerce` -- to read its string/dict/zero grammar
+    into the canonical model. An :data:`~.expressions.Expression` must be recognized here too, or it
+    falls through to *coerce* and is silently mishandled rather than failing to type-check.
+
+    :param value: Parameter value
+    :param coerce: Function turning a non-reference, non-expression value into the canonical model
+    :param param_name: Name of the parameter being validated (for error messages)
+    :param context: Context/function name where validation occurs (for error messages)
+
+    :return: The canonical model, a :class:`VariableRef`/:class:`ExternalRef`, an
+        :data:`~.expressions.Expression`, or :obj:`None`
+
+    :raises RuntimeError: If a reference names an undeclared variable or external symbol, or an
+        expression contains one
+    """
+    resolved = _validate_or_pass_through(value, param_name=param_name, context=context)
+    if resolved is None or isinstance(resolved, VariableRef | ExternalRef | ExprBase):
+        return resolved
+    return coerce(resolved)
+
+
+def _validate_explicit_variable_ref[T](value: T | ExprLike, *, param_name: str) -> T | ValueRef:
+    """Validate only *explicit* references and expressions, passing everything else through.
 
     Unlike :func:`_validate_or_pass_through`, an identifier-like string is **not**
     treated as a variable reference. Use this for free-form values where a bare
@@ -181,27 +269,26 @@ def _validate_explicit_variable_ref[T](value: T, *, param_name: str) -> T | Symb
     :param value: Parameter value
     :param param_name: Name of the parameter being validated (for error messages)
 
-    :return: :class:`VariableRef`/:class:`ExternalRef` if explicitly one, else the value unchanged
+    :return: :class:`VariableRef`/:class:`ExternalRef`/:data:`~.expressions.Expression` if
+        explicitly one, else the value unchanged
 
-    :raises RuntimeError: If an explicit reference names an undeclared variable or external symbol
+    :raises RuntimeError: If an explicit reference names an undeclared variable or external symbol,
+        or an expression contains one
     """
-    if isinstance(value, VariableRef):
-        _check_variable_declared(value.var)
+    if isinstance(value, Expr):
+        node = value.unwrap()
+        _check_expression_leaves(node)
+        return node
+
+    if isinstance(value, ExprBase):
+        _check_expression_leaves(value)  # type: ignore[arg-type]
         return value
 
-    if isinstance(value, ExternalRef):
-        _check_external_declared(value.ext)
-        return value
+    if isinstance(value, VariableRef | ExternalRef):
+        return as_symbol_ref(value, param_name=param_name, context="")  # type: ignore[arg-type]
 
-    if isinstance(value, dict):
-        if "var" in value:
-            var_ref = VariableRef(**value)
-            _check_variable_declared(var_ref.var)
-            return var_ref
-        if "ext" in value:
-            ext_ref = ExternalRef(**value)
-            _check_external_declared(ext_ref.ext)
-            return ext_ref
+    if isinstance(value, dict) and ("var" in value or "ext" in value):
+        return as_symbol_ref(value, param_name=param_name, context="")  # type: ignore[arg-type]
 
     return value
 
@@ -213,10 +300,10 @@ def _validate_explicit_variable_ref[T](value: T, *, param_name: str) -> T | Symb
 
 def square_pulse(
     *,
-    duration: DurationLike | SymbolRefLike,
-    amplitude: AmplitudeLike | SymbolRefLike,
-    rise_time: DurationLike | SymbolRefLike | None = None,
-    fall_time: DurationLike | SymbolRefLike | None = None,
+    duration: DurationLike | SymbolRefLike | ExprLike,
+    amplitude: AmplitudeLike | SymbolRefLike | ExprLike,
+    rise_time: DurationLike | SymbolRefLike | ExprLike | None = None,
+    fall_time: DurationLike | SymbolRefLike | ExprLike | None = None,
 ) -> SquarePulse:
     """Create a square pulse.
 
@@ -235,25 +322,85 @@ def square_pulse(
 
         pulse = square_pulse(duration="10us", amplitude="100mV")
     """
-    duration = _validate_or_pass_through(duration, param_name="duration", context="square_pulse()")
-    amplitude = _validate_or_pass_through(amplitude, param_name="amplitude", context="square_pulse()")
-    rise_time = _validate_or_pass_through(rise_time, param_name="rise_time", context="square_pulse()")
-    fall_time = _validate_or_pass_through(fall_time, param_name="fall_time", context="square_pulse()")
+    duration = _coerce_or_ref(duration, coerce=as_duration, param_name="duration", context="square_pulse()")  # type: ignore[assignment]
+    amplitude = _coerce_or_ref(amplitude, coerce=as_amplitude, param_name="amplitude", context="square_pulse()")  # type: ignore[assignment]
+    rise_time = _coerce_or_ref(rise_time, coerce=as_duration, param_name="rise_time", context="square_pulse()")
+    fall_time = _coerce_or_ref(fall_time, coerce=as_duration, param_name="fall_time", context="square_pulse()")
 
     return SquarePulse(
-        duration=duration,
-        amplitude=amplitude,
-        rise_time=rise_time,
-        fall_time=fall_time,
+        duration=duration,  # type: ignore[arg-type]
+        amplitude=amplitude,  # type: ignore[arg-type]
+        rise_time=rise_time,  # type: ignore[arg-type]
+        fall_time=fall_time,  # type: ignore[arg-type]
     )
+
+
+def step_pulse(
+    *,
+    duration: DurationLike | SymbolRefLike | ExprLike,
+    amplitude: AmplitudeLike | SymbolRefLike | ExprLike,
+) -> StepPulse:
+    """Create a step pulse.
+
+    The amplitude is reached instantaneously at the start and **persists** past the end of the
+    pulse, becoming the channel's new base level. ``duration`` is how long the step occupies the
+    channel, not how long the level lasts -- see :class:`~eq1_pulse.models.StepPulse` for the full
+    semantics.
+
+    :param duration: Time the step occupies the channel
+    :param amplitude: Amplitude the channel steps to, and remains at
+
+    :return: Step pulse definition
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import step_pulse
+
+        pulse = step_pulse(duration="1us", amplitude="150mV")
+    """
+    duration = _coerce_or_ref(duration, coerce=as_duration, param_name="duration", context="step_pulse()")  # type: ignore[assignment]
+    amplitude = _coerce_or_ref(amplitude, coerce=as_amplitude, param_name="amplitude", context="step_pulse()")  # type: ignore[assignment]
+
+    return StepPulse(
+        duration=duration,  # type: ignore[arg-type]
+        amplitude=amplitude,  # type: ignore[arg-type]
+    )
+
+
+def trigger_pulse(
+    *,
+    duration: DurationLike | SymbolRefLike | ExprLike,
+) -> DigitalTriggerPulse:
+    """Create a digital trigger pulse.
+
+    Sets a digital trigger line high for ``duration``, then returns it low. Played with
+    :func:`~eq1_pulse.builder.play` on a digital output channel; carries no amplitude.
+
+    :param duration: Time the trigger line is held high
+
+    :return: Digital trigger pulse definition
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import trigger_pulse
+
+        pulse = trigger_pulse(duration="100ns")
+    """
+    duration = _coerce_or_ref(duration, coerce=as_duration, param_name="duration", context="trigger_pulse()")  # type: ignore[assignment]
+
+    return DigitalTriggerPulse(duration=duration)  # type: ignore[arg-type]
 
 
 def sine_pulse(
     *,
-    duration: DurationLike | SymbolRefLike,
-    amplitude: AmplitudeLike | SymbolRefLike,
-    frequency: FrequencyLike | SymbolRefLike,
-    to_frequency: FrequencyLike | SymbolRefLike | None = None,
+    duration: DurationLike | SymbolRefLike | ExprLike,
+    amplitude: AmplitudeLike | SymbolRefLike | ExprLike,
+    frequency: FrequencyLike | SymbolRefLike | ExprLike,
+    to_frequency: FrequencyLike | SymbolRefLike | ExprLike | None = None,
 ) -> SinePulse:
     """Create a sine pulse.
 
@@ -280,24 +427,24 @@ def sine_pulse(
             to_frequency="5.5GHz"
         )
     """
-    duration = _validate_or_pass_through(duration, param_name="duration", context="sine_pulse()")
-    amplitude = _validate_or_pass_through(amplitude, param_name="amplitude", context="sine_pulse()")
-    frequency = _validate_or_pass_through(frequency, param_name="frequency", context="sine_pulse()")
-    to_frequency = _validate_or_pass_through(to_frequency, param_name="to_frequency", context="sine_pulse()")
+    duration = _coerce_or_ref(duration, coerce=as_duration, param_name="duration", context="sine_pulse()")  # type: ignore[assignment]
+    amplitude = _coerce_or_ref(amplitude, coerce=as_amplitude, param_name="amplitude", context="sine_pulse()")  # type: ignore[assignment]
+    frequency = _coerce_or_ref(frequency, coerce=as_frequency, param_name="frequency", context="sine_pulse()")  # type: ignore[assignment]
+    to_frequency = _coerce_or_ref(to_frequency, coerce=as_frequency, param_name="to_frequency", context="sine_pulse()")
 
     return SinePulse(
-        duration=duration,
-        amplitude=amplitude,
-        frequency=frequency,
-        to_frequency=to_frequency,
+        duration=duration,  # type: ignore[arg-type]
+        amplitude=amplitude,  # type: ignore[arg-type]
+        frequency=frequency,  # type: ignore[arg-type]
+        to_frequency=to_frequency,  # type: ignore[arg-type]
     )
 
 
 def external_pulse(
     function: str,
     *,
-    duration: DurationLike | SymbolRefLike,
-    amplitude: AmplitudeLike | SymbolRefLike,
+    duration: DurationLike | SymbolRefLike | ExprLike,
+    amplitude: AmplitudeLike | SymbolRefLike | ExprLike,
     params: dict[str, Any] | None = None,
 ) -> ExternalPulse:
     """Create an external pulse reference.
@@ -335,8 +482,8 @@ def external_pulse(
             params={"beta": 0.5, "sigma": "10ns"}
         )
     """
-    duration = _validate_or_pass_through(duration, param_name="duration", context="external_pulse()")
-    amplitude = _validate_or_pass_through(amplitude, param_name="amplitude", context="external_pulse()")
+    duration = _coerce_or_ref(duration, coerce=as_duration, param_name="duration", context="external_pulse()")  # type: ignore[assignment]
+    amplitude = _coerce_or_ref(amplitude, coerce=as_amplitude, param_name="amplitude", context="external_pulse()")  # type: ignore[assignment]
 
     # Validate top-level params dict values (if params provided).
     #
@@ -351,8 +498,8 @@ def external_pulse(
 
     return ExternalPulse(
         function=function,
-        duration=duration,
-        amplitude=amplitude,
+        duration=duration,  # type: ignore[arg-type]
+        amplitude=amplitude,  # type: ignore[arg-type]
         params=params,  # type: ignore[arg-type]
     )
 
@@ -360,8 +507,8 @@ def external_pulse(
 def arbitrary_pulse(
     samples: list[float] | list[complex],
     *,
-    duration: DurationLike | SymbolRefLike,
-    amplitude: AmplitudeLike | SymbolRefLike,
+    duration: DurationLike | SymbolRefLike | ExprLike,
+    amplitude: AmplitudeLike | SymbolRefLike | ExprLike,
     interpolation: str | None = None,
     time_points: list[float] | None = None,
 ) -> ArbitrarySampledPulse:
@@ -401,13 +548,13 @@ def arbitrary_pulse(
             interpolation="cubic"
         )
     """
-    duration = _validate_or_pass_through(duration, param_name="duration", context="arbitrary_pulse()")
-    amplitude = _validate_or_pass_through(amplitude, param_name="amplitude", context="arbitrary_pulse()")
+    duration = _coerce_or_ref(duration, coerce=as_duration, param_name="duration", context="arbitrary_pulse()")  # type: ignore[assignment]
+    amplitude = _coerce_or_ref(amplitude, coerce=as_amplitude, param_name="amplitude", context="arbitrary_pulse()")  # type: ignore[assignment]
 
     return ArbitrarySampledPulse(
         samples=samples,
-        duration=duration,
-        amplitude=amplitude,
+        duration=duration,  # type: ignore[arg-type]
+        amplitude=amplitude,  # type: ignore[arg-type]
         interpolation=interpolation,
         time_points=time_points,
     )
@@ -440,9 +587,9 @@ def full_integration() -> FullIntegration:
 
 def demod_integration(
     *,
-    phase: PhaseLike | SymbolRefLike | None = None,
-    scale_cos: float | SymbolRefLike = 1.0,
-    scale_sin: float | SymbolRefLike = 1.0,
+    phase: PhaseLike | SymbolRefLike | ExprLike | None = None,
+    scale_cos: float | str | SymbolRefLike | ExprLike = 1.0,
+    scale_sin: float | str | SymbolRefLike | ExprLike = 1.0,
 ) -> DemodIntegration:
     """Create a demodulation integration configuration.
 
@@ -474,7 +621,7 @@ def demod_integration(
         record("readout", var="result", duration="1us",
                integration=demod_integration(scale_cos=1.0, scale_sin=-1.0))
     """
-    validated_phase = _validate_or_pass_through(phase, param_name="phase", context="demod_integration()")
+    validated_phase = _coerce_or_ref(phase, coerce=as_phase, param_name="phase", context="demod_integration()")
     validated_scale_cos = _validate_or_pass_through(scale_cos, param_name="scale_cos", context="demod_integration()")
     validated_scale_sin = _validate_or_pass_through(scale_sin, param_name="scale_sin", context="demod_integration()")
 
@@ -547,7 +694,7 @@ def channel(name: str) -> ChannelRef:
 
         ch = channel("qubit_1")
     """
-    return ChannelRef(channel=name)
+    return ChannelRef(name)
 
 
 def pulse_ref(name: str) -> PulseRef:
@@ -565,6 +712,8 @@ def pulse_ref(name: str) -> PulseRef:
 
         p = pulse_ref("pi_pulse")
     """
+    _check_pulse_declared(name)
+
     return PulseRef(pulse_name=name)
 
 
