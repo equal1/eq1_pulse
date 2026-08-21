@@ -82,7 +82,13 @@ resolution, which fail quietly. No task here needs more than the 200k standard w
 
 ---
 
-## Task 1 — `ExternalSymbolStr`, `ExternalRef`, `SymbolRef`
+## Task 1 — `ExternalSymbolStr`, `ExternalRef`, `SymbolRef` ✅ done
+
+**Status:** done, 2026-08-21. One addition beyond the steps below: `Reference._wrap_serializer`
+gained a `_serializes_bare` guard. Without it the `SymbolRef` smart union serialized an
+`ExternalRef` bare — a plain `@model_serializer` is called without an instance check, so the
+`VariableRef` member accepted the value and won. See
+`test_symbol_ref_union_serialization_is_unambiguous`.
 
 **Read:** plan §3.1, §3.2, and the §9 Q1/Q2 rows.
 **Goal:** an external symbol can be spelled, validated, and round-tripped. Nothing uses it yet.
