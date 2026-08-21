@@ -3,7 +3,8 @@
 Companion to [additional-pulse-types-plan.md](additional-pulse-types-plan.md) (issue #5). Four
 independently executable tasks, each sized for a single clean session.
 
-**Run last**, after [symbols-and-parameters-tasks.md](symbols-and-parameters-tasks.md) (#6) and
+**Run last**, after #6 (landed — see
+[symbols-and-parameters-plan.md](symbols-and-parameters-plan.md)) and
 [expressions-tasks.md](expressions-tasks.md) (#3). There is no logical dependency in either
 direction — only a merge-conflict one, since all three plans edit `pulse_types.py` and
 `channel_ops.py`. Running this last means `StepPulse.amplitude` is declared once, with the alias
@@ -28,6 +29,12 @@ committed. Each leaves the tree green.
 > **Alias check.** Before declaring any new field, look at what the neighbouring fields in the same
 > file use — `ValueRef` if #3 has landed, `SymbolRef` if only #6 has, `VariableRef` if neither.
 > Match them. Do not introduce a fourth spelling.
+>
+> **Builder parity.** Declaring a field at the widened alias is only half the edit: the builder
+> function that writes it needs a parameter of the same type, routed through
+> `_validate_or_pass_through`. #6 shipped four such gaps and caught them in review rather than in QA
+> — a too-narrow parameter hint is not a type error. See
+> `symbols-and-parameters-plan.md` §10.4.
 >
 > **Verify.** `./qa/run_all_qa.sh` (pyright + mypy + pytest with coverage). It must pass before you
 > report done. If it passed before your change and fails after, you are not done.

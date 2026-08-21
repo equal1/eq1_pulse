@@ -3,9 +3,10 @@
 Companion to [expressions-plan.md](expressions-plan.md) (issue #3). Five independently executable
 tasks, each sized for a single clean session.
 
-**Requires [symbols-and-parameters-tasks.md](symbols-and-parameters-tasks.md) to be complete.** Task 2
-below is a one-line alias change *because* #6 already routed every read site through `SymbolRef`. Run
-before that and every widening has to be done twice.
+**Requires #6 to have landed** — it has; see
+[symbols-and-parameters-plan.md](symbols-and-parameters-plan.md), whose §10 records what the
+implementation added to the design. Task 2 below is a one-line alias change *because* #6 already
+routed every read site through `SymbolRef`. Run before that and every widening has to be done twice.
 
 **Run them in numeric order.** Each task assumes every lower-numbered task is complete and
 committed. Each leaves the tree green.
@@ -33,6 +34,25 @@ committed. Each leaves the tree green.
 >
 > **Scope.** Do only what your task says. Each task lists an explicit *out of scope* set. If you
 > believe a listed exclusion is wrong, say so in your final message rather than acting on it.
+
+---
+
+## What #6 learned that this plan will hit again
+
+Carried over from the #6 execution, because tasks 2 and 4 repeat the same shapes one alias wider.
+None of these are decisions to re-open; they are traps with known locations.
+
+| Trap                                                                                                              | Where it bites                                    |
+| ------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| **A widened field is only half the edit.** The builder function exposing it needs the same widening, or the field is unreachable through the public API. #6 shipped four such gaps (`if_`, `play`, `record`, `demod_integration`) and caught them in review, not in QA — a narrow parameter hint is not a type error. Check "does every widened field's builder parameter share the field's type?", do not grep for the old alias. | Task 2 → task 4                                  |
+| **The `TYPE_CHECKING`-only `__init__` overrides do not live with their fields.** `ConditionalBase.var` and `RepetitionBase.count` are declared in `control_flow.py`, but `Conditional`'s and `Repetition`'s constructor overrides are in `sequence.py`. Widen both or pyright reports the constructor, not the field. | Task 2                                            |
+| **Widening a shared helper's return type ripples into every call site's parameter hint.** #6 widened `_validate_or_pass_through` / `_validate_explicit_variable_ref` to return `T \| SymbolRef` and had to widen eleven call-site signatures in `_factories.py` and `core.py` before pyright accepted the value being assigned back. Budget for it. | Task 4                                            |
+| **`builder/experimental/schedule.py` mirrors the same functions over shared `_factories.py`.** It needs the identical type-hint widening to stay green even when a task otherwise leaves it alone. That is a type-hint fix, not a functional addition to a module scheduled for removal ([#8](https://github.com/equal1/eq1_pulse/issues/8)). | Task 4                                            |
+| **Re-exporting through `core.py` needs the `from ._factories import X as X` idiom**, or an importer of `builder.core` gets a pyright error on the implicit re-export. | Task 4                                            |
+| **`LeanModel` default elision is perturbed by a widened annotation.** Any field with a non-`None` default that gains a union member needs an explicit "still elided" test; `_default_value_of` is where it goes wrong. | Task 2                                            |
+| **`tests/test_examples.py` discovers `examples/**/*.py` by `rglob`.** A new example file is picked up with no list to update. | Task 5                                            |
+| **`ruff`'s configured rule set does not select `A` (flake8-builtins).** A parameter named `min`/`max` needs no `noqa`; adding one is removed again by the pre-commit hook as unused (`RUF100`). | Task 3, task 4                                    |
+| **The docs build emits pre-existing autoapi "more than one target found for cross-reference" warnings** for names re-exported from `models/` (`Amplitude`, `DataOp`, …). They are on `main` too. Compare against a baseline build rather than treating any warning as new. | Task 5                                            |
 
 ---
 

@@ -1,8 +1,7 @@
 # Plan: external constants and parameter variables
 
 **Issue:** [#6 — Feature: external constants and pulse parameter variables](https://github.com/equal1/eq1_pulse/issues/6)
-**Status:** accepted — all open questions closed (§9); see
-[symbols-and-parameters-tasks.md](symbols-and-parameters-tasks.md) for the execution breakdown
+**Status:** **implemented** — landed as designed; all open questions closed (§9), deltas recorded in §10
 **Date:** 2026-08-21
 **Successors:** [expressions-plan.md](expressions-plan.md) (#3) builds directly on the `SymbolRef` alias introduced here.
 
@@ -376,3 +375,77 @@ reasoning is preserved so they *can* be reopened deliberately.
   plan's job is to make the unit *present*.
 - **How a calibration store is addressed or discovered.** `ExternalRef` names a symbol; who resolves
   it is a submission-time concern with no representation in the IR.
+
+---
+
+## 10. As built
+
+The feature landed as designed. This section records only what the implementation *added* to or
+*sharpened* in the sections above, so that a reader of the plan is not surprised by the code.
+
+### 10.1 The wrapped wire form is a three-part contract
+
+§3.2 asks `ExternalRef` to override `_wrap_serializer` and its JSON schema. That turned out to be
+insufficient on its own: a plain `@model_serializer` is called **without** an instance check, so in
+the `SymbolRef` smart union the `VariableRef` member accepted an `ExternalRef` value and serialized
+it bare — silently, and only inside a union.
+
+The wire form is therefore three things together, not two:
+
+| Part                                             | Job                                                                    |
+| -------------------------------------------------- | ------------------------------------------------------------------------ |
+| `_serializes_bare: ClassVar[bool] = False`       | declares the intent, and makes the base `_wrap_serializer` decline the value with `PydanticSerializationUnexpectedValue` so the union moves on to the next member |
+| an overridden `_wrap_serializer`                 | produces `{"ext": ...}`                                                 |
+| `__get_pydantic_json_schema__` branching on the flag | keeps the schema agreeing with the serializer in both modes             |
+
+`Reference.__pydantic_init_subclass__` now rejects, at class-creation time, any subclass that
+declares one of these without the others or that defines other than exactly one field. A future
+reference class therefore cannot silently reintroduce the bug or ship a schema that disagrees with
+its serializer. Covered by `test_symbol_ref_union_serialization_is_unambiguous`.
+
+### 10.2 `SymbolValue` deliberately has no bare `str` member
+
+§3.3 models `SymbolValue`'s string coercion on `ExternalParamValue`, and it does — a
+`BeforeValidator` trying each dimensional `TypeAdapter` in turn, over the seven dimensional types
+§3.3 lists. One difference: `ExternalParamValue` keeps `str` as a fallback member, `SymbolValue`
+does not. An unmatched string in a declaration's `default` is therefore a validation error rather
+than a silently retained string, which is what is wanted — a declaration's default is a *value*,
+never a free-form label.
+
+For the same reason `ExternalRef` needs no `_Tagged...` wrapper inside `ExternalParamValue`, unlike
+`VariableRef` and `PulseRef`: it already never serializes bare, so it round-trips as its own
+`{"ext": ...}` form without help.
+
+### 10.3 `RepetitionBase.count` splits its constraint
+
+§2 asks for `int | SymbolRef` with `ge=0` on the literal branch only. It is spelled
+
+```python
+count: Annotated[int, Field(ge=0)] | SymbolRef
+```
+
+which both pyright and mypy accept, and which puts the constraint where the "declare, never enforce"
+split says it belongs.
+
+### 10.4 Builder read sites that the field inventory did not reach
+
+§2's inventory is of **model fields**. Several *builder functions* exposing those fields kept a
+narrower `VariableRefLike` hint, so a widened field was unreachable through the public API — and in
+`play()`'s case, ad-hoc `isinstance` checks skipped declaration validation for an `ExternalRef`
+entirely. `if_()`, `play()` (`cond` and `scale_amp`), `record()` (`duration`) and
+`demod_integration()` (`phase`, `scale_cos`, `scale_sin`) were widened to `SymbolRefLike` and routed
+through `_validate_or_pass_through`.
+
+**Lesson for the successor plans:** widening a model field is only half the edit. The builder
+function that writes that field needs the same widening, and the check is "does every widened field
+have a builder parameter, and does that parameter share the field's type?" — not a grep for the old
+alias.
+
+### 10.5 Known limitation: the experimental schedule builder
+
+`builder/experimental/schedule.py` keeps its own copies of `if_()` and `play()`, and they still
+declare `VariableRefLike` where the shared models now accept `SymbolRef`. Their type hints are
+therefore narrower than the models they build. This is deliberate: §5.4 scopes the experimental
+builder out, and the module is documented as unused and scheduled for removal
+([#8](https://github.com/equal1/eq1_pulse/issues/8)). It shares `_factories.py`, so it received the
+type-hint widening forced by the shared helpers' return type and nothing more.
