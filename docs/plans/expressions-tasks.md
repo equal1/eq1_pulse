@@ -55,14 +55,33 @@ other task depends on.
 | 4  | Builder: leaf checking, acceptance, exports           | M    | Sonnet 5  | medium    | 200k / ~50k | `builder/`, `tests/`                         |
 | 5  | Schema, docs, example                                 | S    | Haiku 4.5 | medium    | 200k / ~30k | `utilities/`, `docs/`, `examples/`, `tests/` |
 
-**Reading the columns.** *Context* is `window / working set`. The 200k standard window is ample
-throughout; the second figure is roughly what needs to be resident. Task 2's working set is large
-because it spans six model modules at once, not because any one file is big.
+### Legend
 
-*Model* rationale: task 1 is a mutually recursive discriminated union with forward references and
-`model_rebuild()` ordering — the failure mode is silent (a union degrading to `dict`) and surfaces
-far from its cause, which is exactly where Opus pays for itself. Task 5 is checklist work against
-explicit criteria — Haiku is sufficient.
+The four columns are chosen **independently**. In particular, size does not imply reasoning level: a
+small task with a silent failure mode gets `high`, a large mechanical one gets `medium`.
+
+| Column        | Value      | Means                                                                                                              |
+| --------------- | ------------ | -------------------------------------------------------------------------------------------------------------------- |
+| **Size**      | S          | One or two source files plus their tests. A shape already in the tree to copy from.                                |
+|               | M          | Three to six files including tests, or one file plus a change that ripples through its callers.                    |
+|               | L          | A new module, or an edit spanning most of `models/`. Expect to want a second pass over your own output before QA is green. |
+| **Reasoning** | medium     | Mistakes are **loud** — wrong code fails pyright, mypy, or an existing test immediately.                           |
+|               | high       | Mistakes are **silent** — wrong code type-checks and passes the existing tests while being subtly wrong: a smart union resolving to the wrong member, a serializer quietly dropping a field, a model that degraded to `dict`. |
+| **Model**     | Haiku 4.5  | The acceptance criteria are a checklist. Nothing to design.                                                        |
+|               | Sonnet 5   | Ordinary model or builder work, with an in-tree pattern to follow.                                                 |
+|               | Opus 5     | Silent failure mode **and** no in-tree precedent to copy.                                                          |
+| **Context**   | `w / s`    | `w` is the window to run with; `s` is roughly what should be resident — the named plan sections, the files listed, their tests. If a session approaches its `s` figure, it has loaded files it was not asked to touch. |
+
+Size is a budget, not a schedule. It says how much of a session the task consumes, so that two `S`
+tasks can reasonably be merged and an `L` one should not be.
+
+**Why these assignments.** Task 1 is a mutually recursive discriminated union with forward references
+and `model_rebuild()` ordering — the failure mode is a union silently degrading to `dict`, surfacing
+far from its cause, and nothing in the tree does this yet. That is the Opus case exactly. Task 2 is
+`high` for the same reason one level down: it turns a four-way smart union into a six-way one at
+every pulse parameter, and the regression is a coercion that quietly picks the wrong member. Task 5
+is checklist work. Task 2's working set is large because it spans six model modules at once, not
+because any one file is big.
 
 ---
 

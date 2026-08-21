@@ -56,12 +56,31 @@ whole plan fits in two sessions that way.
 | 3  | Builder: three new functions                      | S    | Sonnet 5  | medium    | 200k / ~35k | `builder/`, `tests/`                         |
 | 4  | Schema, docs, example                             | S    | Haiku 4.5 | medium    | 200k / ~25k | `utilities/`, `docs/`, `examples/`, `tests/` |
 
-**Reading the columns.** *Context* is `window / working set`. Everything here fits the 200k standard
-window with room to spare.
+### Legend
 
-*Model* rationale: task 1 moves a required field between base classes in a hierarchy four subclasses
-deep — mechanically small, but the failure mode is a silently weakened model, so it gets `high`
-reasoning. Task 4 is checklist work against explicit criteria.
+The four columns are chosen **independently**. In particular, size does not imply reasoning level: a
+small task with a silent failure mode gets `high`, a large mechanical one gets `medium`.
+
+| Column        | Value      | Means                                                                                                              |
+| --------------- | ------------ | -------------------------------------------------------------------------------------------------------------------- |
+| **Size**      | S          | One or two source files plus their tests. A shape already in the tree to copy from.                                |
+|               | M          | Three to six files including tests, or one file plus a change that ripples through its callers.                    |
+|               | L          | A new module, or an edit spanning most of `models/`. Expect to want a second pass over your own output before QA is green. |
+| **Reasoning** | medium     | Mistakes are **loud** — wrong code fails pyright, mypy, or an existing test immediately.                           |
+|               | high       | Mistakes are **silent** — wrong code type-checks and passes the existing tests while being subtly wrong: a smart union resolving to the wrong member, a serializer quietly dropping a field, a model that degraded to `dict`. |
+| **Model**     | Haiku 4.5  | The acceptance criteria are a checklist. Nothing to design.                                                        |
+|               | Sonnet 5   | Ordinary model or builder work, with an in-tree pattern to follow.                                                 |
+|               | Opus 5     | Silent failure mode **and** no in-tree precedent to copy.                                                          |
+| **Context**   | `w / s`    | `w` is the window to run with; `s` is roughly what should be resident — the named plan sections, the files listed, their tests. If a session approaches its `s` figure, it has loaded files it was not asked to touch. |
+
+Size is a budget, not a schedule. It says how much of a session the task consumes, so that two `S`
+tasks can reasonably be merged and an `L` one should not be.
+
+**Why these assignments.** Task 1 is the clearest case of size and reasoning diverging: it moves one
+required field between base classes, which is a handful of lines, but getting it wrong makes
+`amplitude` optional on four existing models — still type-checks, still passes most tests. Hence `M`
+with `high`. There is an in-tree pattern for everything it does, so Sonnet rather than Opus. Task 4
+is checklist work. Everything here fits the 200k standard window with room to spare.
 
 ---
 
