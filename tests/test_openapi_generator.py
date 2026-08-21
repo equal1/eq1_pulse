@@ -111,20 +111,15 @@ def test_experimental_schema_components_are_tagged():
     assert experimental_names, "Expected at least one experimental model to check"
 
     for model_name in experimental_names:
-        component_names = {
-            name for name in schemas if name in {model_name, f"{model_name}-Input", f"{model_name}-Output"}
-        }
-        assert component_names, f"Expected a schema component for experimental model {model_name}"
-        for component_name in component_names:
-            assert schemas[component_name].get("tags") == ["experimental"], (
-                f"{component_name} is generated from an experimental model and should be tagged 'experimental'"
-            )
+        assert model_name in schemas, f"Expected a schema component for experimental model {model_name}"
+        assert schemas[model_name].get("tags") == ["experimental"], (
+            f"{model_name} is generated from an experimental model and should be tagged 'experimental'"
+        )
 
     for name, component_schema in schemas.items():
         if "tags" not in component_schema:
             continue
-        model_name = name.removesuffix("-Input").removesuffix("-Output")
-        assert model_name in experimental_names, f"{name} should not carry the 'experimental' tag"
+        assert name in experimental_names, f"{name} should not carry the 'experimental' tag"
 
 
 def test_save_openapi_schema_yaml():
@@ -222,47 +217,50 @@ def generated_schemas():
 
 
 def test_wrapped_models_are_not_described_by_their_internal_shape(generated_schemas):
-    """A wrapped value model must not appear as ``{"value": ...}``; that form is never accepted.
+    """A quantity appears as its unit union, once -- not as ``{"value": ...}``, not twice.
 
-    This is the regression guard for customising the schema via ``__get_pydantic_json_schema__``
-    rather than by overriding ``model_json_schema()``: the latter is bypassed for nested models,
-    so the generated document described the internal representation instead of the wire form.
+    The wrapping used to be hand-rolled, and the schema hand-corrected to match. Both are gone:
+    a quantity is a :class:`~pydantic.RootModel` over its unit union, so the published schema is
+    that union. It is also the *same* union in both modes, which is why these have no
+    ``-Input``/``-Output`` split left to have.
     """
     for name in ("Duration", "Amplitude", "Frequency"):
-        schema = generated_schemas[f"{name}-Input"]
+        schema = generated_schemas[name]
         assert "properties" not in schema, f"{name} is described by its internal object shape"
-        assert "anyOf" in schema, f"{name} should offer its accepted input forms"
+        assert "oneOf" in schema, f"{name} should offer its unit alternatives"
+        assert f"{name}-Input" not in generated_schemas, f"{name} still differs between modes"
 
 
-def test_unit_models_accept_the_suffixed_string_form(generated_schemas):
-    """``Seconds`` and friends accept ``"10s"`` as well as ``{"s": 10}``; both must be advertised."""
-    schema = generated_schemas["Seconds-Input"]
-    branches = schema["anyOf"]
-    assert any(branch.get("type") == "object" for branch in branches), "the object form is missing"
-    assert any(branch.get("type") == "string" for branch in branches), "the string form is missing"
+def test_unit_models_publish_only_the_object_form(generated_schemas):
+    """``Seconds`` is ``{"s": 10}`` and nothing else; ``"10s"`` is not a wire form.
 
-
-def test_bare_references_advertise_the_bare_form(generated_schemas):
-    """A reference serializes bare, so the generated schema must accept the bare form."""
-    for name in ("VariableRef", "ChannelRef", "PulseRef"):
-        branches = generated_schemas[f"{name}-Input"]["anyOf"]
-        assert len(branches) == 2, f"{name} should accept the bare value and the object form"
-        assert any("$ref" in branch for branch in branches), f"{name} does not advertise the bare form"
-
-
-def test_external_ref_stays_an_object(generated_schemas):
-    """``ExternalRef`` keeps the wrapped form; a bare string is always a variable reference.
-
-    True on both sides: validation still describes only the object form (a bare string is accepted
-    at the constructor for ergonomics, per :meth:`~eq1_pulse.models.reference_types.Reference.
-    __get_pydantic_json_schema__`'s docstring, but not advertised), and serialization never
-    produces anything else.
+    The suffixed string used to be accepted here and advertised as a second, validation-only
+    branch. It is now read only where it is authored -- ``Duration.parse("10s")`` and the
+    quantity constructors -- so the schema has one branch, in both modes.
     """
-    for suffix in ("-Input", "-Output"):
-        schema = generated_schemas[f"ExternalRef{suffix}"]
+    schema = generated_schemas["Seconds"]
+    assert schema["type"] == "object"
+    assert set(schema["properties"]) == {"s"}
+    assert "Seconds-Input" not in generated_schemas
+
+
+def test_tagged_references_publish_one_object_definition(generated_schemas):
+    """A tagged reference is its object, in both directions, so it needs no ``-Input``/``-Output`` split."""
+    for name, tag in (("VariableRef", "var"), ("ExternalRef", "ext"), ("PulseRef", "pulse_name")):
+        schema = generated_schemas[name]
         assert schema["type"] == "object"
-        assert "ext" in schema["properties"]
+        assert tag in schema["properties"]
         assert "anyOf" not in schema
+        assert f"{name}-Input" not in generated_schemas, f"{name} still differs between modes"
+
+
+def test_a_channel_publishes_the_bare_name_and_its_external_alternative(generated_schemas):
+    """``ChannelRef`` is the channel name itself; a channel field offers it or an ``ExternalRef``."""
+    assert generated_schemas["ChannelRef"]["$ref"].endswith("IdentifierStr")
+    assert "ChannelRef-Input" not in generated_schemas
+
+    branches = generated_schemas["ChannelTarget"]["oneOf"]
+    assert [branch["$ref"].rsplit("/", 1)[-1] for branch in branches] == ["ChannelRef", "ExternalRef"]
 
 
 def test_symbol_declarations_are_in_the_schema(generated_schemas):
@@ -273,22 +271,34 @@ def test_symbol_declarations_are_in_the_schema(generated_schemas):
     its own.
     """
     for name in ("ValueLimits", "ParameterDecl", "ExternalDecl"):
-        matches = [key for key in generated_schemas if key.removesuffix("-Input").removesuffix("-Output") == name]
-        assert matches, f"{name} should be present in components.schemas"
+        assert name in generated_schemas, f"{name} should be present in components.schemas"
 
-    assert not any(
-        key.removesuffix("-Input").removesuffix("-Output") == "SymbolDeclBase" for key in generated_schemas
-    ), "SymbolDeclBase should not be published"
+    assert "SymbolDeclBase" not in generated_schemas, "SymbolDeclBase should not be published"
 
 
 def test_variable_decl_schema_is_unchanged(generated_schemas):
     """Check that ``VariableDecl``'s schema survives its refactor onto ``SymbolDeclBase``.
 
     That base class was introduced for ``ParameterDecl``/``ExternalDecl`` to share; it must not
-    change what ``VariableDecl`` itself publishes.
+    change what ``VariableDecl`` itself publishes -- which is the nested wire object: the sole
+    ``var_decl`` key names the operation and the payload under it is the closed record of its real
+    fields, ``op_type`` no longer among them.
     """
-    schema = generated_schemas["VariableDecl-Input"]
-    assert set(schema["properties"]) == {"op_type", "dtype", "shape", "unit", "name"}
+    schema = generated_schemas["VariableDecl"]
+    assert set(schema["properties"]) == {"var_decl"}
+    assert set(schema["properties"]["var_decl"]["properties"]) == {"dtype", "shape", "unit", "name"}
+
+
+def test_no_component_schema_has_an_input_output_suffix(generated_schemas):
+    """``components.schemas`` has no ``-Input``/``-Output`` names.
+
+    ``models_json_schema()`` only splits a model into ``<Model>-Input``/``<Model>-Output`` when its
+    validation and serialization schemas disagree; the schema-symmetry invariant
+    (:func:`tests.eq1lab_pulse.models.test_schema_symmetry`) means that never happens.
+    """
+    for name in generated_schemas:
+        assert not name.endswith("-Input"), f"{name} should not need an -Input split"
+        assert not name.endswith("-Output"), f"{name} should not need an -Output split"
 
 
 def test_generated_schema_agrees_with_the_direct_call():
@@ -300,37 +310,33 @@ def test_generated_schema_agrees_with_the_direct_call():
     from eq1_pulse.models.basic_types import Duration
 
     direct = Duration.model_json_schema()
-    generated = generate_openapi_schema()["components"]["schemas"]["Duration-Input"]
+    generated = generate_openapi_schema()["components"]["schemas"]["Duration"]
 
     def ref_names(schema):
-        # The direct, single-model call never needs to disambiguate input from output, so its refs
-        # are unsuffixed ("Seconds"); the batch call generates both modes for every model, so a ref
-        # to a type that itself differs between modes is suffixed ("Seconds-Input"). That naming
-        # difference is expected and orthogonal to what this test guards -- strip it before comparing.
-        return [
-            branch["$ref"].rsplit("/", 1)[-1].removesuffix("-Input").removesuffix("-Output")
-            for branch in schema["anyOf"]
-            if "$ref" in branch
-        ]
+        return [branch["$ref"].rsplit("/", 1)[-1] for branch in schema["oneOf"] if "$ref" in branch]
 
-    assert ref_names(direct) == ref_names(generated)
-    assert direct["anyOf"][0] == generated["anyOf"][0] == {"const": 0, "type": "integer"}
+    assert ref_names(direct) == ref_names(generated) == ["Seconds", "Milliseconds", "Microseconds", "Nanoseconds"]
 
 
 def test_serialization_mode_schema_is_no_longer_empty():
     """``mode="serialization"`` used to raise ``KeyError``, then to collapse to ``{}``.
 
-    ``__get_pydantic_json_schema__`` now rebuilds it from the field annotations (see
-    :func:`eq1_pulse.models.base_models.field_json_schemas`), independent of the plain
-    ``@model_serializer``'s undeclared return type.
+    :meth:`~eq1_pulse.models.base_models.LeanModel.__get_pydantic_json_schema__` now rebuilds it
+    from the field annotations, independent of the plain ``@model_serializer``'s undeclared return
+    type. (The reference types this used to be checked on no longer need the fix at all: since
+    task 5 they carry no model serializer to defeat the default schema.)
     """
-    from eq1_pulse.models.reference_types import VariableRef
+    from eq1_pulse.models.channel_ops import Wait
 
-    assert VariableRef.model_json_schema(mode="serialization") == {"type": "string"}
+    schema = Wait.model_json_schema(mode="serialization")
+    assert schema["type"] == "object"
+    assert set(schema["properties"]) == {"wait"}
+    assert set(schema["properties"]["wait"]["properties"]) == set(Wait.model_fields) - {"op_type"}
 
 
 def test_serialized_models_validate_against_the_generated_schema():
     """What the models emit must validate against the *output* schema the generator publishes."""
+    from eq1_pulse.models.basic_types import Amplitude, Duration
     from eq1_pulse.models.channel_ops import Play, Wait
     from eq1_pulse.models.external_block import ExternalBlock
     from eq1_pulse.models.pulse_types import ExternalPulse
@@ -340,14 +346,14 @@ def test_serialized_models_validate_against_the_generated_schema():
         json.dumps(generate_openapi_schema()["components"]["schemas"]).replace("#/components/schemas/", "#/$defs/")
     )
     models = [
-        (Play(channel="ch1", pulse="p1"), "Play"),
-        (Wait(channels=["ch1"], duration="10us"), "Wait"),
+        (Play(channel="ch1", pulse=PulseRef("p1")), "Play"),
+        (Wait(channels=["ch1"], duration=Duration("10us")), "Wait"),
         (Wait(channels=["ch1"], duration={"ns": 100}), "Wait"),
         (
             ExternalPulse(
                 function="eq1.pulses.drag",
-                duration="10us",
-                amplitude="100mV",
+                duration=Duration("10us"),
+                amplitude=Amplitude("100mV"),
                 params={
                     "detuning": "5GHz",
                     "phase_offset": 0.5 - 0.25j,
@@ -363,12 +369,67 @@ def test_serialized_models_validate_against_the_generated_schema():
                 channels={"readout": "ch1"},
                 params={"template": PulseRef(pulse_name="template")},
                 results={"outcome": VariableRef(var="result")},
-                duration="10us",
+                duration=Duration("10us"),
             ),
             "ExternalBlock",
         ),
     ]
     for model, name in models:
         document = json.loads(model.model_dump_json())
-        output_schema = schemas[f"{name}-Output"]
+        output_schema = schemas[name]
         jsonschema.validate(document, {"$defs": schemas, **output_schema})
+
+
+def test_serialized_opsequence_validates_against_the_generated_schema():
+    """The top-level program container must validate against its own published schema too.
+
+    ``test_serialized_models_validate_against_the_generated_schema`` above checks five individual
+    operation and pulse models and never :class:`~eq1_pulse.models.sequence.OpSequence`, which is
+    how the defect this guards survived the last pass over this area: the container serialized to
+    a bare JSON array while its schema described a ``{"items": [...]}`` object.
+    """
+    from eq1_pulse.builder import build_sequence, play, wait
+    from eq1_pulse.models.sequence import OpSequence
+
+    with build_sequence() as seq:
+        wait("ch1", duration="10us")
+        play("ch1", "p1")
+
+    document = json.loads(seq.model_dump_json())
+    jsonschema.validate(document, OpSequence.model_json_schema())
+
+
+def test_step_and_trigger_pulses_and_wait_for_trigger_are_in_the_schema(generated_schemas):
+    """``StepPulse``, ``DigitalTriggerPulse`` and ``WaitForTrigger`` are published; ``AnalogPulseBase`` is not.
+
+    ``AnalogPulseBase`` exists only to factor ``amplitude`` out for the pulses that carry one; it
+    is excluded the same way ``PulseBase`` and ``OpBase`` are.
+    """
+    for name in ("StepPulse", "DigitalTriggerPulse", "WaitForTrigger"):
+        assert name in generated_schemas, f"{name} should be present in components.schemas"
+
+    assert "AnalogPulseBase" not in generated_schemas, "AnalogPulseBase should not be published"
+
+
+def test_expression_models_are_in_the_schema(generated_schemas):
+    """The eight expression node types are published; their base class is not.
+
+    ``ExprBase`` is excluded the same way ``PulseBase`` and ``OpBase`` are -- it serves only
+    as a common base and is never referenced by a discriminated union or output directly.
+    """
+    expression_node_names = {
+        "LiteralExpr",
+        "SymbolExpr",
+        "UnaryExpr",
+        "BinaryExpr",
+        "CompareExpr",
+        "NotExpr",
+        "LogicalExpr",
+        "CallExpr",
+    }
+
+    for name in expression_node_names:
+        assert name in generated_schemas, f"{name} should be present in components.schemas"
+
+    assert "Expression" in generated_schemas, "Expression discriminated union should be present"
+    assert "ExprBase" not in generated_schemas, "ExprBase should not be published"

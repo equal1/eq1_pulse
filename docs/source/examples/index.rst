@@ -11,6 +11,7 @@ This section provides practical examples of using the eq1_pulse library for comm
    builder_examples
    sub_sequence_examples
    external_block_examples
+   expression_examples
    spin_qubit_rabi
    spin_qubit_t2star
 
@@ -45,6 +46,10 @@ Complete examples of builder patterns and features:
 **External Block Examples** (:doc:`external_block_examples`)
     Reserving channels for opaque, externally defined operations.
 
+**Expression Examples** (:doc:`expression_examples`)
+    Computed values built from variables and external constants with ``expr()`` -- arithmetic,
+    comparison, logical connectives, function calls, and the expression wire format.
+
 .. note::
 
    Explicitly-timed schedules (``build_schedule()``) are an unused, experimental API pending
@@ -72,6 +77,7 @@ All example scripts are located in the ``examples/`` directory of the repository
     python examples/builder_example.py
     python examples/sub_sequence_example.py
     python examples/external_block_example.py
+    python examples/expression_ramsey.py
     python examples/spin_qubit_rabi.py
     python examples/spin_qubit_t2star.py
 
@@ -97,9 +103,10 @@ When you run an example, you'll see output like:
     Created sequence with 1 operations
     [
       {
-        "op_type": "for",
-        "var": "amp",
-        ...
+        "for": {
+          "var": "amp",
+          ...
+        }
       }
     ]
 
@@ -124,14 +131,15 @@ A sequence contains an ordered list of operations.
 .. code-block:: json
 
     {
-      "op_type": "for",
-      "var": "amp",
-      "items": {
-        "start": 0,
-        "stop": 100,
-        "num": 50
-      },
-      "body": { /*...*/ }
+      "for": {
+        "var": "amp",
+        "items": {
+          "start": 0,
+          "stop": 100,
+          "num": 50
+        },
+        "body": [ /*...*/ ]
+      }
     }
 
 Loops sweep over parameter ranges.
@@ -141,12 +149,13 @@ Loops sweep over parameter ranges.
 .. code-block:: json
 
     {
-      "op_type": "play",
-      "channel": "qubit",
-      "pulse": {
-        "pulse_type": "square",
-        "duration": {"ns": 100},
-        "amplitude": {"V": [0.05, 0]}
+      "play": {
+        "channel": "qubit",
+        "pulse": {
+          "pulse_type": "square",
+          "duration": {"ns": 100},
+          "amplitude": {"mV": 50}
+        }
       }
     }
 

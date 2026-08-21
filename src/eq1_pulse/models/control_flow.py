@@ -1,108 +1,71 @@
 """Base models for control flow operations."""
 
-from collections.abc import Iterable, Mapping
-from typing import TYPE_CHECKING, Annotated, Any, Literal, Self, overload
+from __future__ import annotations
+
+from collections.abc import Iterable
+from typing import Annotated, Literal, Self
 
 from pydantic import (
     ConfigDict,
     Field,
-    model_serializer,
+    RootModel,
     model_validator,
 )
 
-from .base_models import NoExtrasModel
 from .basic_types import LinSpace, OpBase, Range
 from .nd_array import NumpyComplexArray1D, NumpyFloatArray1D, NumpyIntArray1D
-from .reference_types import SymbolRef, VariableRef
+from .reference_types import ExternalRef, VariableRef, VarName
 
 __all__ = "ConditionalBase", "IterationBase", "RepetitionBase"
 
 
-class SequenceBase[ItemT](NoExtrasModel):
-    """Base class for sequence of items that can be serialized as a list.
+class SequenceBase[ItemT](RootModel[list[ItemT]]):
+    """Base class for a sequence of items, whose wire form is the JSON array itself.
 
-    This class represents an ordered collection of operation sequence items that
-    will be serialized as a list when converted to JSON or other formats.
+    A nested sequence is recognised by *being* an array, not by carrying an ``items`` key, so
+    sequences compose with the operation types they sit beside without either having to be
+    disambiguated from the other.
 
     :ivar items: List of operation sequence items
     """
 
-    items: list[ItemT]
-    """List of operation sequence items."""
+    root: list[ItemT]
+    """The operation sequence items."""
+
+    @property
+    def items(self) -> list[ItemT]:
+        """The operation sequence items.
+
+        The list itself, not a copy: appending to it appends to the sequence, which is how the
+        builder grows the sequence it is filling.
+        """
+        return self.root
 
     def __len__(self):
-        return len(self.items)
+        return len(self.root)
 
     def __getitem__(self, key: int) -> ItemT:
-        return self.items[key]
+        return self.root[key]
 
-    @overload
-    def __init__(self, items: Iterable[ItemT], **data): ...
+    def __init__(self, items: Iterable[ItemT] = (), /, **data):
+        """Initialize a sequence with its items.
 
-    @overload
-    def __init__(self, **data): ...
-
-    def __init__(self, *args, **data):
-        """Initialize a seuence with sequence items.
-
-        :param items: An iterable of operation sequence items
-        :param data: Additional keyword arguments for Model initialization
+        :param items: An iterable of sequence items, positional-only; empty by default.
+        :param data: Never passed by a caller. ``items`` being positional-only makes a keyword
+            argument here wire data instead: pydantic routes a *mapping* input through a custom
+            ``__init__`` even on a root model, and a mapping is not a sequence's wire form, so it
+            goes to root validation to be reported as the error it is.
         """
-        match len(args):
-            case 0:
-                pass
-            case 1:
-                if "items" in data:
-                    raise TypeError("duplicate argument 'items'")
-                data["items"] = list(args[0])
-            case n:
-                raise TypeError(f"Expected 0 or 1 positional arguments, got {n}")
-
-        super().__init__(**data)
-
-    @model_validator(mode="before")
-    @classmethod
-    def _wrap_validator(cls, data: Any) -> Any:
-        if isinstance(data, Mapping):
-            # This artifact is required to allow recursive containment of sequences within sequences.
-            if "items" not in data:
-                # The pydantic engine will enter here to try to validate other data
-                # as a sequence. It will fail and continue to match other types.
-                # Caveat: if alternative types have an "items" field, they will be accepted here instead.
-                raise ValueError("items field is required")
-            return data
-        if isinstance(data, list):
-            return {"items": data}
-
-        raise ValueError("Invalid data type")
-
-    @model_serializer
-    def _wrap_serializer(self) -> Any:
-        return self.items
-
-    if TYPE_CHECKING:
-
-        def model_dump(  # type: ignore[override]
-            self,
-            *,
-            mode="python",
-            include=None,
-            exclude=None,
-            context=None,
-            by_alias=False,
-            exclude_unset=False,
-            exclude_defaults=False,
-            exclude_none=False,
-            round_trip=False,
-            warnings=True,
-            serialize_as_any=False,
-        ) -> list[dict[str, Any]]: ...
+        if data:
+            super().__init__(**data)
+        else:
+            super().__init__(list(items))
 
 
 class RepetitionBase[BodyT](OpBase):
     """Represents an abstract repeated sequence of operations.
 
-    :ivar op_type: Operation type, always "repeat"
+    :ivar op_type: Operation type, always "repeat" -- the sole key of its wire object
     :ivar count: Number of times to repeat the sequence
     :ivar body: The sequence of operations to repeat
 
@@ -111,7 +74,7 @@ class RepetitionBase[BodyT](OpBase):
 
     op_type: Literal["repeat"] = "repeat"
     """The type discriminator, always "repeat"."""
-    count: Annotated[int, Field(ge=0)] | SymbolRef
+    count: Annotated[int, Field(ge=0)] | ValueRef
     """Number of times to repeat the sequence.
 
     The literal branch keeps its ``ge=0`` constraint; there is nothing to constrain on the symbol
@@ -128,7 +91,7 @@ type IterableSequence = LinSpace | Range | list[str] | NumpyIterableArray
 class IterationBase[BodyT](OpBase):
     """Base class for iteration over a sequence of operations.
 
-    :ivar op_type: Operation type, always "for"
+    :ivar op_type: Operation type, always "for" -- the sole key of its wire object
     :ivar var: The variable reference for the iterated value.
     :ivar items: The linear space, range or array over which to iterate.
     :ivar body: The sequence of operations to execute in each iteration
@@ -136,7 +99,7 @@ class IterationBase[BodyT](OpBase):
 
     op_type: Literal["for"] = "for"
     """The discriminator field for the operation type. Always "for"."""
-    var: list[VariableRef] | VariableRef
+    var: list[VarName] | VarName
     """The variable reference(s) for the iterated value(s).
 
     It can be a single variable reference or a list of variable references
@@ -174,14 +137,38 @@ class IterationBase[BodyT](OpBase):
 class ConditionalBase[BodyT](OpBase):
     """Base class for conditional sequence of operations.
 
-    :ivar op_type: Operation type, always "if"
-    :ivar var: The variable reference for the condition.
+    :ivar op_type: Operation type, always "if" -- the sole key of its wire object
+    :ivar var: The predicate for the condition: a symbol, a comparison, or a boolean connective.
     :ivar body: The sequence of operations to execute if the condition is met
     """
 
     op_type: Literal["if"] = "if"
     """The type discriminator, always "if"."""
-    var: SymbolRef
-    """The variable reference for the condition."""
+    var: ValueRef
+    """The predicate for the condition.
+
+    Typed as :data:`~.expressions.ValueRef` like every other widened field, but restricted by
+    :meth:`_validate_predicate` to what is actually a predicate: a symbol, a comparison, or a
+    boolean connective. An arithmetic node types the same as the rest of the union but is not a
+    condition, so it is rejected here instead of at the framework that would otherwise have to
+    reject it after the fact.
+    """
     body: BodyT
     """The sequence of operations to execute if the condition is met."""
+
+    @model_validator(mode="after")
+    def _validate_predicate(self) -> Self:
+        if isinstance(self.var, VariableRef | ExternalRef | CompareExpr | NotExpr | LogicalExpr):
+            return self
+        raise ValueError(
+            f"if_(): {self.var!r} is not a predicate -- expected a symbol reference, a comparison, "
+            "or a boolean connective, not an arithmetic expression"
+        )
+
+
+# Deferred: this module is reachable (via `data_ops` -> `pulse_types`) before `expressions` has
+# finished defining `ValueRef`, so importing it at the top would recurse back through that edge.
+from .expressions import CompareExpr, LogicalExpr, NotExpr, ValueRef  # noqa: E402
+
+RepetitionBase.model_rebuild()
+ConditionalBase.model_rebuild()

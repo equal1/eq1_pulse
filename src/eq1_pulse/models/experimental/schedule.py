@@ -16,16 +16,15 @@ from collections.abc import Iterable
 from enum import StrEnum
 from typing import TYPE_CHECKING, Annotated, ClassVar, Literal, TypedDict, Unpack, overload
 
-from pydantic import ConfigDict, Discriminator, PlainSerializer
-
 from ..base_models import FrozenModel, LeanModel
-from ..basic_types import Time
+from ..basic_types import OperationDiscriminator, Time
 from ..channel_ops import ChannelOp
 from ..control_flow import ConditionalBase, IterationBase, RepetitionBase, SequenceBase
 from ..data_ops import DataOp
 
 if TYPE_CHECKING:
     from ..basic_types import LinSpaceLike, RangeLike, TimeDict
+    from ..expressions import ValueRefLike
     from ..nd_array import NumpyArrayLike
     from ..reference_types import VariableRefLike
 
@@ -48,7 +47,7 @@ class RelTime(Time):
     if TYPE_CHECKING:
 
         @overload
-        def __init__(self, _: Literal[0], /): ...
+        def __init__(self, _: Literal[0] | str, /): ...
 
         @overload
         def __init__(self, /, *, s: float): ...
@@ -77,12 +76,17 @@ class RefPt(StrEnum):
 
 
 type DiscriminableSchedulableOp = Annotated[
-    ChannelOp | DataOp | SchedRepetition | SchedIteration | SchedConditional, Discriminator("op_type")
+    ChannelOp | DataOp | SchedRepetition | SchedIteration | SchedConditional, OperationDiscriminator()
 ]
-"""Schedulable operations that can be discriminated by the "op" field."""
+"""Every schedulable operation, selected by the sole key of its ``{op_type: payload}`` wire object."""
 
 type Schedulable = DiscriminableSchedulableOp | Schedule
-"""A type representing a scheduled operation or a sub-schedule."""
+"""A scheduled operation or a sub-schedule.
+
+Told apart by JSON type, as :data:`~.sequence.OpSequenceItem`'s two members are: an operation is a
+single-key object and a sub-schedule is an array, so :func:`~.basic_types.op_tag_of` reports no tag
+for the array and this plain union falls through to :class:`Schedule`.
+"""
 
 if TYPE_CHECKING:
     type RelTimeLike = RelTime | Literal[0] | TimeDict | str
@@ -105,9 +109,9 @@ class ScheduledOperation(LeanModel, FrozenModel):
     """Relative time from the reference point."""
     ref_op: str | None = None
     """Name of the reference operation."""
-    ref_pt: Annotated[RefPt, PlainSerializer(str)] | None = None
+    ref_pt: RefPt | None = None
     """Reference point on the reference operation."""
-    ref_pt_new: Annotated[RefPt, PlainSerializer(str)] | None = None
+    ref_pt_new: RefPt | None = None
     """Reference point on the new operation."""
 
     op: Schedulable
@@ -123,8 +127,10 @@ class Schedule(SequenceBase[ScheduledOperation]):
     # Lets eq1_pulse.builder._state detect context kind without importing this class.
     _context_kind: ClassVar[Literal["schedule"]] = "schedule"
 
-    def __init__(self, items: Iterable[ScheduledOperation] = (), **data):  # noqa: D107
-        super().__init__(items=items, **data)
+    if TYPE_CHECKING:  # mypy food: see the same restatement on OpSequence
+        root: list[ScheduledOperation]
+
+        def __init__(self, items: Iterable[ScheduledOperation] = (), /, **data): ...  # noqa: D107
 
     def add_op(self, op: Schedulable, **data: Unpack[OpScheduleDict]) -> ScheduledOperation:
         """Add a scheduled operation to the schedule.
@@ -161,8 +167,6 @@ class Schedule(SequenceBase[ScheduledOperation]):
         """
         return ScheduledOperation(op=op, **data)
 
-    model_config = ConfigDict(extra="forbid")
-
 
 if TYPE_CHECKING:
     type ScheduleLike = Schedule | Iterable[ScheduledOperation]
@@ -175,7 +179,7 @@ class SchedRepetition(RepetitionBase[Schedule]):
 
     if TYPE_CHECKING:
 
-        def __init__(self, /, *, count: int, body: ScheduleLike, **data):  # noqa: D107
+        def __init__(self, /, *, count: int | ValueRefLike, body: ScheduleLike, **data):  # noqa: D107
             ...
 
 
@@ -208,5 +212,5 @@ class SchedConditional(ConditionalBase[Schedule]):
 
     if TYPE_CHECKING:
 
-        def __init__(self, /, *, var: VariableRefLike, body: ScheduleLike, **data):  # noqa: D107
+        def __init__(self, /, *, var: ValueRefLike, body: ScheduleLike, **data):  # noqa: D107
             ...

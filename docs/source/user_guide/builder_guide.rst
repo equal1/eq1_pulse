@@ -17,6 +17,105 @@ Import the builder functions:
 
     from eq1_pulse.builder import *
 
+The Builder vs. the Model
+--------------------------
+
+The builder takes what you mean; the model takes what the wire says.
+
+``play("qubit", square_pulse(duration="10us", amplitude="100mV"))`` accepts a channel name as a
+bare string, a duration as a unit-suffixed string, and an amplitude the same way. Of these, only the
+channel string is a wire form: :class:`~eq1_pulse.models.channel_ops.Play` is typed to accept a bare
+string directly, because that *is* the canonical spelling of a channel reference. The duration and
+amplitude strings are not -- ``"10us"``/``"100mV"`` are authoring conveniences the builder resolves
+into the canonical unit objects (``{"us": 10}``, ``{"mV": 100}``) before constructing anything, and
+``model_validate`` never accepts them.
+
+.. code-block:: python
+
+    from eq1_pulse.builder import build_sequence, play, square_pulse
+    from eq1_pulse.models.sequence import OpSequence
+
+    with build_sequence() as seq:
+        play("qubit", square_pulse(duration="10us", amplitude="100mV"))
+
+    # The builder produced this canonical JSON document -- durations and amplitudes as unit
+    # objects, the channel as its bare name -- not the "10us" / "100mV" strings that were written:
+    document = seq.model_dump_json(indent=2)
+    print(document)
+
+    # Anything that produces this same document, from any source, re-reads into an identical
+    # sequence: model_validate() never sees or accepts the authoring strings, only the wire form.
+    assert OpSequence.model_validate_json(document) == seq
+
+This is why a model's `*Like` type aliases (:data:`~eq1_pulse.models.basic_types.DurationLike`,
+:data:`~eq1_pulse.models.reference_types.ChannelRefLike`, ...) exist only in the builder's function
+signatures, under ``TYPE_CHECKING``: they describe what a *constructor call* accepts, not what
+``model_validate`` accepts from the wire.
+
+Wire format
+-----------
+
+Two conventions coexist in the wire form, and code that builds or reads a document by hand needs to
+know which one applies where.
+
+**Operations nest.** Every operation serializes as a single-key object whose sole key names the
+operation, e.g. :class:`~eq1_pulse.models.channel_ops.Play`:
+
+.. code-block:: json
+
+    {
+      "play": {
+        "channel": "qubit",
+        "pulse": {
+          "pulse_type": "square",
+          "duration": {"ns": 100},
+          "amplitude": {"mV": 50}
+        }
+      }
+    }
+
+**Pulses and integrations stay flat.** :obj:`~eq1_pulse.models.pulse_types.PulseType` and the
+integration types keep their discriminator field (``pulse_type`` / ``integration_type``) inline
+alongside their other fields instead of nesting under a key:
+
+.. code-block:: json
+
+    {"pulse_type": "square", "duration": {"ns": 100}, "amplitude": {"mV": 50}}
+
+.. code-block:: json
+
+    {"integration_type": "full"}
+
+**Expression operator nodes nest, with the operator under** ``op``. A
+:class:`~eq1_pulse.models.expressions.BinaryExpr` and its sibling operator nodes serialize the same
+way operations do -- keyed by field name -- with the operator symbol carried in an ``op`` field:
+
+.. code-block:: json
+
+    {"binary_op": {"op": "+", "lhs": {"...": "..."}, "rhs": {"...": "..."}}}
+
+``LiteralExpr`` and ``SymbolExpr`` do not opt into this nesting and keep their flat form.
+
+**A bare variable name stays bare.** Fields typed :obj:`~eq1_pulse.models.reference_types.VarName`
+-- ``Discriminate.target``/``source``, ``Record.var``, ``IterationBase.var`` among them -- hold the
+identifier directly:
+
+.. code-block:: json
+
+    {"for": {"var": "amp", "items": {"...": "..."}, "body": ["..."]}}
+
+Everywhere else a variable reference appears in a union position alongside a literal value or an
+external reference -- for example a pulse's ``amplitude`` -- it is a
+:class:`~eq1_pulse.models.reference_types.VariableRef` and keeps its own tag:
+
+.. code-block:: json
+
+    {"amplitude": {"var": "amp"}}
+
+The field name and the tag both happen to read ``var`` here, which is exactly the case to watch for:
+``"var": "amp"`` (bare, field is ``VarName``) and ``{"var": "amp"}`` (tagged, field holds a
+``VariableRef``) are not interchangeable, and only one is valid at a given field.
+
 Building Sequences
 -------------------
 
@@ -148,6 +247,40 @@ Example:
     # After barrier, these start at the same time
     play("drive", pulse1)
     play("readout", pulse2)
+
+Wait for Trigger
+~~~~~~~~~~~~~~~~
+
+The ``wait_for_trigger()`` function blocks a channel's own timeline until a digital trigger line
+goes high:
+
+.. code-block:: python
+
+    wait_for_trigger(channel)
+
+The channel must be a digital input line -- nothing in the model enforces this, it is a property
+of the target's hardware configuration. This is **not** a barrier: it blocks only the channel it
+is called on, and other channels continue independently. To make several channels wait on one
+trigger, combine ``barrier()`` with a ``wait_for_trigger()`` on each:
+
+.. code-block:: python
+
+    barrier("ch1", "ch2")
+    wait_for_trigger("ch1")
+    wait_for_trigger("ch2")
+
+Example:
+
+.. code-block:: python
+
+    from eq1_pulse.builder import *
+
+    with build_sequence():
+        # Tell external instrumentation to start, then block until it acknowledges.
+        play("trig_out", trigger_pulse(duration="100ns"))
+        wait_for_trigger("trig_in")
+
+        play("q0_drive", square_pulse(duration="25ns", amplitude="80mV"))
 
 Pulse Shapes
 ------------
@@ -323,6 +456,54 @@ Example:
         time_points=[0.0, 0.2, 0.8, 1.0]  # Normalized time points
     )
 
+Step Pulse
+~~~~~~~~~~
+
+Steps the channel to a new amplitude and leaves it there:
+
+.. code-block:: python
+
+    step_pulse(*, duration, amplitude)
+
+The amplitude is reached instantaneously at the start -- there is no ramp. Unlike every other
+pulse, the level does **not** return to the previous base level afterwards: it persists past the
+end of the pulse and becomes the channel's new base level, which subsequent pulses on that
+channel are relative to. ``duration`` is how long the step occupies the channel, not how long the
+level lasts -- it exists only so the next operation on the channel is correctly ordered after
+this one.
+
+Example:
+
+.. code-block:: python
+
+    from eq1_pulse.builder import *
+
+    # Move the DC bias to a new operating point and leave it there.
+    pulse = step_pulse(duration="1us", amplitude="150mV")
+
+Digital Trigger Pulse
+~~~~~~~~~~~~~~~~~~~~~
+
+Sets a digital trigger line high for a duration, then returns it low:
+
+.. code-block:: python
+
+    trigger_pulse(*, duration)
+
+Unlike the step pulse above, nothing persists past the pulse. It carries no amplitude: it is
+played on a digital output channel, which the target's hardware configuration -- not this model --
+identifies as digital. Pair it with ``wait_for_trigger()`` (see "Wait for Trigger" above) on the
+receiving end.
+
+Example:
+
+.. code-block:: python
+
+    from eq1_pulse.builder import *
+
+    # Tell external instrumentation to start.
+    pulse = trigger_pulse(duration="100ns")
+
 Measurements
 ------------
 
@@ -458,6 +639,27 @@ Example:
     # Use in pulse parameters
     play("qubit", square_pulse(duration="100ns", amplitude=var("amp")))
 
+Assigning Values
+~~~~~~~~~~~~~~~~
+
+``for_``'s loop variable, ``record()``'s ``var`` and ``discriminate()``'s ``target`` each write a
+variable as a side effect of doing something else. Use ``assign()`` to write one directly -- to
+initialize it, or to store the result of a computation:
+
+.. code-block:: python
+
+    assign(target, value)
+
+Example:
+
+.. code-block:: python
+
+    var_decl("count", "int")
+    assign("count", 0)
+
+    var_decl("doubled", "int")
+    assign("doubled", expr(var("count")) * 2)
+
 Late-bound values
 -----------------
 
@@ -498,6 +700,181 @@ the responsibility of whatever submits the program.
             play("q0_drive", square_pulse(duration="25ns", amplitude=ext("q0.pi_amp")))
 
 See ``examples/calibrated_rabi.py`` for a full sequence built from both kinds of late-bound value.
+
+Expressions
+-----------
+
+**Building computed values with expressions**
+
+Expressions allow you to compute values dynamically within a sequence using Python operators.
+Unlike plain values, expressions are recorded and executed at runtime, not evaluated by the
+builder. They are particularly useful for:
+
+* Combining variables and external constants (e.g., detuning relative to a calibrated frequency)
+* Scaling amplitude or duration based on a parameter
+* Encoding conditional logic in predicates
+
+**Why ``expr()`` is required**
+
+The builder reads authoring forms like ``"10us"`` and ``"80mV"`` in function parameters and
+resolves them to canonical unit objects before constructing models. Expressions work differently:
+operators like ``+``, ``*``, and ``<`` are not available on plain values or references because
+they would be evaluated immediately by Python.
+
+Use ``expr()`` to wrap values into an ``Expr`` wrapper, which overloads operators to build an
+expression tree:
+
+.. code-block:: python
+
+    from eq1_pulse.builder import *
+    from eq1_pulse.models import Amplitude
+
+    var_decl("scale", "float", unit="mV")
+    param_decl("detuning", "float", unit="MHz")
+    extern_decl("q0.f01", "float", unit="GHz")
+
+    # Use expr() to build expressions
+    scaled_amplitude = expr(var("scale")) * Amplitude("80mV")
+    detuned_frequency = expr(ext("q0.f01")) + expr(var("detuning"))
+
+    # Use expressions in operations
+    play("drive", square_pulse(duration="25ns", amplitude=scaled_amplitude))
+    set_frequency("drive", detuned_frequency)
+
+**Supported operators**
+
+Arithmetic:
+
+* ``+``, ``-``, ``*``, ``/``, ``%`` — standard arithmetic operations
+* ``abs(expr)`` — absolute value via ``CallExpr(function="abs")``
+* Reflected forms: ``2 * expr(var("a"))`` works as well as ``expr(var("a")) * 2``
+
+Comparison:
+
+* ``<``, ``<=``, ``>``, ``>=`` — produce predicates for use in conditionals
+* ``.eq()``, ``.ne()`` — use these methods instead of ``==`` and ``!=``, which return
+  boolean values (not expressions)
+
+Logical:
+
+* ``.and_()``, ``.or_()``, ``.not_()`` — logical operations; Python keywords ``and``, ``or``,
+  ``not`` cannot be overloaded
+
+Functions:
+
+* ``abs(expr)`` — the one function with its own operator sugar, via Python's own ``abs()``
+* ``call_expr_(function, *operands)`` — every
+  :data:`~eq1_pulse.models.expressions.ExpressionFunction`, including ``abs``, is reachable
+  through this one free function. A free function rather than an ``Expr`` method: a function
+  call has no operand that reads naturally as "self" the way ``+``/``-``/... prefer their left
+  one, so ``call_expr_("min", a, b, c)`` treats its operands symmetrically instead of forcing one
+  of them into a receiver position for no benefit. Not a free ``min()``/``max()``, to avoid
+  shadowing the Python builtins wherever the builder is imported with ``import *``.
+
+.. code-block:: python
+
+    from eq1_pulse.builder import call_expr_, var
+
+    fastest = call_expr_("min", var("a"), var("b"), 0)
+    scaled = call_expr_("sqrt", var("power")) * 2
+
+``CallExpr`` validates the argument count against *function*'s arity -- ``"min"``/``"max"`` need
+at least 2, every other function exactly 1 -- and raises a validation error if it doesn't match.
+
+Example:
+
+.. code-block:: python
+
+    from eq1_pulse.builder import *
+    from eq1_pulse.models import Amplitude
+
+    with build_sequence() as seq:
+        var_decl("amplitude", "float", unit="mV")
+        var_decl("state", "bool")
+
+        # Arithmetic expression
+        pulse = square_pulse(
+            duration="25ns",
+            amplitude=expr(var("amplitude")) * Amplitude("1mV")
+        )
+        play("drive", pulse)
+
+        # Comparison expression in conditional
+        with if_(expr(var("amplitude")) > 50):
+            # amplitude > 50 mV
+            play("readout", square_pulse(duration="1us", amplitude="30mV"))
+
+**What expressions do and don't do**
+
+Expressions are **recorded, never evaluated** by eq1_pulse:
+
+* No type or unit checking — an expression like ``ext("q0.f01") + var("state")`` (adding a
+  frequency and a boolean) is syntactically valid and serializes normally
+* No simplification — ``x + 0`` serializes as a full binary expression, not as ``x``
+* No evaluation — the result of ``expr(var("a")) + 1`` is never computed by the builder
+
+These are the responsibility of the backend that executes the program. The builder's job is to
+record what the user wrote, in a form the backend can consume and evaluate as it chooses
+(eagerly, lazily, symbolically, etc.).
+
+**Authoring forms in expressions**
+
+Like the rest of the builder, expressions read the same authoring forms for quantities. This
+means you can write:
+
+.. code-block:: python
+
+    # String forms work in expressions
+    set_frequency("drive", expr(var("f")) + expr("100MHz"))
+
+    # Amplitude as a literal (enabled by the SymbolValue fix in task 1)
+    play("drive", square_pulse(
+        duration="25ns",
+        amplitude=expr(var("scale")) * Amplitude("80mV")
+    ))
+
+However, bare strings and identifiers like ``"10us"`` and ``"my_var"`` are not wire forms and
+are rejected by models if they escape the builder. They survive as builder conveniences only.
+Expressions route them through the same ``_coerce.py`` grammar the builder does, so ``expr("10us")``
+works, but a deserialized expression will not contain a string — it contains the resolved quantity.
+
+See :doc:`/examples/expression_examples` for worked examples of every operator and function, the
+full wire-format reference, and ``examples/expression_ramsey.py``, a complete Ramsey experiment
+using expressions.
+
+What an expression looks like on the wire
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+On the wire, each expression node carries exactly one key naming what it is, and that key's value
+holds the node's data. For the five operator nodes (``unary_op``, ``binary_op``, ``compare_op``,
+``not_op``, ``logical_op``), the key names the node's arity/result kind, and the operator symbol
+itself is nested inside under ``op`` -- the same nesting the "Wire format" section above
+introduces for expression operator nodes:
+
+.. code-block:: json
+
+    {
+      "binary_op": {
+        "op": "*",
+        "lhs": {
+          "symbol": {
+            "var": "scale"
+          }
+        },
+        "rhs": {
+          "value": {
+            "mV": 80
+          }
+        }
+      }
+    }
+
+This is the wire form of ``expr(var("scale")) * Amplitude("80mV")``: a binary multiplication of a
+symbol and a voltage literal. ``LiteralExpr`` and ``SymbolExpr`` stay flat (``{"value": ...}``,
+``{"symbol": ...}``); ``CallExpr`` nests the same way as the operator nodes but under
+``function``/``name`` instead of an ``op`` field, e.g. ``{"function": {"name": "sqrt", "args": [...]}}``.
+No discriminator field is needed -- the presence of ``binary_op``, ``compare_op``, ``logical_op``,
+``not_op``, ``unary_op``, ``symbol``, ``value``, or ``function`` is itself the discriminator.
 
 Control Flow
 ------------
@@ -750,90 +1127,102 @@ JSON Output
 
     [
       {
-        "op_type": "var_decl",
-        "name": "amp",
-        "dtype": "float",
-        "unit": "mV"
+        "var_decl": {
+          "dtype": "float",
+          "unit": "mV",
+          "name": "amp"
+        }
       },
       {
-        "op_type": "var_decl",
-        "name": "raw",
-        "dtype": "complex",
-        "unit": "mV"
+        "var_decl": {
+          "dtype": "complex",
+          "unit": "mV",
+          "name": "raw"
+        }
       },
       {
-        "op_type": "var_decl",
-        "name": "state",
-        "dtype": "bool"
+        "var_decl": {
+          "dtype": "bool",
+          "name": "state"
+        }
       },
       {
-        "op_type": "for",
-        "var": "amp",
-        "items": {
-          "start": 0.0,
-          "stop": 100.0,
-          "num": 50
-        },
-        "body": [
-          {
-            "op_type": "play",
-            "channel": "qubit",
-            "pulse": {
-              "pulse_type": "square",
-              "duration": {
-                "ns": 100
-              },
-              "amplitude": "amp"
-            }
+        "for": {
+          "var": "amp",
+          "items": {
+            "start": 0.0,
+            "stop": 100.0,
+            "num": 50
           },
-          {
-            "op_type": "play",
-            "channel": "readout",
-            "pulse": {
-              "pulse_type": "square",
-              "duration": {
-                "us": 1
-              },
-              "amplitude": {
-                "mV": 30
+          "body": [
+            {
+              "play": {
+                "channel": "qubit",
+                "pulse": {
+                  "pulse_type": "square",
+                  "duration": {
+                    "ns": 100
+                  },
+                  "amplitude": {
+                    "var": "amp"
+                  }
+                }
+              }
+            },
+            {
+              "play": {
+                "channel": "readout",
+                "pulse": {
+                  "pulse_type": "square",
+                  "duration": {
+                    "us": 1
+                  },
+                  "amplitude": {
+                    "mV": 30
+                  }
+                }
+              }
+            },
+            {
+              "record": {
+                "channel": "readout",
+                "var": "raw",
+                "duration": {
+                  "us": 1
+                },
+                "integration": {
+                  "integration_type": "demod"
+                }
+              }
+            },
+            {
+              "discriminate": {
+                "target": "state",
+                "source": "raw",
+                "threshold": {
+                  "mV": 0.5
+                }
+              }
+            },
+            {
+              "store": {
+                "key": "rabi_amplitude",
+                "source": "state",
+                "mode": "average"
+              }
+            },
+            {
+              "wait": {
+                "channels": [
+                  "qubit"
+                ],
+                "duration": {
+                  "us": 10
+                }
               }
             }
-          },
-          {
-            "op_type": "record",
-            "channel": "readout",
-            "var": "raw",
-            "duration": {
-              "us": 1
-            },
-            "integration": {
-              "integration_type": "full"
-            }
-          },
-          {
-            "op_type": "discriminate",
-            "target": "state",
-            "source": "raw",
-            "threshold": {
-              "mV": 0.5
-            }
-          },
-          {
-            "op_type": "store",
-            "key": "rabi_amplitude",
-            "source": "state",
-            "mode": "average"
-          },
-          {
-            "op_type": "wait",
-            "channels": [
-              "qubit"
-            ],
-            "duration": {
-              "us": 10
-            }
-          }
-        ]
+          ]
+        }
       }
     ]
 

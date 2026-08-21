@@ -5,7 +5,10 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from eq1_pulse.models import (
+    Amplitude,
     Conditional,
+    DigitalTriggerPulse,
+    Duration,
     ExternalBlock,
     ExternalRef,
     Iteration,
@@ -17,8 +20,11 @@ from eq1_pulse.models import (
     Range,
     Repetition,
     SquarePulse,
+    StepPulse,
     VariableRef,
+    WaitForTrigger,
 )
+from eq1_pulse.models.expressions import BinaryExpr, CompareExpr, LiteralExpr, SymbolExpr
 
 
 def test_op_sequence_init():
@@ -74,7 +80,7 @@ def test_iteration():
     play = Play(channel="ch1", pulse=pulse)
     body = OpSequence([play])
     range_obj = Range(start=0, stop=5, step=1)
-    it = Iteration(var="i", items=range_obj, body=body)
+    it = Iteration(var=VariableRef("i"), items=range_obj, body=body)
     assert it.var == "i"
     assert it.items == range_obj
     assert it.body == body
@@ -85,7 +91,7 @@ def test_conditional():
     pulse = SquarePulse(duration={"ns": 100}, amplitude={"V": 1.0})
     play = Play(channel="ch1", pulse=pulse)
     body = OpSequence([play])
-    cond = Conditional(var="flag", body=body)
+    cond = Conditional(var=VariableRef("flag"), body=body)
     assert cond.var == "flag"
     assert cond.body == body
 
@@ -125,20 +131,57 @@ def test_nested_sequences():
     serialized = outer_seq.model_dump_json()
 
     assert serialized == (
-        r'[{"op_type":"repeat","count":2,"body":'
-        + r'[{"op_type":"play","channel":"ch1","pulse":{'
-        + r'"pulse_type":"square","duration":{"ns":100},"amplitude":{"V":1.0}}}]},'
-        + r'{"op_type":"play","channel":"ch2","pulse":{'
-        + r'"pulse_type":"square","duration":{"ns":100},"amplitude":{"V":2.0}}}]'
+        r'[{"repeat":{"count":2,"body":'
+        + r'[{"play":{"channel":"ch1","pulse":{'
+        + r'"pulse_type":"square","duration":{"ns":100},"amplitude":{"V":1.0}}}}]}},'
+        + r'{"play":{"channel":"ch2","pulse":{'
+        + r'"pulse_type":"square","duration":{"ns":100},"amplitude":{"V":2.0}}}}]'
     )
     deserialized = OpSequence.model_validate_json(serialized)
     assert deserialized == outer_seq
 
 
+def test_nested_sequence_inside_a_body_still_validates():
+    """A body may hold a bare nested sequence beside operations, and the array is not mistagged.
+
+    :obj:`OpSequenceItem` is ``DiscriminableOp | OpSequence`` with no tag of its own: an operation
+    is a single-key object, a nested sequence is an array. The array reaches :class:`OpSequence`
+    only because :func:`~eq1_pulse.models.basic_types.op_tag_of` reports *no* tag for it, letting
+    the plain union fall through instead of rejecting it as a malformed operation. Checked inside a
+    body, where the enclosing operation is itself selected by tag.
+    """
+    pulse = {"pulse_type": "square", "duration": {"ns": 100}, "amplitude": {"V": 1.0}}
+    play = {"play": {"channel": "ch1", "pulse": pulse}}
+    document = [{"repeat": {"count": 2, "body": [[play], {"barrier": {"channels": ["ch1"]}}]}}]
+
+    sequence = OpSequence.model_validate(document)
+    repetition = sequence.items[0]
+    assert isinstance(repetition, Repetition)
+    assert isinstance(repetition.body.items[0], OpSequence)
+    assert isinstance(repetition.body.items[0].items[0], Play)
+    assert sequence.model_dump() == document
+
+
+def test_the_flat_operation_form_is_not_accepted():
+    """The superseded ``{"op_type": ...}`` object has no tag, so no union selects an operation for it.
+
+    One ``union_tag_not_found`` from the operation side of :obj:`OpSequenceItem`, and one
+    ``list_type`` from the sequence side -- not one error per operation.
+    """
+    pulse = {"pulse_type": "square", "duration": {"ns": 100}, "amplitude": {"V": 1.0}}
+    flat = {"op_type": "play", "channel": "ch1", "pulse": pulse}
+    with pytest.raises(ValidationError) as excinfo:
+        TypeAdapter(OpSequenceItem).validate_python(flat)
+
+    assert [error["type"] for error in excinfo.value.errors()] == ["union_tag_not_found", "list_type"]
+
+
 def test_sequence_validation():
-    """Test sequence validation."""
+    """A sequence's wire form is the array itself -- the old ``{"items": [...]}`` object is not one."""
     with pytest.raises(ValidationError):
-        OpSequence(items=None)
+        OpSequence.model_validate(None)
+    with pytest.raises(ValidationError):
+        OpSequence.model_validate({"items": []})
 
 
 def test_repetition_validation():
@@ -148,27 +191,31 @@ def test_repetition_validation():
 
 def test_iteration_multiple_variables_validation_errors():
     with pytest.raises(ValidationError):
-        Iteration(var="i", items=[Range(start=0, stop=5, step=1)], body=OpSequence([]))
+        Iteration(var=VariableRef("i"), items=[Range(start=0, stop=5, step=1)], body=OpSequence([]))
 
     with pytest.raises(ValidationError):
-        Iteration(var=["i"], items=Range(start=0, stop=5, step=1), body=OpSequence([]))
+        Iteration(var=[VariableRef("i")], items=Range(start=0, stop=5, step=1), body=OpSequence([]))
 
     with pytest.raises(ValidationError):
-        Iteration(var=["s"], items=["str"], body=OpSequence([]))
+        Iteration(var=[VariableRef("s")], items=["str"], body=OpSequence([]))
 
     with pytest.raises(ValidationError):
-        Iteration(var="s", items=[["str"]], body=OpSequence([]))
+        Iteration(var=VariableRef("s"), items=[["str"]], body=OpSequence([]))
 
     with pytest.raises(ValidationError):
-        Iteration(var=["i", "j"], items=[Range(start=0, stop=5, step=1)], body=OpSequence([]))
+        Iteration(var=[VariableRef("i"), VariableRef("j")], items=[Range(start=0, stop=5, step=1)], body=OpSequence([]))
 
     with pytest.raises(ValidationError):
-        Iteration(var=["i", "j"], items=[Range(start=0, stop=5, step=1), [1, 2]], body=OpSequence([]))
+        Iteration(
+            var=[VariableRef("i"), VariableRef("j")],
+            items=[Range(start=0, stop=5, step=1), [1, 2]],
+            body=OpSequence([]),
+        )
 
 
 def test_iteration_multiple_variables_construction():
     iter_obj = Iteration(
-        var=["i", "j", "k", "s"],
+        var=[VariableRef("i"), VariableRef("j"), VariableRef("k"), VariableRef("s")],
         items=[[0, 1, 2], Range(start=3, stop=5, step=1), LinSpace(start=10, stop=20, num=3), ["a", "b", "c"]],
         body=OpSequence([]),
     )
@@ -185,15 +232,16 @@ def test_iteration_multiple_variables_construction():
 def test_iteration_multiple_variables_validation():
     iter_obj: OpSequenceItem = TypeAdapter(OpSequenceItem).validate_python(
         {
-            "op_type": "for",
-            "var": ["i", "j", "k", "s"],
-            "items": [
-                [0, 1, 2],
-                {"start": 3, "stop": 5, "step": 1},
-                {"start": 10, "stop": 20, "num": 3},
-                ["a", "b", "c"],
-            ],
-            "body": [],
+            "for": {
+                "var": ["i", "j", "k", "s"],
+                "items": [
+                    [0, 1, 2],
+                    {"start": 3, "stop": 5, "step": 1},
+                    {"start": 10, "stop": 20, "num": 3},
+                    ["a", "b", "c"],
+                ],
+                "body": [],
+            }
         }
     )
     assert isinstance(iter_obj, Iteration)
@@ -209,15 +257,16 @@ def test_iteration_multiple_variables_validation():
 def test_iteration_multiple_variables_validate_json():
     iter_obj: OpSequenceItem = TypeAdapter(OpSequenceItem).validate_json(
         r"""{
-            "op_type": "for",
-            "var": ["i", "j", "k", "s"],
-            "items": [
-                [0, 1, 2],
-                {"start": 3, "stop": 5, "step": 1},
-                {"start": 10, "stop": 20, "num": 3},
-                ["a", "b", "c"]
-            ],
-            "body": []
+            "for": {
+                "var": ["i", "j", "k", "s"],
+                "items": [
+                    [0, 1, 2],
+                    {"start": 3, "stop": 5, "step": 1},
+                    {"start": 10, "stop": 20, "num": 3},
+                    ["a", "b", "c"]
+                ],
+                "body": []
+            }
         }"""
     )
     assert isinstance(iter_obj, Iteration)
@@ -233,19 +282,19 @@ def test_iteration_multiple_variables_validate_json():
 
 def test_iteration_multiple_variables_serialize_json():
     iter_obj = Iteration(
-        var=["i", "j", "k", "s"],
+        var=[VariableRef("i"), VariableRef("j"), VariableRef("k"), VariableRef("s")],
         items=[[0, 1, 2], Range(start=3, stop=5, step=1), LinSpace(start=10, stop=20, num=3), ["a", "b", "c"]],
         body=OpSequence([]),
     )
     serialized = iter_obj.model_dump_json()
     assert serialized == (
-        '{"op_type":"for",'
+        '{"for":{'
         + '"var":["i","j","k","s"],'
         + '"items":['
         + '[0,1,2],{"start":3,"stop":5,"step":1},'
         + '{"start":10,"stop":20,"num":3},'
         + '["a","b","c"]'
-        + '],"body":[]}'
+        + '],"body":[]}}'
     )
 
 
@@ -272,3 +321,45 @@ def test_sequence_external_param_references_round_trip_without_degrading():
     assert isinstance(params["var"], VariableRef)
     assert isinstance(params["pulse"], PulseRef)
     assert isinstance(params["ext"], ExternalRef)
+
+
+def test_sequence_with_expressions_round_trips_through_json():
+    """A sequence with a widened field holding an Expression round-trips through JSON, not just model_dump."""
+    count = BinaryExpr(binary_op="+", lhs=SymbolExpr(symbol=VariableRef("n")), rhs=LiteralExpr(value=1))
+    predicate = CompareExpr(compare_op=">", lhs=SymbolExpr(symbol=VariableRef("x")), rhs=LiteralExpr(value=1))
+    pulse = SquarePulse(duration={"ns": 100}, amplitude={"V": 1.0})
+    play = Play(channel="ch1", pulse=pulse)
+
+    rep = Repetition(count=count, body=OpSequence([play]))
+    cond = Conditional(var=predicate, body=OpSequence([play]))
+    seq = OpSequence([rep, cond])
+
+    dumped = seq.model_dump_json()
+    restored = OpSequence.model_validate_json(dumped)
+    assert restored == seq
+
+    restored_rep = restored.items[0]
+    assert isinstance(restored_rep, Repetition)
+    assert isinstance(restored_rep.count, BinaryExpr)
+
+    restored_cond = restored.items[1]
+    assert isinstance(restored_cond, Conditional)
+    assert isinstance(restored_cond.var, CompareExpr)
+
+
+def test_sequence_with_step_trigger_and_wait_for_trigger_round_trips():
+    """A sequence combining a step pulse, a trigger pulse, and a wait-for-trigger round-trips through JSON."""
+    step = Play(channel="plunger", pulse=StepPulse(duration=Duration(ns=100), amplitude=Amplitude(mV=150)))
+    trigger = Play(channel="trig_out", pulse=DigitalTriggerPulse(duration=Duration(ns=100)))
+    wait = WaitForTrigger(channel="trig_in")
+    seq = OpSequence([step, trigger, wait])
+
+    dumped = seq.model_dump_json()
+    restored = OpSequence.model_validate_json(dumped)
+    assert restored == seq
+
+    assert isinstance(restored.items[0], Play)
+    assert isinstance(restored.items[0].pulse, StepPulse)
+    assert isinstance(restored.items[1], Play)
+    assert isinstance(restored.items[1].pulse, DigitalTriggerPulse)
+    assert isinstance(restored.items[2], WaitForTrigger)

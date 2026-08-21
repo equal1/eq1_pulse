@@ -212,5 +212,4 @@ class TestZippedIterationBasics:
         dumped = seq.model_dump()
         # Should have var_decl, var_decl, for_
         assert len(dumped) == 3
-        for_item = dumped[2]
-        assert for_item["op_type"] == "for"
+        assert set(dumped[2]) == {"for"}

@@ -19,7 +19,9 @@ from eq1_pulse.models.channel_ops import (
     ShiftPhase,
     Trace,
     Wait,
+    WaitForTrigger,
 )
+from eq1_pulse.models.expressions import BinaryExpr, LiteralExpr, SymbolExpr
 from eq1_pulse.models.pulse_types import SquarePulse
 from eq1_pulse.models.reference_types import ChannelRef, ExternalRef, VariableRef
 
@@ -49,14 +51,16 @@ def test_wait_operation():
 def test_play_operation():
     pulse = SquarePulse(duration=Duration(s=20e-9), amplitude={"V": 0.5})
     play = Play(channel="ch1", pulse=pulse, scale_amp=1.0)
-    assert play.channel.channel == "ch1"
+    assert play.channel == "ch1"
     assert play.pulse == pulse
     assert play.scale_amp == 1.0
 
 
 def test_record_operation():
-    record = Record(channel="ch1", var="result", duration=Duration(s=100e-9), integration=FullIntegration())
-    assert record.channel.channel == "ch1"
+    record = Record(
+        channel="ch1", var=VariableRef("result"), duration=Duration(s=100e-9), integration=FullIntegration()
+    )
+    assert record.channel == "ch1"
     assert record.var.var == "result"
     assert record.integration.integration_type == "full"
 
@@ -70,13 +74,13 @@ def test_demod_integration():
 
 def test_set_frequency():
     set_freq = SetFrequency(channel="ch1", frequency=Frequency(Hz=5e6))
-    assert set_freq.channel.channel == "ch1"
+    assert set_freq.channel == "ch1"
     assert set_freq.frequency == Frequency(Hz=5e6)
 
 
 def test_shift_frequency():
     shift_freq = ShiftFrequency(channel="ch1", frequency=Frequency(Hz=5e6))
-    assert shift_freq.channel.channel == "ch1"
+    assert shift_freq.channel == "ch1"
     assert shift_freq.frequency == Frequency(Hz=5e6)
 
 
@@ -100,15 +104,17 @@ def test_invalid_play_validation():
 
 
 def test_trace_operation():
-    trace = Trace(channel="ch1", var="trace_data", duration=Duration(s=1e-6), integration=DemodIntegration())
-    assert trace.channel.channel == "ch1"
+    trace = Trace(
+        channel="ch1", var=VariableRef("trace_data"), duration=Duration(s=1e-6), integration=DemodIntegration()
+    )
+    assert trace.channel == "ch1"
     assert trace.var.var == "trace_data"
     assert isinstance(trace.integration, DemodIntegration)
 
 
 def test_compensate_dc():
     comp = CompensateDC(channel="ch1", duration=Duration(s=50e-9), max_amp=Magnitude(V=0.5))
-    assert comp.channel.channel == "ch1"
+    assert comp.channel == "ch1"
     assert isinstance(comp.duration, Duration)
     assert comp.duration.ns == 50
     assert isinstance(comp.max_amp, Magnitude)
@@ -121,7 +127,7 @@ def test_compensate_dc():
 
 def test_compensate_dc_alt():
     comp = CompensateDC("ch1", duration={"ns": 50}, max_amp={"V": 0.5})
-    assert comp.channel.channel == "ch1"
+    assert comp.channel == "ch1"
     assert isinstance(comp.duration, Duration)
     assert comp.duration.ns == 50
     assert isinstance(comp.max_amp, Magnitude)
@@ -134,7 +140,7 @@ def test_compensate_dc_alt():
 
 def test_compensate_dc_var():
     comp = CompensateDC("ch1", duration={"var": "dur"}, max_amp={"V": 0.5})
-    assert comp.channel.channel == "ch1"
+    assert comp.channel == "ch1"
     assert isinstance(comp.duration, VariableRef)
     assert comp.duration.var == "dur"
     assert isinstance(comp.max_amp, Magnitude)
@@ -143,21 +149,22 @@ def test_compensate_dc_var():
 
 def test_phase_operations():
     set_phase = SetPhase(channel="ch1", phase=Phase(rad=0.25 * π))
-    assert set_phase.channel.channel == "ch1"
+    assert set_phase.channel == "ch1"
     assert set_phase.phase == Phase(rad=0.25 * π)
 
     shift_phase = ShiftPhase(channel="ch1", phase=Phase(rad=0.1 * π))
-    assert shift_phase.channel.channel == "ch1"
+    assert shift_phase.channel == "ch1"
     assert shift_phase.phase == Phase(rad=0.1 * π)
 
 
 def test_record_with_demod_validation():
     record_dict = {
-        "channel": "ch1",
-        "var": "result",
-        "duration": {"s": 100e-9},
-        "integration": {"integration_type": "demod", "phase": {"deg": 45}},
-        "op_type": "record",
+        "record": {
+            "channel": "ch1",
+            "var": "result",
+            "duration": {"s": 100e-9},
+            "integration": {"integration_type": "demod", "phase": {"deg": 45}},
+        }
     }
     record: Any = TypeAdapter(ChannelOp).validate_python(record_dict)
     assert isinstance(record, Record)
@@ -167,7 +174,10 @@ def test_record_with_demod_validation():
 
 def test_record_with_demod_serialization():
     original = Record(
-        channel="ch1", var="result", duration=Duration(s=100e-9), integration=DemodIntegration(phase=Phase(deg=45))
+        channel="ch1",
+        var=VariableRef("result"),
+        duration=Duration(s=100e-9),
+        integration=DemodIntegration(phase=Phase(deg=45)),
     )
     serialized = original.model_dump_json()
     deserialized: Any = TypeAdapter(ChannelOp).validate_json(serialized)
@@ -176,19 +186,22 @@ def test_record_with_demod_serialization():
 
 
 def test_trace_with_full_integration():
-    trace = Trace(channel="ch1", var="trace_data", duration=Duration(s=1e-6), integration=FullIntegration())
-    assert trace.channel.channel == "ch1"
+    trace = Trace(
+        channel="ch1", var=VariableRef("trace_data"), duration=Duration(s=1e-6), integration=FullIntegration()
+    )
+    assert trace.channel == "ch1"
     assert isinstance(trace.integration, FullIntegration)
     assert trace.integration.integration_type == "full"
 
 
 def test_trace_with_full_integration_validation():
     trace_dict = {
-        "channel": "ch1",
-        "var": "trace_data",
-        "duration": {"s": 1e-6},
-        "integration": {"integration_type": "full"},
-        "op_type": "trace",
+        "trace": {
+            "channel": "ch1",
+            "var": "trace_data",
+            "duration": {"s": 1e-6},
+            "integration": {"integration_type": "full"},
+        }
     }
     trace: Any = TypeAdapter(ChannelOp).validate_python(trace_dict)
     assert isinstance(trace, Trace)
@@ -196,7 +209,9 @@ def test_trace_with_full_integration_validation():
 
 
 def test_trace_with_full_integration_serialization():
-    original = Trace(channel="ch1", var="trace_data", duration=Duration(s=1e-6), integration=FullIntegration())
+    original = Trace(
+        channel="ch1", var=VariableRef("trace_data"), duration=Duration(s=1e-6), integration=FullIntegration()
+    )
     serialized = original.model_dump_json()
     deserialized: Any = TypeAdapter(ChannelOp).validate_json(serialized)
     assert isinstance(deserialized, Trace)
@@ -227,7 +242,9 @@ def test_phase_operations_accept_external_ref():
 
 
 def test_record_duration_accepts_external_ref():
-    record = Record(channel="ch1", var="result", duration=ExternalRef(ext="q0.dur"), integration=FullIntegration())
+    record = Record(
+        channel="ch1", var=VariableRef("result"), duration=ExternalRef(ext="q0.dur"), integration=FullIntegration()
+    )
     assert isinstance(record.duration, ExternalRef)
 
 
@@ -254,7 +271,7 @@ def test_trace_var_rejects_external_ref():
 def test_record_time_of_flight_accepts_variable_and_external_ref():
     record = Record(
         channel="ch1",
-        var="result",
+        var=VariableRef("result"),
         duration=Duration(s=100e-9),
         integration=FullIntegration(),
         time_of_flight=VariableRef("tof"),
@@ -263,7 +280,7 @@ def test_record_time_of_flight_accepts_variable_and_external_ref():
 
     record = Record(
         channel="ch1",
-        var="result",
+        var=VariableRef("result"),
         duration=Duration(s=100e-9),
         integration=FullIntegration(),
         time_of_flight=ExternalRef(ext="q0.tof"),
@@ -273,7 +290,7 @@ def test_record_time_of_flight_accepts_variable_and_external_ref():
     # Still accepts its literal form.
     record = Record(
         channel="ch1",
-        var="result",
+        var=VariableRef("result"),
         duration=Duration(s=100e-9),
         integration=FullIntegration(),
         time_of_flight=Duration(ns=20),
@@ -282,10 +299,17 @@ def test_record_time_of_flight_accepts_variable_and_external_ref():
 
 
 def test_trace_time_of_flight_accepts_variable_and_external_ref():
-    trace = Trace(channel="ch1", var="trace_data", duration=Duration(s=1e-6), time_of_flight=VariableRef("tof"))
+    trace = Trace(
+        channel="ch1", var=VariableRef("trace_data"), duration=Duration(s=1e-6), time_of_flight=VariableRef("tof")
+    )
     assert isinstance(trace.time_of_flight, VariableRef)
 
-    trace = Trace(channel="ch1", var="trace_data", duration=Duration(s=1e-6), time_of_flight=ExternalRef(ext="q0.tof"))
+    trace = Trace(
+        channel="ch1",
+        var=VariableRef("trace_data"),
+        duration=Duration(s=1e-6),
+        time_of_flight=ExternalRef(ext="q0.tof"),
+    )
     assert isinstance(trace.time_of_flight, ExternalRef)
 
 
@@ -319,3 +343,37 @@ def test_demod_integration_scale_cos_sin_default_still_elided():
     """Widening scale_cos/scale_sin to accept a SymbolRef must not perturb LeanModel's default elision."""
     demod = DemodIntegration()
     assert demod.model_dump() == {"integration_type": "demod"}
+
+
+def test_wait_for_trigger_creation():
+    wait_for_trigger = WaitForTrigger(channel="ch1")
+    assert wait_for_trigger.channel == "ch1"
+
+    wait_for_trigger = WaitForTrigger(channel=ChannelRef("ch1"))
+    assert wait_for_trigger.channel == ChannelRef("ch1")
+
+
+def test_wait_for_trigger_json_serialization():
+    wait_for_trigger = WaitForTrigger(channel="ch1")
+    wait_for_trigger_json = wait_for_trigger.model_dump_json()
+    wait_for_trigger_loaded = WaitForTrigger.model_validate_json(wait_for_trigger_json)
+    assert wait_for_trigger_loaded == wait_for_trigger
+
+
+def test_wait_for_trigger_discriminates_in_channel_op():
+    document = {"wait_for_trigger": {"channel": "ch1"}}
+    op: Any = TypeAdapter(ChannelOp).validate_python(document)
+    assert isinstance(op, WaitForTrigger)
+    assert op.channel == "ch1"
+
+
+def test_wait_duration_accepts_expression():
+    """``Wait.duration`` accepts an ``Expression``, not just a bare ``SymbolRef``."""
+    duration = BinaryExpr(binary_op="+", lhs=SymbolExpr(symbol=VariableRef("d")), rhs=LiteralExpr(value={"ns": 10}))
+    wait_op = Wait("ch1", "ch2", duration=duration)
+    assert isinstance(wait_op.duration, BinaryExpr)
+
+    document = wait_op.model_dump()
+    reloaded: Any = TypeAdapter(ChannelOp).validate_python(document)
+    assert isinstance(reloaded, Wait)
+    assert isinstance(reloaded.duration, BinaryExpr)

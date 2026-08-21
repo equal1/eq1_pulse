@@ -3,8 +3,10 @@
 import pytest
 
 from eq1_pulse.builder import (
+    assign,
     build_sequence,
     discriminate,
+    expr,
     for_,
     if_,
     measure,
@@ -101,6 +103,28 @@ class TestVariableDeclarationTracking:
             # These operations should succeed with declared variables
             discriminate(target="result", source="raw_data", threshold="0.5mV")
             store(key="data", source="raw_data")
+
+    def test_var_in_assign(self):
+        """Test variable usage in assign(), both as target and within the value expression."""
+        with build_sequence():
+            var_decl("count", "int")
+            var_decl("doubled", "int")
+
+            assign("count", 0)
+            assign("doubled", expr(var("count")) * 2)
+
+    def test_undeclared_var_in_assign_target_raises_error(self):
+        """Test that assign with an undeclared target variable raises error."""
+        with pytest.raises(RuntimeError, match="Variable 'undeclared' has not been declared"):
+            with build_sequence():
+                assign("undeclared", 0)
+
+    def test_undeclared_var_in_assign_value_raises_error(self):
+        """Test that assign with an undeclared variable in its value expression raises error."""
+        with pytest.raises(RuntimeError, match="Variable 'undeclared' has not been declared"):
+            with build_sequence():
+                var_decl("count", "int")
+                assign("count", expr(var("undeclared")) * 2)
 
     def test_undeclared_var_in_discriminate_raises_error(self):
         """Test that discriminate with undeclared source variable raises error."""

@@ -14,12 +14,13 @@ from pydantic import model_validator
 from .basic_types import Duration, OpBase
 from .identifier_str import FullyQualifiedIdentifier
 from .pulse_types import ExternalParamValue
-from .reference_types import ChannelRef, SymbolRef, VariableRef
+from .reference_types import ChannelTarget, VariableRef, VarName
 
 if TYPE_CHECKING:
     from .basic_types import DurationLike
+    from .expressions import ValueRefLike
     from .pulse_types import ExternalParamValueLike
-    from .reference_types import ChannelRefLike, SymbolRefLike, VariableRefLike
+    from .reference_types import ChannelRefLike, VariableRefLike
 
 __all__ = ("ExternalBlock",)
 
@@ -68,7 +69,9 @@ class ExternalBlock(OpBase):
     5. The IR does not know the referenced program's signature -- opacity is the point. Arity and
        type checking of :attr:`params`/:attr:`results`/:attr:`channels` belongs to whatever resolves
        :attr:`program`. The IR validates only what it can see: that :attr:`results` variables are
-       declared, that :attr:`channels` values are valid channel references, and rule 4 above.
+       declared, that :attr:`channels` values are valid channel targets -- a channel name, or an
+       :class:`~.reference_types.ExternalRef` when the calibration store owns the name -- and
+       rule 4 above.
     """
 
     op_type: Literal["external_block"] = "external_block"
@@ -81,7 +84,7 @@ class ExternalBlock(OpBase):
     :attr:`~.pulse_types.ExternalPulse.function`.
     """
 
-    channels: dict[str, ChannelRef]
+    channels: dict[str, ChannelTarget]
     """Channels claimed by the block, keyed by the role each plays in the referenced program.
 
     The reservation set is exactly ``channels.values()``.
@@ -90,10 +93,10 @@ class ExternalBlock(OpBase):
     params: dict[str, ExternalParamValue] | None = None
     """Input arguments passed to the referenced program."""
 
-    results: dict[str, VariableRef] | None = None
+    results: dict[str, VarName] | None = None
     """Output bindings: variables the referenced program writes into."""
 
-    duration: Duration | SymbolRef | None = None
+    duration: Duration | ValueRef | None = None
     """Total duration.
 
     :obj:`None` means *flex*: the duration is whatever the referenced program naturally takes,
@@ -109,7 +112,7 @@ class ExternalBlock(OpBase):
             channels: dict[str, ChannelRefLike],
             params: dict[str, ExternalParamValueLike] | None = None,
             results: dict[str, VariableRefLike] | None = None,
-            duration: DurationLike | SymbolRefLike | None = None,
+            duration: DurationLike | ValueRefLike | None = None,
             **data,
         ): ...
 
@@ -124,3 +127,10 @@ class ExternalBlock(OpBase):
                         f"or pass a compile-time value for {name!r}."
                     )
         return self
+
+
+# Deferred: this module is reachable (via `pulse_types`) before `expressions` has finished defining
+# `ValueRef`, so importing it at the top would recurse back through that edge.
+from .expressions import ValueRef  # noqa: E402
+
+ExternalBlock.model_rebuild()

@@ -1,101 +1,86 @@
 """Modules to provide representation of symbolic references.
 
-Note:
-    All reference classes inherit from :class:`Reference` and Pydantic's BaseModel for validation
-    and serialization support.
+A reference names something the program does not spell out inline: a variable, an externally
+resolved constant, a declared pulse, or a channel. Every one of them has exactly one wire form.
 
+Three of the four are *tagged objects* -- ``{"var": "amp"}``, ``{"ext": "q0.f01"}``,
+``{"pulse_name": "pi_pulse"}`` -- and are the :class:`Reference` subclasses below: a plain
+one-field model already validates and serializes that object in both schema modes, so there is
+nothing to wrap, unwrap, or describe by hand.
+
+The fourth, :class:`ChannelRef`, is the bare string ``"q0_drive"``. It is a
+:class:`~pydantic.RootModel` rather than a :class:`Reference`, because a root model has no field
+name to publish and is therefore bare by construction. The carve-out is argued on issue #10:
+``channel`` and ``channels`` are closed, single-purpose fields in which a string can mean nothing
+else, and a channel reference is the most frequent value in a program.
+
+:class:`VariableRef` has *two* wire forms, chosen by position rather than by type, which is why the
+carve-out lives in an annotation -- :obj:`VarName` -- rather than in the class:
+
+* In a field typed exactly :class:`VariableRef` it is the bare name ``"iq"``. The field name already
+  says the value is a variable, so ``{"var": {"var": "iq"}}`` spells the tag twice. This is the
+  same argument as :class:`ChannelRef`'s, and the fields are the same kind of closed,
+  single-purpose slot: ``Record.var``, ``Iteration.var``, ``Store.source`` and their four siblings.
+* In a union of references -- :obj:`SymbolRef`, ``ValueRef``, ``ExternalParamValue``,
+  :attr:`~eq1_pulse.models.expressions.SymbolExpr.symbol` -- it keeps ``{"var": "iq"}``. There a
+  bare string is not unambiguous: it would have to be told apart from :class:`ExternalRef`, whose
+  wire form is also a name, and from ``ExternalParamValue``'s plain :obj:`str` member, whose value
+  is the string itself. The tag is what makes the union decidable.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, ClassVar, TypedDict
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Annotated, Any, Final, TypedDict, Union, cast, get_args
 
-from pydantic import BaseModel, GetJsonSchemaHandler, model_serializer, model_validator
-from pydantic.json_schema import JsonSchemaValue
-from pydantic_core import CoreSchema, PydanticSerializationUnexpectedValue
+from pydantic import BaseModel, Discriminator, GetCoreSchemaHandler, GetJsonSchemaHandler, RootModel, Tag
+from pydantic_core import core_schema
 
-from .base_models import field_json_schemas
+from .base_models import NoExtrasModel
 from .identifier_str import ExternalSymbolStr, IdentifierStr
+
+if TYPE_CHECKING:
+    from pydantic.json_schema import JsonSchemaValue
+    from pydantic_core import CoreSchema
 
 __all__ = (
     "ChannelRef",
+    "ChannelRefLike",
+    "ChannelTarget",
     "ExtRefDict",
     "ExternalRef",
     "PulseRef",
+    "PulseRefLike",
     "Reference",
+    "ReferenceDiscriminator",
     "SymbolRef",
     "SymbolRefLike",
+    "VarName",
     "VariableRef",
+    "VariableRefLike",
 )
 
 
-class Reference(BaseModel):
-    """Base class for all symbolic references.
+class Reference(NoExtrasModel):
+    """Base class for the tagged symbolic references.
 
-    Descendants must only define a single field (the reference name), which is serialized directly.
+    A descendant declares exactly one field, whose name is the tag its wire object carries:
+    :class:`VariableRef` is ``{"var": ...}``, :class:`ExternalRef` is ``{"ext": ...}``,
+    :class:`PulseRef` is ``{"pulse_name": ...}``. That object is the wire form in both directions
+    and in both schema modes, so this base adds no serializer, no validator and no schema hook --
+    only the positional constructor sugar and the comparison against a bare name.
+
+    ``extra="forbid"`` (via :class:`NoExtrasModel`) keeps that object exactly one field wide: without
+    it, an object with the tag key plus unrelated keys would validate and silently drop the extras,
+    letting a malformed or ambiguous tagged object slip past :class:`ReferenceDiscriminator`, which
+    routes strictly on "the sole key this object carries".
 
     Note:
-        A descendant that keeps the wrapped object form instead must set :attr:`_serializes_bare`
-        to :obj:`False` *and* override :meth:`_wrap_serializer` to produce that form; see
-        :class:`ExternalRef`. :meth:`__get_pydantic_json_schema__` already branches on
-        :attr:`_serializes_bare`, so it needs no override. Declaring the flag without the serializer
-        is rejected when the class is created — see :meth:`__pydantic_init_subclass__`.
+        :class:`ChannelRef` is deliberately *not* here. Its wire form is the bare channel name, and
+        a :class:`~pydantic.RootModel` produces that with no machinery at all; see the module
+        docstring.
 
     """
-
-    _serializes_bare: ClassVar[bool] = True
-    """Whether instances of this class serialize to their bare field value."""
-
-    @classmethod
-    def __pydantic_init_subclass__(cls, **kwargs: Any) -> None:
-        """Enforce the invariants the serializer and the validator rely on.
-
-        These are checked when the subclass is created, so a violation is an import-time error
-        rather than a silently wrong wire format.
-
-        :param kwargs: class keyword arguments, passed through to the base implementation.
-        :raises TypeError: if the subclass does not define exactly one field, or if its
-            :attr:`_serializes_bare` declaration disagrees with whether it overrides
-            :meth:`_wrap_serializer`.
-        """
-        super().__pydantic_init_subclass__(**kwargs)
-
-        if len(cls.model_fields) != 1:
-            raise TypeError(
-                f"{cls.__name__} must define exactly one field, got {len(cls.model_fields)}: "
-                f"{list(cls.model_fields)}. A reference serializes to its single field."
-            )
-
-        overrides_serializer = cls._overrides_below_reference("_wrap_serializer")
-        if cls._serializes_bare:
-            if overrides_serializer:
-                raise TypeError(
-                    f"{cls.__name__} overrides _wrap_serializer but leaves _serializes_bare True. "
-                    f"A union serializer would then offer values of other reference classes to it "
-                    f"and accept the result; set _serializes_bare = False."
-                )
-        elif not overrides_serializer:
-            raise TypeError(
-                f"{cls.__name__} sets _serializes_bare = False but does not override "
-                f"_wrap_serializer. The base implementation unwraps to the single field, which "
-                f"contradicts the declaration."
-            )
-
-    @classmethod
-    def _overrides_below_reference(cls, name: str) -> bool:
-        """Whether *name* is provided by a class below :class:`Reference` in the MRO.
-
-        :param name: the attribute to look for.
-        :return: :obj:`True` if a descendant of :class:`Reference` defines it, :obj:`False` if it
-            is inherited from :class:`Reference` itself.
-        """
-        for base in cls.__mro__:
-            if base is Reference:
-                break
-            if name in base.__dict__:
-                return True
-
-        return False
 
     @classmethod
     def _first_field_name(cls) -> str:
@@ -113,79 +98,6 @@ class Reference(BaseModel):
             data[ff] = args[0]
         super().__init__(**data)
 
-    @model_validator(mode="before")
-    @classmethod
-    def _wrap_validator(cls, data: Any) -> Any:
-        return {cls._first_field_name(): data} if not isinstance(data, dict) else data
-
-    @model_serializer
-    def _wrap_serializer(self) -> Any:
-        if not type(self)._serializes_bare:
-            # A union serializer offers the value to each member in turn, and a plain model
-            # serializer is called without an instance check -- so this may be a reference of a
-            # class that serializes wrapped. Decline it, so the union tries the next member.
-            raise PydanticSerializationUnexpectedValue(f"{type(self).__name__} does not serialize bare")
-
-        return getattr(self, self._first_field_name())
-
-    @classmethod
-    def __get_pydantic_json_schema__(cls, core_schema: CoreSchema, handler: GetJsonSchemaHandler) -> JsonSchemaValue:
-        """Describe the reference by :attr:`_serializes_bare`.
-
-        A class that serializes bare (the default) accepts and describes both the bare value and
-        the ``{"<field>": ...}`` object on input, per :meth:`_wrap_validator`, but only ever
-        produces the bare value on output, per :meth:`_wrap_serializer`. A class that serializes
-        wrapped (see :class:`ExternalRef`) keeps the object form in both directions; a bare string
-        is still accepted by :meth:`_wrap_validator` for constructor convenience, but it is
-        deliberately not advertised in the validation schema -- a bare string in a union always
-        resolves to a bare-serializing reference, so advertising it here would describe an input
-        this class never actually resolves from.
-
-        :param core_schema: the core schema the JSON schema is generated from.
-        :param handler: the handler producing the default JSON schema.
-        :return: the JSON schema, describing whichever form :attr:`_serializes_bare` selects.
-        """
-        json_schema = handler(core_schema)
-        target = handler.resolve_ref_schema(json_schema)
-
-        if not cls.model_fields:
-            # Reference itself declares no field to unwrap to.
-            return json_schema
-
-        if handler.mode == "serialization":
-            # _wrap_serializer has no declared return_type, so handler(core_schema) has already
-            # collapsed target to {} here; rebuild it from the field annotations instead.
-            if cls._serializes_bare:
-                replacement = dict(field_json_schemas(cls, handler)[cls._first_field_name()])
-                if (title := target.get("title")) is not None:
-                    replacement["title"] = title
-                target.clear()
-                target.update(replacement)
-            else:
-                target.update(
-                    type="object",
-                    properties=field_json_schemas(cls, handler),
-                    required=list(cls.model_fields),
-                )
-            return json_schema
-
-        if not cls._serializes_bare:
-            # The default object schema already describes it; no bare form to add.
-            return json_schema
-
-        if not (properties := target.get("properties")):
-            return json_schema
-
-        bare_schema = dict(properties[cls._first_field_name()])
-        title = target.pop("title", None)
-        object_schema = dict(target)
-        target.clear()
-        target["anyOf"] = [bare_schema, object_schema]
-        if title is not None:
-            target["title"] = title
-
-        return json_schema
-
     def __eq__(self, value):  # noqa: D105
         if not isinstance(value, Reference):
             first_field_value = getattr(self, self._first_field_name())
@@ -193,12 +105,9 @@ class Reference(BaseModel):
 
         return super().__eq__(value)
 
-    def __req__(self, value):  # noqa: D105
-        return self.__eq__(value)
-
 
 class VariableRef(Reference):
-    """Reference to a variable.
+    """Reference to a variable, spelled ``{"var": "amp"}``.
 
     Variables must be declared in the surrounding context or one of its parents.
     """
@@ -213,20 +122,11 @@ class VariableRef(Reference):
 
 
 class ExternalRef(Reference):
-    """Reference to a constant that is resolved outside the program.
+    """Reference to a constant that is resolved outside the program, spelled ``{"ext": "q0.f01"}``.
 
     External symbols must be declared in the surrounding context or one of its parents. Their value
     is supplied per submission by the framework running the program, so a serialized program can be
     re-submitted against fresh values without being rebuilt.
-
-    Note:
-        This is the one place where the reference hierarchy is deliberately not uniform: unlike
-        every other :class:`Reference`, an external reference does **not** serialize to its bare
-        field value but keeps the wrapped ``{"ext": "q0[1].amp"}`` form. A bare ``"q0"`` would be
-        ambiguous with a :class:`VariableRef` because the leading identifier is the only mandatory
-        part of the grammar. Validation still accepts a bare string, so ``ExternalRef("q0.f01")``
-        works.
-
     """
 
     if TYPE_CHECKING:
@@ -234,33 +134,12 @@ class ExternalRef(Reference):
         def __init__(self, ext: str, **data):  # noqa: D107
             super().__init__(ext=ext, **data)
 
-    _serializes_bare: ClassVar[bool] = False
-
     ext: ExternalSymbolStr
     """The name of the external symbol being referenced."""
 
-    @model_serializer
-    def _wrap_serializer(self) -> Any:
-        return {"ext": self.ext}
-
-
-class ChannelRef(Reference):
-    """Reference to a channel.
-
-    Channels are defined in the target's hardware configuration.
-    """
-
-    if TYPE_CHECKING:
-
-        def __init__(self, channel: str, **data):  # noqa: D107
-            super().__init__(channel=channel, **data)
-
-    channel: IdentifierStr
-    """The name of the channel being referenced."""
-
 
 class PulseRef(Reference):
-    """Reference to a pulse.
+    """Reference to a pulse, spelled ``{"pulse_name": "pi_pulse"}``.
 
     Pulses must be declared in the surrounding context or one of its parents.
     """
@@ -274,21 +153,93 @@ class PulseRef(Reference):
     """The name of the pulse being referenced."""
 
 
-class ChannelRefDict(TypedDict):
-    """Type dict for channel references.
+class ChannelRef(RootModel[IdentifierStr]):
+    """Reference to a channel, whose wire form is the bare channel name ``"q0_drive"``.
 
-    Example:
-    .. code-block:: python
+    Channels are defined in the target's hardware configuration.
 
-        {"channel": "<channel_name>"}
+    Unlike the :class:`Reference` subclasses this is a :class:`~pydantic.RootModel`, so the name
+    *is* the model and there is no field name to spell twice. It validates and serializes the bare
+    string in both schema modes with no override of any kind; :meth:`__eq__` below is the only
+    member it carries.
     """
 
-    channel: str
+    root: IdentifierStr
     """The name of the channel being referenced."""
 
+    def __eq__(self, value):  # noqa: D105
+        if not isinstance(value, ChannelRef):
+            return self.root == value
 
-type ChannelRefLike = str | ChannelRef | ChannelRefDict
-"""Type alias for valid arguments to create :class:`ChannelRef` instances."""
+        return super().__eq__(value)
+
+
+class ReferenceDiscriminator:
+    """Annotation marker turning a union of reference types into a union tagged by wire form.
+
+    Written once and applied to each union of references::
+
+        type SymbolRef = Annotated[VariableRef | ExternalRef, ReferenceDiscriminator()]
+
+    A :class:`Reference` member is tagged by the sole key its wire object carries, read off the one
+    field it declares, so a new reference type is tagged by declaring it. :class:`ChannelRef` is
+    the one member whose wire form is a bare string rather than an object; it is tagged by *being*
+    a string, under :data:`_BARE_TAG`.
+
+    Selection is a lookup on the wire shape rather than a scoring pass over every member, so a
+    malformed reference is one ``union_tag_not_found`` error naming the forms that exist, instead
+    of one error per member.
+    """
+
+    _BARE_TAG: Final = "channel"
+    """The tag of the one reference whose wire form is bare -- named for the field it appears in."""
+
+    def __get_pydantic_core_schema__(self, source_type: Any, handler: GetCoreSchemaHandler) -> CoreSchema:
+        """Build the tagged union's core schema from *source_type*'s members.
+
+        :param source_type: The union of reference models this annotates.
+        :param handler: The handler generating core schemas, reused for the rebuilt annotation.
+        :return: The core schema of the equivalent :class:`~pydantic.Discriminator`-keyed union.
+        :raises TypeError: If applied to anything but a union -- there is nothing to discriminate.
+        """
+        if not (references := get_args(source_type)):
+            raise TypeError(f"{type(self).__name__} annotates a union of reference models, not {source_type!r}")
+
+        tags = {reference: self._tag_of(reference) for reference in references}
+        # The tag of the bare-string member, if this union has one at all. A union without one
+        # (:obj:`SymbolRef`) has no string form, so a string there is untaggable rather than
+        # mistagged.
+        bare_tag = next((tag for reference, tag in tags.items() if issubclass(reference, RootModel)), None)
+
+        def reference_tag(value: Any) -> str | None:
+            """Return the tag *value* is spelled with, or :obj:`None` to report an unknown tag."""
+            if isinstance(value, str):
+                return bare_tag
+            if isinstance(value, Mapping):
+                if len(value) != 1:
+                    return None
+                # An object is tagged by its sole key -- but never by the bare tag, which names a
+                # *string* form. ``{"channel": "ch1"}`` is the wrapped spelling this plan removed,
+                # not a channel, and routing it to ChannelRef would report it as "not a string".
+                tag = next(iter(value))
+                return None if tag == bare_tag else tag
+            return tags.get(type(value))
+
+        members = tuple(Annotated[reference, Tag(tag)] for reference, tag in tags.items())
+        return handler.generate_schema(Annotated[Union[*members], Discriminator(reference_tag)])
+
+    @classmethod
+    def _tag_of(cls, reference: type[BaseModel]) -> str:
+        """The tag *reference*'s wire form carries.
+
+        :param reference: A member of the annotated union.
+        :return: The sole field name for a tagged :class:`Reference`, or :data:`_BARE_TAG` for a
+            root model, which has no field name and whose wire form is therefore the bare value.
+        """
+        if issubclass(reference, RootModel):
+            return cls._BARE_TAG
+
+        return next(iter(reference.model_fields))
 
 
 class VarRefDict(TypedDict):
@@ -305,8 +256,85 @@ class VarRefDict(TypedDict):
     """The name of the variable being referenced."""
 
 
-type VariableRefLike = str | VariableRef | VarRefDict
-"""Type alias for valid arguments to create :class:`VariableRef` instances."""
+type VariableRefLike = VariableRef | VarRefDict
+"""Type alias for valid arguments to create :class:`VariableRef` instances.
+
+A bare string is not one of them: an identifier-shaped string is a string. The builder still
+promotes one to a variable reference -- see :func:`~eq1_pulse.builder._coerce.as_symbol_ref` --
+but that is a builder convenience and its signatures say so.
+"""
+
+
+def _bare_variable_name(value: VariableRef) -> str:
+    """Serialize a bare variable reference as the name it carries.
+
+    :param value: The reference held by a :obj:`VarName` field.
+    :return: The variable name, which is that field's whole wire form.
+    """
+    return value.var
+
+
+class _BareVariableRef:
+    """Annotation marker spelling a :class:`VariableRef` field as the bare variable name.
+
+    Applied through :obj:`VarName`; never written at a field directly.
+
+    A field typed exactly :class:`VariableRef` already says its value is a variable, so the
+    ``{"var": ...}`` tag inside it repeats the field name and nothing else: ``{"var": {"var": "iq"}}``
+    where ``"iq"`` says the same. Union positions keep the tag; see the module docstring for why.
+
+    The JSON side accepts the name and nothing else, so the accepted wire form is exactly the one
+    the schema publishes. The Python side additionally accepts a :class:`VariableRef` instance and a
+    :class:`VarRefDict`, which is what authoring code and the builder pass. That widening is kept
+    out of :meth:`__get_pydantic_json_schema__`, which reports a string in *both* schema modes --
+    otherwise the validation schema would describe an input shape the serialization schema never
+    produces.
+    """
+
+    def __get_pydantic_core_schema__(self, source_type: Any, handler: GetCoreSchemaHandler) -> CoreSchema:
+        """Build the bare-name schema for the annotated :class:`VariableRef` field.
+
+        :param source_type: The annotated type, :class:`VariableRef`.
+        :param handler: The handler generating core schemas, reused for the tagged object form.
+        :return: A core schema reading a name in JSON, and a name, instance or dict in Python.
+        """
+        from_name = core_schema.no_info_after_validator_function(VariableRef, handler.generate_schema(IdentifierStr))
+        return core_schema.json_or_python_schema(
+            json_schema=from_name,
+            python_schema=core_schema.union_schema([from_name, handler(source_type)]),
+            serialization=core_schema.plain_serializer_function_ser_schema(
+                _bare_variable_name, return_schema=core_schema.str_schema()
+            ),
+        )
+
+    def __get_pydantic_json_schema__(self, schema: CoreSchema, handler: GetJsonSchemaHandler) -> JsonSchemaValue:
+        """Report the annotated field as the name it carries on the wire.
+
+        Derived from the JSON side built above -- :obj:`IdentifierStr` -- rather than spelled out
+        as ``{"type": "string"}``: the two say the same thing today, but a constraint added to
+        :obj:`IdentifierStr` belongs in every position that accepts one, and a literal here would
+        keep publishing an unconstrained string while claiming to describe a name.
+
+        The Python side is deliberately not consulted. It widens to a :class:`VariableRef` and a
+        ``{"var": ...}`` dict as authoring sugar, and neither is a form the serializer ever emits.
+
+        :param schema: The core schema built above, whose Python side is wider than the wire form.
+        :param handler: The handler generating JSON schemas, applied to that JSON side.
+        :return: The JSON schema of a variable name, identical in the validation and serialization
+            modes because both are built from the one JSON side.
+        """
+        # Narrowed rather than indexed: ``CoreSchema`` is a union of TypedDicts, and only the
+        # ``json_or_python_schema`` built directly above -- the one this hook is ever handed --
+        # carries a JSON side to read.
+        return handler(cast("core_schema.JsonOrPythonSchema", schema)["json_schema"])
+
+
+type VarName = Annotated[VariableRef, _BareVariableRef()]
+"""A :class:`VariableRef` field whose wire form is the bare variable name ``"iq"``.
+
+Use it wherever a field is typed exactly :class:`VariableRef` -- never inside a union of references,
+where the tag is what tells the members apart.
+"""
 
 
 class ExtRefDict(TypedDict):
@@ -323,20 +351,11 @@ class ExtRefDict(TypedDict):
     """The name of the external symbol being referenced."""
 
 
-type SymbolRef = VariableRef | ExternalRef
-"""Type alias for any reference to a named value: a program variable or an external constant.
-
-:class:`VariableRef` is listed first so that Pydantic's smart union mode resolves a bare string to
-a variable reference, never to an external one."""
-
-type SymbolRefLike = VariableRefLike | ExternalRef | ExtRefDict
-"""Type alias for valid arguments to create :obj:`SymbolRef` values."""
-
-
 class PulseRefDict(TypedDict):
     """Type dict for pulse references.
 
     Example:
+
     .. code-block:: python
 
         {"pulse_name": "<pulse_name>"}
@@ -346,5 +365,35 @@ class PulseRefDict(TypedDict):
     """The name of the pulse being referenced."""
 
 
-type PulseRefLike = str | PulseRef | PulseRefDict
+type PulseRefLike = PulseRef | PulseRefDict
 """Type alias for valid arguments to create :class:`PulseRef` instances."""
+
+
+type SymbolRef = Annotated[VariableRef | ExternalRef, ReferenceDiscriminator()]
+"""Type alias for any reference to a named value: a program variable or an external constant.
+
+Keyed on ``var``/``ext`` by :class:`ReferenceDiscriminator`. Neither member has a shorthand and
+neither is preferred over the other, so there is no resolution order to depend on.
+"""
+
+type SymbolRefLike = VariableRefLike | ExternalRef | ExtRefDict
+"""Type alias for valid arguments to create :obj:`SymbolRef` values."""
+
+
+type ChannelTarget = Annotated[ChannelRef | ExternalRef, ReferenceDiscriminator()]
+"""A channel, named directly or supplied externally: ``"q0_drive"`` or ``{"ext": "q0.drive"}``.
+
+The two are told apart by JSON type -- string versus object -- by
+:class:`ReferenceDiscriminator`, so a malformed channel produces one error naming which of the two
+it failed to be.
+
+An external channel is for a name the calibration store owns: which physical line drives ``q0``
+should no more be hard-coded than ``q0.f01`` is.
+"""
+
+type ChannelRefLike = str | ChannelRef | ExternalRef | ExtRefDict
+"""Type alias for valid arguments to denote a :obj:`ChannelTarget`.
+
+The bare :obj:`str` here is the canonical wire form of a channel, not a convenience -- unlike the
+strings the other ``*Like`` aliases dropped.
+"""

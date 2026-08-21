@@ -4,6 +4,7 @@
 import cmath
 import math
 from cmath import pi as π
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
@@ -24,10 +25,9 @@ from eq1_pulse.models.basic_types import (
 
 
 def test_threshold_schema():
-    """Test the JSON schema of Threshold."""
+    """Test the JSON schema of Threshold: the tagged union of its units, and nothing else."""
     expected_schema = {
-        "anyOf": [
-            {"const": 0, "type": "integer"},
+        "oneOf": [
             {"$ref": "#/$defs/Volts"},
             {"$ref": "#/$defs/Millivolts"},
         ],
@@ -35,6 +35,7 @@ def test_threshold_schema():
     }
     schema = Threshold.model_json_schema()
     definitions = schema.pop("$defs")
+    schema.pop("description")
     assert schema == expected_schema
     # the definitions travel with the schema, so every $ref above resolves
     assert {"Volts", "Millivolts"} <= definitions.keys()
@@ -94,10 +95,9 @@ def test_threshold_invalid_init():
 
 
 def test_angle_schema():
-    """Test the JSON schema of Angle."""
+    """Test the JSON schema of Angle: the tagged union of its units, and nothing else."""
     expected_schema = {
-        "anyOf": [
-            {"const": 0, "type": "integer"},
+        "oneOf": [
             {"$ref": "#/$defs/Degrees"},
             {"$ref": "#/$defs/Radians"},
             {"$ref": "#/$defs/Turns"},
@@ -107,6 +107,7 @@ def test_angle_schema():
     }
     schema = Angle.model_json_schema()
     definitions = schema.pop("$defs")
+    schema.pop("description")
     assert schema == expected_schema
     # the definitions travel with the schema, so every $ref above resolves
     assert {"Degrees", "Radians", "Turns", "HalfTurns"} <= definitions.keys()
@@ -119,11 +120,16 @@ def test_angle_zero_init():
     assert a.rad == 0
 
 
-def test_angle_zero_validate():
-    """Test zero validation of Angle."""
-    a = Angle.model_validate(0)
-    assert a.deg == 0
-    assert a.rad == 0
+def test_angle_zero_is_not_a_wire_form():
+    """The bare ``0`` is a constructor argument, not something ``model_validate`` accepts.
+
+    Zero means the same thing in every unit, which is what made it convenient to write and what
+    made it ambiguous to read back: it was accepted in place of any unit and emitted in exactly
+    one. ``Angle(0)`` is the surviving spelling (issue #10).
+    """
+    with pytest.raises(ValidationError):
+        Angle.model_validate(0)
+    assert Angle(0).deg == 0
 
 
 def test_angle_init_degrees():
@@ -976,18 +982,13 @@ def test_complex_voltage_model_validation():
     assert amp.V == 1.5 + 2j
     assert isinstance(amp, Amplitude)
 
-    # Test Amplitude validation
-    amp = Amplitude.model_validate_json('{"V": "1.5+2j"}')
-    assert amp.V == 1.5 + 2j
-    assert isinstance(amp, Amplitude)
-
     # Test validation with real numbers
     amp = Amplitude.model_validate_json('{"V": 1.5}')
     assert amp.V == 1.5
     assert isinstance(amp, Amplitude)
 
     # Test validation with millivolts
-    amp = Amplitude.model_validate_json('{"mV": "1500+2000j"}')
+    amp = Amplitude.model_validate_json('{"mV": [1500, 2000]}')
     assert amp.mV == 1500 + 2000j
     assert isinstance(amp, Amplitude)
 
@@ -996,7 +997,10 @@ def test_complex_voltage_model_validation():
         Amplitude.model_validate_json('{"V": "invalid"}')
 
     with pytest.raises(ValidationError):
-        Amplitude.model_validate_json('{"V": "1.5+2j", "mV": 1500}')
+        Amplitude.model_validate_json('{"V": "1.5+2j"}')
+
+    with pytest.raises(ValidationError):
+        Amplitude.model_validate_json('{"V": [1.5, 2], "mV": 1500}')
 
     with pytest.raises(ValidationError):
         Amplitude.model_validate_json("{}")
@@ -1048,8 +1052,8 @@ def test_time_model_validation():
 def test_frequency_model_validation():
     """Test JSON model validation for Frequency."""
     # Test each frequency unit
-    freq = Frequency.model_validate_json(" 0 ")
-    assert freq.Hz == 0
+    with pytest.raises(ValidationError):
+        Frequency.model_validate_json(" 0 ")
 
     freq = Frequency.model_validate_json(' {"Hz": 1000000.0} ')
     assert freq.Hz == 1e6
@@ -1071,10 +1075,13 @@ def test_frequency_model_validation():
         Frequency.model_validate_json('{"Hz": 1e6, "MHz": 1.0}')
 
 
-def test_frequency_model_string_data_validation_for_zero():
-    """Test string data JSON model validation for Frequency."""
-    freq = Frequency.model_validate_strings("  0  ")
-    assert freq.Hz == 0
+def test_frequency_bare_zero_string_is_not_a_zero():
+    """Neither ``"0"`` nor ``0`` is a frequency on the wire; ``Frequency(0)`` still is one."""
+    with pytest.raises(ValidationError):
+        Frequency.model_validate_strings("  0  ")
+    with pytest.raises(ValidationError):
+        Frequency.model_validate(0)
+    assert Frequency(0).Hz == 0
 
 
 def test_frequency_model_string_data_validation():
@@ -2110,3 +2117,77 @@ def test_phase_matmul_string_different_angles():
         assert result.V == approx(expected)
         assert result.real.V == approx(expected.real)
         assert result.imag.V == approx(expected.imag)
+
+
+def test_a_bare_operation_tag_is_selected_at_an_operation_union():
+    """An empty-payload operation is spelled as its bare tag, and must be readable back.
+
+    :class:`~eq1_pulse.models.base_models.NestedWireModel` emits ``"sync"`` rather than
+    ``{"sync": {}}`` for an operation whose payload is empty, and publishes that alternative in the
+    schema. Reporting no tag for a string would make the one form the serializer emits unselectable
+    at every union an operation can be reached by. No shipped operation has an all-defaulted
+    payload today, which is exactly why this is pinned on a throwaway one.
+    """
+    from typing import Annotated, Literal
+
+    from pydantic import Field, TypeAdapter
+
+    from eq1_pulse.models.basic_types import OpBase, OperationDiscriminator, op_tag_of
+
+    class Sync(OpBase):
+        op_type: Literal["sync"] = "sync"
+        channels: list[str] = Field(default_factory=list)
+
+    class Halt(OpBase):
+        op_type: Literal["halt"] = "halt"
+        reason: str
+
+    assert op_tag_of("sync") == "sync"
+    # Annotated because pydantic declares model_dump() as dict[str, Any], which the bare tag is not.
+    dumped: Any = Sync().model_dump()
+    assert dumped == "sync"
+
+    adapter: TypeAdapter[Any] = TypeAdapter(list[Annotated[Sync | Halt, OperationDiscriminator()]])
+    document = ["sync", {"halt": {"reason": "done"}}]
+    assert adapter.validate_python(document) == [Sync(), Halt(reason="done")]
+    assert adapter.dump_python([Sync(), Halt(reason="done")]) == document
+
+
+def test_a_nested_operation_union_builds_one_schema_per_leaf_operation():
+    """A sub-union embedded in an outer union is flattened to its leaf operations, not duplicated.
+
+    :data:`~eq1_pulse.models.sequence.DiscriminableOp` embeds
+    :data:`~eq1_pulse.models.channel_ops.ChannelOp` -- itself an :class:`OperationDiscriminator`
+    union -- as one member among several. Before the schema is built each member is expanded down
+    to ``(model, tag)`` pairs and deduplicated by *model*, so ``ChannelOp``'s members do not each
+    get pydantic-core asked to build the whole nested union's schema again, once per tag they
+    reach. This model is used twice -- once directly, once through the nested union -- to pin
+    that the identical case (an operation reachable two ways) collapses too, rather than raising
+    or producing two competing tags for the same model.
+    """
+    from typing import Annotated, Literal
+
+    from pydantic import Field, TypeAdapter
+
+    from eq1_pulse.models.basic_types import OpBase, OperationDiscriminator
+
+    class Sync(OpBase):
+        op_type: Literal["sync"] = "sync"
+        channels: list[str] = Field(default_factory=list)
+
+    class Halt(OpBase):
+        op_type: Literal["halt"] = "halt"
+        reason: str
+
+    InnerOp = Annotated[Sync | Halt, OperationDiscriminator()]
+    # Sync is reachable both directly and through InnerOp -- the duplicate-embedding case.
+    OuterOp = Annotated[Sync | InnerOp, OperationDiscriminator()]
+
+    adapter: TypeAdapter[Any] = TypeAdapter(list[OuterOp])
+    document = ["sync", {"halt": {"reason": "done"}}]
+    assert adapter.validate_python(document) == [Sync(), Halt(reason="done")]
+    assert adapter.dump_python([Sync(), Halt(reason="done")]) == document
+
+    schema = adapter.json_schema()
+    tags = {ref["$ref"].rsplit("/", 1)[-1] for ref in schema["items"]["oneOf"]}
+    assert tags == {"Sync", "Halt"}, "each leaf operation is one schema entry, not one per tag path"

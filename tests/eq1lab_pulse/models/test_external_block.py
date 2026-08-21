@@ -5,10 +5,11 @@ from typing import Any
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-from eq1_pulse.models.basic_types import Amplitude, Duration, Frequency, Magnitude, Phase
+from eq1_pulse.models.basic_types import Amplitude, Duration, Frequency, Magnitude, Phase, Voltage
+from eq1_pulse.models.expressions import BinaryExpr, LiteralExpr, SymbolExpr
 from eq1_pulse.models.external_block import ExternalBlock
 from eq1_pulse.models.pulse_types import SquarePulse
-from eq1_pulse.models.reference_types import ChannelRef, PulseRef, VariableRef
+from eq1_pulse.models.reference_types import ChannelRef, ExternalRef, PulseRef, VariableRef
 from eq1_pulse.models.sequence import DiscriminableOp, OpSequence
 
 
@@ -31,7 +32,7 @@ def test_external_block_role_keyed_channels():
     )
     assert block.channels["drive"] == ChannelRef("q0")
     assert block.channels["readout"] == ChannelRef("q0_ro")
-    assert sorted(block.channels.values(), key=lambda c: c.channel) == [ChannelRef("q0"), ChannelRef("q0_ro")]
+    assert sorted(block.channels.values(), key=repr) == [ChannelRef("q0"), ChannelRef("q0_ro")]
 
 
 def test_external_block_timed():
@@ -50,10 +51,10 @@ def test_external_block_flex():
     block = ExternalBlock(
         program="eq1.cal.cz",
         channels={"a": "q0", "b": "q1"},
-        params={"amp": Amplitude(V=0.5)},
+        params={"amp": Voltage(V=0.5)},
     )
     assert block.duration is None
-    assert block.params == {"amp": Amplitude(V=0.5)}
+    assert block.params == {"amp": Voltage(V=0.5)}
 
 
 def test_external_block_empty_program_pure_reservation():
@@ -66,7 +67,7 @@ def test_external_block_empty_program_pure_reservation():
 @pytest.mark.parametrize(
     ("value", "expected_type"),
     [
-        (Amplitude(V=0.5), Amplitude),
+        (Voltage(V=0.5), Voltage),
         (Duration(s=1e-6), Duration),
         (Frequency(Hz=1e6), Frequency),
         (Phase(rad=1.0), Phase),
@@ -121,7 +122,7 @@ def test_external_block_flex_duration_with_only_compile_time_params_allowed():
     block = ExternalBlock(
         program="eq1.cal.cz",
         channels={"a": "q0", "b": "q1"},
-        params={"amp": Amplitude(V=0.5), "label": "foo"},
+        params={"amp": Voltage(V=0.5), "label": "foo"},
     )
     assert block.duration is None
 
@@ -131,7 +132,7 @@ def test_external_block_json_round_trip():
     block = ExternalBlock(
         program="eq1.cal.measure",
         channels={"drive": "q0", "readout": "q0_ro"},
-        params={"amp": Amplitude(V=0.5)},
+        params={"amp": Voltage(V=0.5)},
         results={"outcome": VariableRef(var="m0")},
         duration=Duration(s=1e-6),
     )
@@ -141,7 +142,7 @@ def test_external_block_json_round_trip():
 
 
 def test_external_block_discriminated_union_dispatch():
-    """Test that ExternalBlock dispatches correctly by op_type in DiscriminableOp."""
+    """Test that ExternalBlock dispatches correctly by its sole wire key in DiscriminableOp."""
     block = ExternalBlock(channels={"drive": "q0"}, duration=Duration(s=1e-6))
     dispatched: Any = TypeAdapter(DiscriminableOp).validate_python(block.model_dump())
     assert isinstance(dispatched, ExternalBlock)
@@ -156,3 +157,28 @@ def test_external_block_nested_in_op_sequence_round_trip():
     restored = OpSequence.model_validate_json(dumped)
     assert restored == seq
     assert isinstance(restored.items[0], ExternalBlock)
+
+
+def test_external_block_channels_accept_an_external_ref():
+    """A channel name can itself be late-bound: the calibration store says which line drives ``q0``.
+
+    That is an :class:`ExternalRef`, keeping the ``{"ext": ...}`` object it has everywhere else, so
+    the field is the two-member :obj:`ChannelTarget` union and the two forms may be mixed.
+    """
+    block = ExternalBlock(
+        channels={"drive": ExternalRef("q0.drive"), "readout": "q0_ro"},
+        duration=Duration(s=1e-6),
+    )
+    assert block.channels == {"drive": ExternalRef("q0.drive"), "readout": ChannelRef("q0_ro")}
+    assert block.model_dump()["external_block"]["channels"] == {"drive": {"ext": "q0.drive"}, "readout": "q0_ro"}
+    assert ExternalBlock.model_validate_json(block.model_dump_json()) == block
+
+
+def test_external_block_duration_accepts_expression():
+    """``ExternalBlock.duration`` accepts an ``Expression``, not just a bare ``SymbolRef``."""
+    duration = BinaryExpr(binary_op="+", lhs=SymbolExpr(symbol=VariableRef("d")), rhs=LiteralExpr(value={"ns": 10}))
+    block = ExternalBlock(channels={"a": "q0"}, duration=duration)
+    assert isinstance(block.duration, BinaryExpr)
+
+    restored = ExternalBlock.model_validate(block.model_dump())
+    assert isinstance(restored.duration, BinaryExpr)
