@@ -13,7 +13,7 @@ from pydantic import (
 from .base_models import NoExtrasModel
 from .basic_types import LinSpace, OpBase, Range
 from .nd_array import NumpyComplexArray1D, NumpyFloatArray1D, NumpyIntArray1D
-from .reference_types import VariableRef
+from .reference_types import SymbolRef, VariableRef
 
 __all__ = "ConditionalBase", "IterationBase", "RepetitionBase"
 
@@ -177,7 +177,7 @@ class ConditionalBase[BodyT](OpBase):
 
     op_type: Literal["if"] = "if"
     """The type discriminator, always "if"."""
-    var: VariableRef
+    var: SymbolRef
     """The variable reference for the condition."""
     body: BodyT
     """The sequence of operations to execute if the condition is met."""

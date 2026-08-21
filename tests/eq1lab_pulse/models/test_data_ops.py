@@ -19,7 +19,7 @@ from eq1_pulse.models.data_ops import (
     VariableDecl,
 )
 from eq1_pulse.models.pulse_types import SquarePulse
-from eq1_pulse.models.reference_types import VariableRef
+from eq1_pulse.models.reference_types import ExternalRef, VariableRef
 
 
 @pytest.fixture
@@ -75,6 +75,18 @@ def test_discriminate_creation(discriminate: Discriminate):
     assert discriminate.rotation.rad == 0.0
     assert discriminate.compare == ComparisonMode.GreaterEqual
     assert discriminate.project == ComplexToRealProjectionMode.RealPart
+
+
+def test_discriminate_target_rejects_external_ref():
+    with pytest.raises(ValueError):
+        Discriminate(
+            target=ExternalRef("q0"),  # type: ignore[arg-type]
+            source="data",
+            threshold={"V": 0.5},
+            rotation={"rad": 0.0},
+            compare=">=",
+            project="real",
+        )
 
 
 def test_store_creation(store: Store):

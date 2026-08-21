@@ -12,7 +12,7 @@ from eq1_pulse.models.pulse_types import (
     SinePulse,
     SquarePulse,
 )
-from eq1_pulse.models.reference_types import PulseRef, VariableRef
+from eq1_pulse.models.reference_types import ExternalRef, PulseRef, VariableRef
 
 """Tests for pulse type models."""
 
@@ -115,6 +115,20 @@ def test_pulse_with_variable_refs():
     assert isinstance(sine.duration, VariableRef)
     assert isinstance(sine.amplitude, VariableRef)
     assert isinstance(sine.frequency, VariableRef)
+
+
+def test_pulse_with_external_refs():
+    """Test creating pulses with external symbol references."""
+    square = SquarePulse(duration=ExternalRef(ext="q0.dur"), amplitude=ExternalRef(ext="q0.amp"))
+    assert isinstance(square.duration, ExternalRef)
+    assert isinstance(square.amplitude, ExternalRef)
+
+    sine = SinePulse(
+        duration=ExternalRef(ext="q0.dur"), amplitude=ExternalRef(ext="q0.amp"), frequency=ExternalRef(ext="q0.freq")
+    )
+    assert isinstance(sine.duration, ExternalRef)
+    assert isinstance(sine.amplitude, ExternalRef)
+    assert isinstance(sine.frequency, ExternalRef)
 
 
 def test_sine_pulse_frequency_sweep():
@@ -493,6 +507,13 @@ def test_external_param_value_pulse_ref():
     assert value.pulse_name == "p1"
 
 
+def test_external_param_value_external_ref():
+    """Test that an ExternalRef instance round-trips through ExternalParamValue."""
+    value: Any = TypeAdapter(ExternalParamValue).validate_python(ExternalRef(ext="q0.f01"))
+    assert isinstance(value, ExternalRef)
+    assert value.ext == "q0.f01"
+
+
 def test_external_param_value_pulse_type():
     """Test that an inline PulseType instance round-trips through ExternalParamValue."""
     inner = SquarePulse(duration=Duration(s=1e-6), amplitude=Amplitude(V=0.5))
@@ -535,6 +556,16 @@ def test_external_param_value_pulse_ref_round_trips_through_json():
     assert dumped == b'{"pulse_ref":"p1"}'
     restored = adapter.validate_json(dumped)
     assert restored == PulseRef(pulse_name="p1")
+
+
+def test_external_param_value_external_ref_round_trips_through_json():
+    """Test that an ExternalRef survives a JSON round-trip through ExternalParamValue, not degrading to str."""
+    adapter: TypeAdapter[Any] = TypeAdapter(ExternalParamValue)
+    dumped = adapter.dump_json(ExternalRef(ext="q0.f01"))
+    assert dumped == b'{"ext":"q0.f01"}'
+    restored = adapter.validate_json(dumped)
+    assert isinstance(restored, ExternalRef)
+    assert restored == ExternalRef(ext="q0.f01")
 
 
 def test_external_param_value_complex_round_trips_through_json():

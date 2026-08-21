@@ -223,7 +223,14 @@ Builder functions. Widening any operation field. `ExternalRef` use anywhere.
 
 ---
 
-## Task 3 — Widen the existing `VariableRef` read sites
+## Task 3 — Widen the existing `VariableRef` read sites ✅ done
+
+**Status:** done, 2026-08-21. `ExternalRef` needed no `_Tagged...` wrapper in `ExternalParamValue`
+unlike `VariableRef`/`PulseRef`: it already never serializes bare (task 1's `_serializes_bare`
+contract), so it round-trips as its own `{"ext": ...}` form without help. Also widened
+`Conditional.__init__`'s `TYPE_CHECKING`-only signature in `sequence.py` (`var: VariableRefLike` →
+`SymbolRefLike`) alongside `ConditionalBase.var` itself — easy to miss since the field type lives on
+the base class but the constructor override lives on the concrete subclass.
 
 **Read:** plan §2 (the first table and the write-site table).
 **Goal:** every field that accepts a `VariableRef` today also accepts an `ExternalRef`.

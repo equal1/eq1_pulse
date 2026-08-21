@@ -6,11 +6,14 @@ from pydantic import TypeAdapter, ValidationError
 
 from eq1_pulse.models import (
     Conditional,
+    ExternalBlock,
+    ExternalRef,
     Iteration,
     LinSpace,
     OpSequence,
     OpSequenceItem,
     Play,
+    PulseRef,
     Range,
     Repetition,
     SquarePulse,
@@ -75,6 +78,23 @@ def test_conditional():
     cond = Conditional(var="flag", body=body)
     assert cond.var == "flag"
     assert cond.body == body
+
+
+def test_conditional_accepts_external_ref():
+    """Test Conditional model accepts an ExternalRef for its var field."""
+    body = OpSequence([])
+    cond = Conditional(var=ExternalRef(ext="q0.flag"), body=body)
+    assert isinstance(cond.var, ExternalRef)
+
+
+def test_iteration_rejects_external_ref():
+    """Test Iteration model rejects an ExternalRef as its loop-binding var (a write site)."""
+    with pytest.raises(ValidationError):
+        Iteration(
+            var=ExternalRef(ext="q0"),  # type: ignore[arg-type]
+            items=Range(start=0, stop=5, step=1),
+            body=OpSequence([]),
+        )
 
 
 def test_nested_sequences():
@@ -217,3 +237,28 @@ def test_iteration_multiple_variables_serialize_json():
         + '["a","b","c"]'
         + '],"body":[]}'
     )
+
+
+def test_sequence_external_param_references_round_trip_without_degrading():
+    """A VariableRef, PulseRef, and ExternalRef in external params keep their own type through JSON."""
+    block = ExternalBlock(
+        channels={"a": "ch1"},
+        duration={"ns": 100},
+        params={
+            "var": VariableRef("x"),
+            "pulse": PulseRef("p1"),
+            "ext": ExternalRef("q0.f01"),
+        },
+    )
+    seq = OpSequence([block])
+    serialized = seq.model_dump_json()
+    deserialized = OpSequence.model_validate_json(serialized)
+    assert deserialized == seq
+
+    restored = deserialized.items[0]
+    assert isinstance(restored, ExternalBlock)
+    params = restored.params
+    assert params is not None
+    assert isinstance(params["var"], VariableRef)
+    assert isinstance(params["pulse"], PulseRef)
+    assert isinstance(params["ext"], ExternalRef)

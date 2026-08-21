@@ -21,7 +21,7 @@ from eq1_pulse.models.channel_ops import (
     Wait,
 )
 from eq1_pulse.models.pulse_types import SquarePulse
-from eq1_pulse.models.reference_types import ChannelRef, VariableRef
+from eq1_pulse.models.reference_types import ChannelRef, ExternalRef, VariableRef
 
 
 def test_barrier_creation():
@@ -201,3 +201,51 @@ def test_trace_with_full_integration_serialization():
     deserialized: Any = TypeAdapter(ChannelOp).validate_json(serialized)
     assert isinstance(deserialized, Trace)
     assert deserialized == original
+
+
+def test_wait_duration_accepts_external_ref():
+    wait_op = Wait("ch1", "ch2", duration=ExternalRef(ext="q0.dur"))
+    assert isinstance(wait_op.duration, ExternalRef)
+    assert wait_op.duration.ext == "q0.dur"
+
+
+def test_play_cond_and_scale_amp_accept_external_ref():
+    pulse = SquarePulse(duration=Duration(s=20e-9), amplitude={"V": 0.5})
+    play = Play(channel="ch1", pulse=pulse, scale_amp=ExternalRef(ext="q0.scale"), cond=ExternalRef(ext="q0.cond"))
+    assert isinstance(play.scale_amp, ExternalRef)
+    assert isinstance(play.cond, ExternalRef)
+
+
+def test_set_frequency_accepts_external_ref():
+    set_freq = SetFrequency(channel="ch1", frequency=ExternalRef(ext="q0.freq"))
+    assert isinstance(set_freq.frequency, ExternalRef)
+
+
+def test_phase_operations_accept_external_ref():
+    set_phase = SetPhase(channel="ch1", phase=ExternalRef(ext="q0.phase"))
+    assert isinstance(set_phase.phase, ExternalRef)
+
+
+def test_record_duration_accepts_external_ref():
+    record = Record(channel="ch1", var="result", duration=ExternalRef(ext="q0.dur"), integration=FullIntegration())
+    assert isinstance(record.duration, ExternalRef)
+
+
+def test_compensate_dc_accepts_external_ref():
+    comp = CompensateDC("ch1", duration=ExternalRef(ext="q0.dur"))
+    assert isinstance(comp.duration, ExternalRef)
+
+
+def test_record_var_rejects_external_ref():
+    with pytest.raises(ValidationError):
+        Record(
+            channel="ch1",
+            var=ExternalRef(ext="q0"),  # type: ignore[arg-type]
+            duration=Duration(s=100e-9),
+            integration=FullIntegration(),
+        )
+
+
+def test_trace_var_rejects_external_ref():
+    with pytest.raises(ValidationError):
+        Trace(channel="ch1", var=ExternalRef(ext="q0"), duration=Duration(s=1e-6))  # type: ignore[arg-type]

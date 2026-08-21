@@ -19,11 +19,11 @@ from .basic_types import Amplitude, Duration, Frequency, Magnitude, Phase
 from .complex import complex_from_tuple
 from .identifier_str import FullyQualifiedIdentifier
 from .nd_array import NumpyArray, NumpyComplexArray1D, NumpyFloatArray1D
-from .reference_types import PulseRef, VariableRef, VarRefDict
+from .reference_types import ExternalRef, ExtRefDict, PulseRef, SymbolRef, VariableRef, VarRefDict
 
 if TYPE_CHECKING:
     from .basic_types import AmplitudeLike, DurationLike, FrequencyLike, MagnitudeLike, PhaseLike
-    from .reference_types import PulseRefLike, VariableRefLike
+    from .reference_types import PulseRefLike, SymbolRefLike, VariableRefLike
 
 __all__ = (
     "ArbitrarySampledPulse",
@@ -45,9 +45,9 @@ class PulseBase(_LeanModel):
 
     pulse_type: Any  # str
     """The type discriminator for pulse types."""
-    duration: Duration | VariableRef
+    duration: Duration | SymbolRef
     """The duration of the pulse."""
-    amplitude: Amplitude | VariableRef
+    amplitude: Amplitude | SymbolRef
     """The amplitude of the pulse."""
 
     if TYPE_CHECKING:
@@ -55,8 +55,8 @@ class PulseBase(_LeanModel):
         def __init__(
             self,
             *,
-            duration: DurationLike | VariableRefLike,
-            amplitude: AmplitudeLike | VariableRefLike,
+            duration: DurationLike | SymbolRefLike,
+            amplitude: AmplitudeLike | SymbolRefLike,
             **data,
         ): ...
 
@@ -72,9 +72,9 @@ class SquarePulse(PulseBase):
 
     pulse_type: Literal["square"] = "square"
     """The type discriminator, always "square"."""
-    rise_time: Duration | VariableRef | None = None
+    rise_time: Duration | SymbolRef | None = None
     """The rise time of the pulse. It's also included in the total duration."""
-    fall_time: Duration | VariableRef | None = None
+    fall_time: Duration | SymbolRef | None = None
     """The fall time of the pulse. It's also included in the total duration."""
 
     if TYPE_CHECKING:
@@ -82,10 +82,10 @@ class SquarePulse(PulseBase):
         def __init__(
             self,
             *,
-            duration: DurationLike | VariableRefLike,
-            amplitude: AmplitudeLike | VariableRefLike,
-            rise_time: DurationLike | VariableRefLike | None = None,
-            fall_time: DurationLike | VariableRefLike | None = None,
+            duration: DurationLike | SymbolRefLike,
+            amplitude: AmplitudeLike | SymbolRefLike,
+            rise_time: DurationLike | SymbolRefLike | None = None,
+            fall_time: DurationLike | SymbolRefLike | None = None,
             **data,
         ): ...
 
@@ -95,9 +95,9 @@ class SinePulse(PulseBase):
 
     pulse_type: Literal["sine"] = "sine"
     """The type discriminator, always "sine"."""
-    frequency: Frequency | VariableRef
+    frequency: Frequency | SymbolRef
     """The frequency of the sine wave."""
-    to_frequency: Frequency | VariableRef | None = None
+    to_frequency: Frequency | SymbolRef | None = None
     """The target frequency for frequency sweeps."""
 
     if TYPE_CHECKING:
@@ -105,10 +105,10 @@ class SinePulse(PulseBase):
         def __init__(
             self,
             *,
-            duration: DurationLike | VariableRefLike,
-            amplitude: AmplitudeLike | VariableRefLike,
-            frequency: FrequencyLike | VariableRefLike,
-            to_frequency: FrequencyLike | VariableRefLike | None = None,
+            duration: DurationLike | SymbolRefLike,
+            amplitude: AmplitudeLike | SymbolRefLike,
+            frequency: FrequencyLike | SymbolRefLike,
+            to_frequency: FrequencyLike | SymbolRefLike | None = None,
             **data,
         ): ...
 
@@ -126,9 +126,9 @@ class ExternalPulse(PulseBase):
     """The type discriminator for external pulses. It is always "external"."""
     function: FullyQualifiedIdentifier
     """The name of the externally defined pulse function to use."""
-    duration: Duration | VariableRef
+    duration: Duration | SymbolRef
     """The duration of the pulse."""
-    amplitude: Amplitude | VariableRef
+    amplitude: Amplitude | SymbolRef
     """The reference amplitude of the pulse. This is usually the peak amplitude."""
     params: dict[str, ExternalParamValue] | None = None
     """Additional parameters to pass to the pulse function."""
@@ -139,8 +139,8 @@ class ExternalPulse(PulseBase):
             self,
             function: FullyQualifiedIdentifier,
             *,
-            duration: DurationLike | VariableRefLike,
-            amplitude: AmplitudeLike | VariableRefLike,
+            duration: DurationLike | SymbolRefLike,
+            amplitude: AmplitudeLike | SymbolRefLike,
             params: dict[str, ExternalParamValueLike] | None = None,
         ): ...
 
@@ -178,8 +178,8 @@ class ArbitrarySampledPulse(PulseBase):
             self,
             samples: list[float] | list[complex] | NumpyArray | VariableRefLike,
             *,
-            duration: DurationLike | VariableRefLike,
-            amplitude: AmplitudeLike | VariableRefLike,
+            duration: DurationLike | SymbolRefLike,
+            amplitude: AmplitudeLike | SymbolRefLike,
             interpolation: str | None = None,
             time_points: list[float] | NumpyArray | None = None,
         ): ...
@@ -313,6 +313,7 @@ type ExternalParamValue = Annotated[
     | Magnitude
     | _TaggedVariableRef
     | _TaggedPulseRef
+    | ExternalRef
     | PulseType
     | ExternalParamScalarValue,
     BeforeValidator(_coerce_dimensional_string),
@@ -328,9 +329,11 @@ is kept as plain :obj:`str`.
 :class:`~.reference_types.VariableRef` and :class:`~.reference_types.PulseRef` are represented as
 tagged dicts (``{"var_ref": name}`` / ``{"pulse_ref": name}``) rather than the bare string they
 would otherwise serialize as, so they round-trip through JSON as their own type instead of
-degrading to :obj:`str`. Construct them explicitly (:class:`~.reference_types.VariableRef` /
-:class:`~.reference_types.PulseRef`) to get a typed reference; a bare string is always kept as
-:obj:`str`, since an arbitrary identifier string is otherwise indistinguishable from one.
+degrading to :obj:`str`. :class:`~.reference_types.ExternalRef` needs no such tagging: it already
+serializes to its wrapped ``{"ext": name}`` form (see :attr:`~.reference_types.Reference._serializes_bare`),
+which is distinguishable from a plain string on its own. Construct any of these explicitly to get a
+typed reference; a bare string is always kept as :obj:`str`, since an arbitrary identifier string is
+otherwise indistinguishable from one.
 """
 type ExternalParamValueLike = (
     AmplitudeLike
@@ -341,6 +344,8 @@ type ExternalParamValueLike = (
     | VariableRef
     | VarRefDict
     | PulseRefLike
+    | ExternalRef
+    | ExtRefDict
     | PulseType
     | ExternalParamScalarValue
 )

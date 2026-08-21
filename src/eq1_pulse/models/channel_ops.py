@@ -14,11 +14,11 @@ from pydantic import Discriminator
 from .base_models import LeanModel
 from .basic_types import Duration, Frequency, Magnitude, OpBase, Phase
 from .pulse_types import PulseType
-from .reference_types import ChannelRef, PulseRef, VariableRef
+from .reference_types import ChannelRef, PulseRef, SymbolRef, VariableRef
 
 if TYPE_CHECKING:
     from .basic_types import DurationLike, FrequencyLike, MagnitudeLike, PhaseLike
-    from .reference_types import ChannelRefLike, PulseRefLike, VariableRefLike
+    from .reference_types import ChannelRefLike, PulseRefLike, SymbolRefLike, VariableRefLike
 
 __all__ = (
     "Barrier",
@@ -91,10 +91,10 @@ class Play(ChannelOpBase):
     pulse: PulseType | PulseRef
     """The pulse to be played on the channel."""
 
-    scale_amp: float | complex | VariableRef | None = None
+    scale_amp: float | complex | SymbolRef | None = None
     """Optional amplitude scaling factor for the pulse."""
 
-    cond: VariableRef | None = None
+    cond: SymbolRef | None = None
     """Optional condition variable to control whether the pulse is played."""
 
     def __init__(self, channel: ChannelRefLike, pulse: PulseType | PulseRefLike, **data):  # noqa: D107
@@ -158,19 +158,19 @@ class Wait(ChannelsOpBase):
 
     op_type: Literal["wait"] = "wait"
     """The type discriminator, always "wait"."""
-    duration: Duration | VariableRef
+    duration: Duration | SymbolRef
     """The duration to wait."""
 
     if TYPE_CHECKING:
 
         @overload
         def __init__(
-            self, /, *, channels: list[ChannelRefLike], duration: Duration | dict[str, float] | VariableRef, **data
+            self, /, *, channels: list[ChannelRefLike], duration: Duration | dict[str, float] | SymbolRefLike, **data
         ): ...
 
         @overload
         def __init__(
-            self, /, *channels: ChannelRefLike, duration: Duration | dict[str, float] | VariableRefLike, **data
+            self, /, *channels: ChannelRefLike, duration: Duration | dict[str, float] | SymbolRefLike, **data
         ): ...
 
         def __init__(self, *args, **data): ...  # noqa: D107
@@ -182,10 +182,10 @@ class SetFrequency(ChannelOpBase):
     op_type: Literal["set_frequency"] = "set_frequency"
     """The operation type discriminator, always set to "set_frequency"."""
 
-    frequency: Frequency | VariableRef
+    frequency: Frequency | SymbolRef
     """The frequency to set."""
 
-    def __init__(self, channel: ChannelRefLike, frequency: FrequencyLike | VariableRefLike, **data):  # noqa: D107
+    def __init__(self, channel: ChannelRefLike, frequency: FrequencyLike | SymbolRefLike, **data):  # noqa: D107
         super().__init__(channel=channel, frequency=frequency, **data)
 
 
@@ -194,10 +194,10 @@ class ShiftFrequency(ChannelOpBase):
 
     op_type: Literal["shift_frequency"] = "shift_frequency"
     """The operation type discriminator, always set to "shift_frequency"."""
-    frequency: Frequency | VariableRef
+    frequency: Frequency | SymbolRef
     """The frequency shift to apply."""
 
-    def __init__(self, /, channel: ChannelRefLike, frequency: FrequencyLike | VariableRefLike, **data):  # noqa: D107
+    def __init__(self, /, channel: ChannelRefLike, frequency: FrequencyLike | SymbolRefLike, **data):  # noqa: D107
         super().__init__(channel=channel, frequency=frequency, **data)
 
 
@@ -206,10 +206,10 @@ class SetPhase(ChannelOpBase):
 
     op_type: Literal["set_phase"] = "set_phase"
     """The type discriminator, always "set_phase"."""
-    phase: Phase | VariableRef
+    phase: Phase | SymbolRef
     """The phase to set."""
 
-    def __init__(self, /, channel: ChannelRefLike, phase: PhaseLike | VariableRefLike, **data):  # noqa: D107
+    def __init__(self, /, channel: ChannelRefLike, phase: PhaseLike | SymbolRefLike, **data):  # noqa: D107
         super().__init__(channel=channel, phase=phase, **data)
 
 
@@ -218,10 +218,10 @@ class ShiftPhase(ChannelOpBase):
 
     op_type: Literal["shift_phase"] = "shift_phase"
     """The type discriminator, always "shift_phase"."""
-    phase: Phase | VariableRef
+    phase: Phase | SymbolRef
     """The phase shift to apply."""
 
-    def __init__(self, /, channel: ChannelRefLike, phase: PhaseLike | VariableRefLike, **data):  # noqa: D107
+    def __init__(self, /, channel: ChannelRefLike, phase: PhaseLike | SymbolRefLike, **data):  # noqa: D107
         super().__init__(channel=channel, phase=phase, **data)
 
 
@@ -243,7 +243,7 @@ class Record(ChannelOpBase):
     """The type discriminator, always "record"."""
     var: VariableRef
     """The variable to store the acquisition result."""
-    duration: Duration | VariableRef
+    duration: Duration | SymbolRef
     """The duration of the acquisition."""
     integration: FullIntegration | DemodIntegration
     """The integration method to use."""
@@ -258,7 +258,7 @@ class Record(ChannelOpBase):
             channel: ChannelRefLike,
             *,
             var: VariableRefLike,
-            duration: DurationLike | VariableRefLike,
+            duration: DurationLike | SymbolRefLike,
             integration: FullIntegration | DemodIntegration = ...,
             time_of_flight: Duration | dict[str, float] | None = None,
             **data,
@@ -282,7 +282,7 @@ class Trace(ChannelOpBase):
     """The type discriminator, always "trace"."""
     var: VariableRef
     """The array variable to store the trace data."""
-    duration: Duration | VariableRef
+    duration: Duration | SymbolRef
     """The total duration of the trace acquisition."""
     integration: FullIntegration | DemodIntegration | None = None
     """The integration method to use."""
@@ -297,7 +297,7 @@ class Trace(ChannelOpBase):
             channel: ChannelRefLike,
             *,
             var: VariableRef | str,
-            duration: DurationLike | VariableRefLike,
+            duration: DurationLike | SymbolRefLike,
             integration: FullIntegration | DemodIntegration = ...,
             time_of_flight: Duration | dict[str, float] | None = None,
             **data,
@@ -324,15 +324,15 @@ class CompensateDC(ChannelOpBase):
 
     op_type: Literal["dc_comp"] = "dc_comp"
     """The type discriminator, always "dc_comp"."""
-    duration: Duration | VariableRef | None
+    duration: Duration | SymbolRef | None
     """If :obj:`None`, reset channel-accumulated value without playing anything."""
 
     max_amp: Magnitude | None = None
     """Maximum amplitude limit for the compensation pulse."""
 
-    rise_time: Duration | VariableRef | None = None
+    rise_time: Duration | SymbolRef | None = None
     """Duration of the rising edge ramp."""
-    fall_time: Duration | VariableRef | None = None
+    fall_time: Duration | SymbolRef | None = None
     """Duration of the falling edge ramp."""
 
     if TYPE_CHECKING:
@@ -342,7 +342,7 @@ class CompensateDC(ChannelOpBase):
             /,
             channel: ChannelRefLike,
             *,
-            duration: DurationLike | VariableRefLike | None,
+            duration: DurationLike | SymbolRefLike | None,
             max_amp: MagnitudeLike | None = None,
             **data,
         ): ...
