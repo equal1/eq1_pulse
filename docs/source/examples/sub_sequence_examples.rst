@@ -73,6 +73,6 @@ Execute the complete example script:
 See Also
 --------
 
-* :doc:`sub_schedule_examples` - Sub-schedule examples with explicit timing
+* :doc:`/experimental/schedule` - Sub-schedule examples with explicit timing (unused, experimental)
 * :doc:`/user_guide/builder_guide` - Builder interface documentation
 * :doc:`/autoapi/eq1_pulse/builder/index` - Builder API reference

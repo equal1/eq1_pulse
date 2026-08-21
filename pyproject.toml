@@ -131,12 +131,20 @@ pydocstyle.convention = "pep257"
 "examples/*.{py, ipynb}" = ["F403", "F405", "SIM117"]
 [tool.pytest.ini_options]
 pythonpath = "src"
-addopts = "--cov=src"
+# importlib avoids sys.modules collisions between same-named test files in different
+# directories (e.g. test_builder.py under tests/ and tests/experimental/); the tree has
+# no __init__.py files, so the default "prepend" import mode cannot tell them apart.
+addopts = "--cov=src --import-mode=importlib"
 testpaths = ["tests"]
 log_cli = false
 log_cli_level = "DEBUG"
 log_cli_format = "%(asctime)s [%(levelname)8s] %(message)s (%(filename)s:%(lineno)s)"
 log_cli_date_format = "%Y-%m-%d %H:%M:%S %z"
+filterwarnings = [
+    # Surface every occurrence rather than deduping by location: build_schedule() warns once
+    # per context entry, and tests assert on that count (see test_module_boundaries.py, G6).
+    "always::FutureWarning",
+]
 
 [tool.mypy]
 # Some mypy configurations

@@ -3,7 +3,6 @@
 import pytest
 
 from eq1_pulse.builder import (
-    build_schedule,
     build_sequence,
     demod_integration,
     discriminate,
@@ -133,20 +132,6 @@ class TestVariableDeclarationVerification:
             var_decl("data", "complex", unit="mV")
             # Should succeed
             store("key", source=var("data"))
-
-    def test_variable_in_schedule_context(self):
-        """Test that variable verification works in schedule context."""
-        with build_schedule():
-            var_decl("my_var", "complex", unit="mV")
-
-            # Should succeed
-            record("ch1", var="my_var", duration="1us", integration=demod_integration())
-
-    def test_undeclared_variable_in_schedule_raises_error(self):
-        """Test that undeclared variable in schedule raises error."""
-        with build_schedule():
-            with pytest.raises(RuntimeError, match="Variable 'undeclared' has not been declared"):
-                record("ch1", var=var("undeclared"), duration="1us", integration=demod_integration())
 
     def test_measure_with_undeclared_variable_raises_error(self):
         """Test that measure with undeclared result variable raises error."""

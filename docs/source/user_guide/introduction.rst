@@ -9,7 +9,7 @@ Overview
 The library is designed to:
 
 * Provide a **hardware-agnostic** representation of pulse programs
-* Support both **sequence-based** (ordered operations) and **schedule-based** (timed operations) programming models
+* Represent programs as **sequences**: ordered operations with implicit, earliest-possible-start timing
 * Enable **control flow** including loops, conditionals, and branching
 * Offer a **builder interface** for intuitive pulse program construction
 * Support **quantum measurements** with discrimination and conditional feedback
@@ -29,8 +29,10 @@ Flexible Programming Models
 **Sequences**
     Ordered operations where timing is implicit. Each operation follows the previous one on the same channel.
 
-**Schedules**
-    Explicitly timed operations with precise control over when each operation starts, using reference points and relative timing.
+.. note::
+
+    An explicitly-timed **schedule** model also exists (:mod:`eq1_pulse.builder.experimental`), but it is
+    unused and scheduled for removal -- see :doc:`/experimental/schedule`.
 
 Rich Type System
 ~~~~~~~~~~~~~~~~
@@ -118,6 +120,22 @@ Pulses are waveforms with defined shape, duration, amplitude, and optional frequ
 * **Sine pulse** - (complex) sinusoidal waveform, optionally a chirp signal
 * **Externally defined pulse** - functions generating the waveform, such as Gaussian or DRAG pulses
 * **Arbitrary pulse** - user-defined waveform samples with interpolation
+
+Channel Model Assumptions
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+These assumptions are load-bearing for anyone reading the IR, so they are written down explicitly
+rather than left implicit:
+
+* A channel *is* a ``(port, clock)`` pair carrying its own frame implicitly -- there is no separate
+  frame object.
+* All clocks are NCOs synchronised to one global clock, so all channels are mutually
+  phase-coherent; phase relationships between channels never need explicit modelling.
+* Multiple channels may resolve onto one physical port.
+* Virtual channels absorb baseband and gate-virtualisation mappings, primarily for capacitive-coupling
+  compensation.
+* The representation that resolves channels onto shared physical ports (channel mapping) is
+  **future work** and is not part of this IR today.
 
 Basic Types
 ~~~~~~~~~~~

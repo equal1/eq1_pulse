@@ -97,6 +97,30 @@ def test_save_openapi_schema_json():
         assert "components" in loaded_schema
 
 
+def test_experimental_schema_components_are_tagged():
+    """Test that schemas generated from eq1_pulse.models.experimental carry the "experimental" tag.
+
+    A top-level tag only documents that the tag exists; it must also be attached to the
+    components those experimental models actually produce.
+    """
+    schema = generate_openapi_schema()
+    schemas = schema["components"]["schemas"]
+
+    experimental_models = [model for model in get_all_pydantic_models() if "experimental" in model.__module__]
+    assert experimental_models, "Expected at least one experimental model to check"
+
+    for model in experimental_models:
+        assert schemas[model.__name__].get("tags") == ["experimental"], (
+            f"{model.__name__} is generated from {model.__module__} and should be tagged 'experimental'"
+        )
+
+    non_experimental_names = {model.__name__ for model in get_all_pydantic_models()} - {
+        model.__name__ for model in experimental_models
+    }
+    for name in non_experimental_names:
+        assert "tags" not in schemas.get(name, {}), f"{name} should not carry the 'experimental' tag"
+
+
 def test_save_openapi_schema_yaml():
     """Test saving schema to YAML format."""
     pytest.importorskip("ruamel.yaml")  # Skip if ruamel.yaml not installed

@@ -484,16 +484,20 @@ Storage modes:
 Using Schedules
 ---------------
 
-For explicit timing control, use schedules instead of sequences:
+For explicit timing control, schedules provide reference-point positioning instead of
+implicit sequential ordering. Schedules are an unused, experimental API pending removal —
+see :mod:`eq1_pulse.builder.experimental`. New code should express timing with sequences.
 
 .. code-block:: python
 
-    with build_schedule() as sched:
+    from eq1_pulse.builder import experimental
+
+    with experimental.build_schedule() as sched:
         # First operation (starts at default time)
-        op1 = play("qubit", square_pulse(duration="100ns", amplitude="50mV"))
+        op1 = experimental.play("qubit", square_pulse(duration="100ns", amplitude="50mV"))
 
         # Second operation starts 500ns after first one ends
-        op2 = play(
+        op2 = experimental.play(
             "qubit",
             square_pulse(duration="100ns", amplitude="30mV"),
             ref_op=op1,
@@ -502,7 +506,7 @@ For explicit timing control, use schedules instead of sequences:
         )
 
         # Readout starts when second pulse starts
-        play(
+        experimental.play(
             "readout",
             square_pulse(duration="1us", amplitude="20mV"),
             ref_op=op2,
@@ -518,7 +522,7 @@ Schedule Diagram
    :align: center
    :caption: Schedule showing ref_op timing relationships between operations.
 
-   from schedule_refop_diagram import create_schedule_refop_diagram
+   from experimental.schedule_refop_diagram import create_schedule_refop_diagram
    create_schedule_refop_diagram()
 
 Working with Different Pulse Shapes

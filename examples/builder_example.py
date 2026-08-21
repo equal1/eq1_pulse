@@ -24,6 +24,7 @@ from eq1_pulse.models import LinSpace
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from eq1_pulse.builder import *
+from eq1_pulse.builder import experimental
 
 
 def example_simple_sequence():
@@ -56,12 +57,12 @@ def example_schedule_with_positioning():
     print("Example 2: Schedule with Relative Positioning")
     print("=" * 70)
 
-    with build_schedule() as sched:
+    with experimental.build_schedule() as sched:
         # First operation starts at default time
-        op1 = play("qubit", square_pulse(duration="10us", amplitude="100mV"), op_name="drive_pulse")
+        op1 = experimental.play("qubit", square_pulse(duration="10us", amplitude="100mV"), op_name="drive_pulse")
 
         # Second operation starts 5us after the first one ends
-        op2 = play(
+        op2 = experimental.play(
             "qubit",
             square_pulse(duration="10us", amplitude="50mV"),
             ref_op=op1,
@@ -71,7 +72,7 @@ def example_schedule_with_positioning():
         )
 
         # Readout happens at the same time as second pulse
-        wait("readout", duration="10us", ref_op=op2, ref_pt="start", ref_pt_new="start", rel_time=0)
+        experimental.wait("readout", duration="10us", ref_op=op2, ref_pt="start", ref_pt_new="start", rel_time=0)
 
     print(f"Created schedule with {len(sched.items)} operations")
     print(sched.model_dump_json(indent=2))

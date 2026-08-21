@@ -18,6 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from eq1_pulse.builder import *
+from eq1_pulse.builder import experimental
 
 
 def example_basic_discriminate():
@@ -107,12 +108,12 @@ def example_discriminate_in_schedule():
     print("Example 3: Discriminate in Schedule")
     print("=" * 70)
 
-    with build_schedule() as sched:
-        var_decl("result", "complex", unit="mV")
-        var_decl("bit", "bool")
+    with experimental.build_schedule() as sched:
+        experimental.var_decl("result", "complex", unit="mV")
+        experimental.var_decl("bit", "bool")
 
         # Perform measurement via sensor
-        meas_op = measure(
+        meas_op = experimental.measure(
             "readout",
             result_var="result",
             duration="1us",
@@ -122,7 +123,7 @@ def example_discriminate_in_schedule():
         )
 
         # Discriminate immediately after measurement
-        discriminate(
+        experimental.discriminate(
             target="bit",
             source="result",
             threshold="0.5mV",

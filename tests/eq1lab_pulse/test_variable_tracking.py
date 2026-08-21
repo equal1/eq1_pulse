@@ -3,7 +3,6 @@
 import pytest
 
 from eq1_pulse.builder import (
-    build_schedule,
     build_sequence,
     discriminate,
     for_,
@@ -156,21 +155,6 @@ class TestVariableDeclarationTracking:
         with pytest.raises(RuntimeError, match="Variable 'x' has not been declared"):
             with build_sequence():
                 var("x")  # Should fail - different context
-
-    def test_var_in_schedule_context(self):
-        """Test variable tracking in schedule context."""
-        with build_schedule():
-            var_decl("x", "int")
-            # Should work in schedule context
-            var_ref = var("x")
-            assert var_ref.var == "x"
-
-    def test_duplicate_var_in_schedule_raises_error(self):
-        """Test that duplicate variable declaration in schedule context raises error."""
-        with pytest.raises(RuntimeError, match="Variable 'x' is already declared"):
-            with build_schedule():
-                var_decl("x", "int")
-                var_decl("x", "float")  # Duplicate
 
 
 class TestVariableTrackingWithOperations:

@@ -15,10 +15,12 @@ from pathlib import Path
 import pytest
 
 import eq1_pulse.builder as builder
+import eq1_pulse.builder.experimental as experimental_builder
 
 REPO_ROOT = Path(__file__).parent.parent
 DOC_ROOT = REPO_ROOT / "docs" / "source"
 SRC_ROOT = REPO_ROOT / "src"
+EXPERIMENTAL_ROOT = SRC_ROOT / "eq1_pulse" / "builder" / "experimental"
 
 CODE_BLOCK_RE = re.compile(r"^(\s*)\.\. code-block:: python\s*$")
 
@@ -36,11 +38,27 @@ def _signature_of(obj: object) -> inspect.Signature | None:
         return None
 
 
-BUILDER_SIGNATURES = {
-    name: signature
-    for name in builder.__all__
-    if callable(obj := getattr(builder, name)) and (signature := _signature_of(obj)) is not None
-}
+def _signatures_of(module: object, names: tuple[str, ...]) -> dict[str, inspect.Signature]:
+    """Collect the real signatures of a builder module's exports.
+
+    :param module: The module the names live on
+    :param names: The module's ``__all__``
+
+    :return: Exported name -> its signature, for every export that has one
+    """
+    return {
+        name: signature
+        for name in names
+        if callable(obj := getattr(module, name)) and (signature := _signature_of(obj)) is not None
+    }
+
+
+# The sequence API (``eq1_pulse.builder``) and the unused, experimental schedule API
+# (``eq1_pulse.builder.experimental``) give the same names (``play``, ``build_schedule``
+# in one, not the other, but e.g. ``play`` in both) different signatures. A snippet's
+# calls must bind against whichever API it is actually demonstrating.
+BUILDER_SIGNATURES = _signatures_of(builder, builder.__all__)
+EXPERIMENTAL_SIGNATURES = _signatures_of(experimental_builder, experimental_builder.__all__)
 
 
 def _extract_python_blocks(text: str) -> list[tuple[int, str]]:
@@ -121,10 +139,37 @@ def _is_pseudo_code(code: str) -> bool:
     return len(body) == 1 and "*" in body[0] and re.fullmatch(r"[\w.]+\(.*\)", body[0].strip()) is not None
 
 
-def _mismatches(code: str) -> list[str]:
+def _called_name_and_signature(
+    func: ast.expr, signatures: dict[str, inspect.Signature]
+) -> tuple[str, inspect.Signature] | None:
+    """Resolve a call's callee to a name and its real signature.
+
+    Handles both bare calls (``play(...)``), checked against ``signatures``, and
+    module-qualified calls (``experimental.play(...)``), which always demonstrate the
+    experimental API and so are checked against :data:`EXPERIMENTAL_SIGNATURES`
+    regardless of which ``signatures`` map the snippet is otherwise being checked against.
+
+    :param func: The ``func`` expression of an ``ast.Call`` node
+    :param signatures: Exported name -> real signature, for the API the snippet demonstrates
+
+    :return: The resolved name and its signature, or :obj:`None` if it doesn't match a known export
+    """
+    if isinstance(func, ast.Name):
+        if (signature := signatures.get(func.id)) is not None:
+            return func.id, signature
+        return None
+    if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) and func.value.id == "experimental":
+        if (signature := EXPERIMENTAL_SIGNATURES.get(func.attr)) is not None:
+            return func.attr, signature
+        return None
+    return None
+
+
+def _mismatches(code: str, signatures: dict[str, inspect.Signature] = BUILDER_SIGNATURES) -> list[str]:
     """Bind every builder call in a snippet against the real signature.
 
     :param code: The snippet to check
+    :param signatures: Exported name -> real signature, for the API the snippet demonstrates
 
     :return: A description of each call that could not be bound
     """
@@ -135,11 +180,12 @@ def _mismatches(code: str) -> list[str]:
 
     problems: list[str] = []
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+        if not isinstance(node, ast.Call):
             continue
-        signature = BUILDER_SIGNATURES.get(node.func.id)
-        if signature is None:
+        resolved = _called_name_and_signature(node.func, signatures)
+        if resolved is None:
             continue
+        name, signature = resolved
         # a starred argument hides the real arity, so it cannot be bound here
         if any(isinstance(arg, ast.Starred) for arg in node.args) or any(kw.arg is None for kw in node.keywords):
             continue
@@ -147,7 +193,7 @@ def _mismatches(code: str) -> list[str]:
         try:
             signature.bind(*[None] * len(node.args), **{kw.arg: None for kw in node.keywords if kw.arg})
         except TypeError as error:
-            problems.append(f"line {node.lineno}: {node.func.id}(): {error}")
+            problems.append(f"line {node.lineno}: {name}(): {error}")
 
     return problems
 
@@ -171,10 +217,11 @@ def test_documentation_snippets_match_the_api(path: Path):
 @pytest.mark.parametrize("path", SOURCE_FILES, ids=lambda p: str(p.relative_to(REPO_ROOT)))
 def test_docstring_snippets_match_the_api(path: Path):
     """Test that docstring snippets call builder functions with valid arguments."""
+    signatures = EXPERIMENTAL_SIGNATURES if EXPERIMENTAL_ROOT in path.parents else BUILDER_SIGNATURES
     failures = [
         f"{path.relative_to(REPO_ROOT)}:{lineno}: {problem}"
         for lineno, code in _docstring_blocks(path)
         if not _is_pseudo_code(code)
-        for problem in _mismatches(code)
+        for problem in _mismatches(code, signatures)
     ]
     assert not failures, "docstrings do not match the builder API:\n" + "\n".join(failures)
