@@ -21,7 +21,7 @@ from eq1_pulse.models.channel_ops import (
     Wait,
 )
 from eq1_pulse.models.pulse_types import SquarePulse
-from eq1_pulse.models.reference_types import ChannelRef, VariableRef
+from eq1_pulse.models.reference_types import ChannelRef, ExternalRef, VariableRef
 
 
 def test_barrier_creation():
@@ -201,3 +201,121 @@ def test_trace_with_full_integration_serialization():
     deserialized: Any = TypeAdapter(ChannelOp).validate_json(serialized)
     assert isinstance(deserialized, Trace)
     assert deserialized == original
+
+
+def test_wait_duration_accepts_external_ref():
+    wait_op = Wait("ch1", "ch2", duration=ExternalRef(ext="q0.dur"))
+    assert isinstance(wait_op.duration, ExternalRef)
+    assert wait_op.duration.ext == "q0.dur"
+
+
+def test_play_cond_and_scale_amp_accept_external_ref():
+    pulse = SquarePulse(duration=Duration(s=20e-9), amplitude={"V": 0.5})
+    play = Play(channel="ch1", pulse=pulse, scale_amp=ExternalRef(ext="q0.scale"), cond=ExternalRef(ext="q0.cond"))
+    assert isinstance(play.scale_amp, ExternalRef)
+    assert isinstance(play.cond, ExternalRef)
+
+
+def test_set_frequency_accepts_external_ref():
+    set_freq = SetFrequency(channel="ch1", frequency=ExternalRef(ext="q0.freq"))
+    assert isinstance(set_freq.frequency, ExternalRef)
+
+
+def test_phase_operations_accept_external_ref():
+    set_phase = SetPhase(channel="ch1", phase=ExternalRef(ext="q0.phase"))
+    assert isinstance(set_phase.phase, ExternalRef)
+
+
+def test_record_duration_accepts_external_ref():
+    record = Record(channel="ch1", var="result", duration=ExternalRef(ext="q0.dur"), integration=FullIntegration())
+    assert isinstance(record.duration, ExternalRef)
+
+
+def test_compensate_dc_accepts_external_ref():
+    comp = CompensateDC("ch1", duration=ExternalRef(ext="q0.dur"))
+    assert isinstance(comp.duration, ExternalRef)
+
+
+def test_record_var_rejects_external_ref():
+    with pytest.raises(ValidationError):
+        Record(
+            channel="ch1",
+            var=ExternalRef(ext="q0"),  # type: ignore[arg-type]
+            duration=Duration(s=100e-9),
+            integration=FullIntegration(),
+        )
+
+
+def test_trace_var_rejects_external_ref():
+    with pytest.raises(ValidationError):
+        Trace(channel="ch1", var=ExternalRef(ext="q0"), duration=Duration(s=1e-6))  # type: ignore[arg-type]
+
+
+def test_record_time_of_flight_accepts_variable_and_external_ref():
+    record = Record(
+        channel="ch1",
+        var="result",
+        duration=Duration(s=100e-9),
+        integration=FullIntegration(),
+        time_of_flight=VariableRef("tof"),
+    )
+    assert isinstance(record.time_of_flight, VariableRef)
+
+    record = Record(
+        channel="ch1",
+        var="result",
+        duration=Duration(s=100e-9),
+        integration=FullIntegration(),
+        time_of_flight=ExternalRef(ext="q0.tof"),
+    )
+    assert isinstance(record.time_of_flight, ExternalRef)
+
+    # Still accepts its literal form.
+    record = Record(
+        channel="ch1",
+        var="result",
+        duration=Duration(s=100e-9),
+        integration=FullIntegration(),
+        time_of_flight=Duration(ns=20),
+    )
+    assert isinstance(record.time_of_flight, Duration)
+
+
+def test_trace_time_of_flight_accepts_variable_and_external_ref():
+    trace = Trace(channel="ch1", var="trace_data", duration=Duration(s=1e-6), time_of_flight=VariableRef("tof"))
+    assert isinstance(trace.time_of_flight, VariableRef)
+
+    trace = Trace(channel="ch1", var="trace_data", duration=Duration(s=1e-6), time_of_flight=ExternalRef(ext="q0.tof"))
+    assert isinstance(trace.time_of_flight, ExternalRef)
+
+
+def test_compensate_dc_max_amp_accepts_variable_and_external_ref():
+    comp = CompensateDC("ch1", duration=Duration(s=50e-9), max_amp=VariableRef("amp"))
+    assert isinstance(comp.max_amp, VariableRef)
+
+    comp = CompensateDC("ch1", duration=Duration(s=50e-9), max_amp=ExternalRef(ext="q0.max_amp"))
+    assert isinstance(comp.max_amp, ExternalRef)
+
+    # Still accepts its literal form.
+    comp = CompensateDC("ch1", duration=Duration(s=50e-9), max_amp=Magnitude(V=0.5))
+    assert isinstance(comp.max_amp, Magnitude)
+
+
+def test_demod_integration_phase_accepts_variable_and_external_ref():
+    demod = DemodIntegration(phase=VariableRef("phi"))
+    assert isinstance(demod.phase, VariableRef)
+
+    demod = DemodIntegration(phase=ExternalRef(ext="q0.phase"))
+    assert isinstance(demod.phase, ExternalRef)
+
+
+def test_demod_integration_scale_cos_sin_accept_variable_and_external_ref():
+    demod = DemodIntegration(scale_cos=VariableRef("sc"), scale_sin=ExternalRef(ext="q0.ss"))
+    assert isinstance(demod.scale_cos, VariableRef)
+    assert isinstance(demod.scale_sin, ExternalRef)
+
+
+def test_demod_integration_scale_cos_sin_default_still_elided():
+    """Widening scale_cos/scale_sin to accept a SymbolRef must not perturb LeanModel's default elision."""
+    demod = DemodIntegration()
+    assert demod.model_dump() == {"integration_type": "demod"}

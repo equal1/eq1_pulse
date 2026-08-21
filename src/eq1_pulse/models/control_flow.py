@@ -1,7 +1,7 @@
 """Base models for control flow operations."""
 
 from collections.abc import Iterable, Mapping
-from typing import TYPE_CHECKING, Any, Literal, Self, overload
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Self, overload
 
 from pydantic import (
     ConfigDict,
@@ -13,7 +13,7 @@ from pydantic import (
 from .base_models import NoExtrasModel
 from .basic_types import LinSpace, OpBase, Range
 from .nd_array import NumpyComplexArray1D, NumpyFloatArray1D, NumpyIntArray1D
-from .reference_types import VariableRef
+from .reference_types import SymbolRef, VariableRef
 
 __all__ = "ConditionalBase", "IterationBase", "RepetitionBase"
 
@@ -111,8 +111,12 @@ class RepetitionBase[BodyT](OpBase):
 
     op_type: Literal["repeat"] = "repeat"
     """The type discriminator, always "repeat"."""
-    count: int = Field(ge=0)
-    """Number of times to repeat the sequence."""
+    count: Annotated[int, Field(ge=0)] | SymbolRef
+    """Number of times to repeat the sequence.
+
+    The literal branch keeps its ``ge=0`` constraint; there is nothing to constrain on the symbol
+    branch, which is the "declare, never enforce" split every other symbol value follows.
+    """
     body: BodyT
     """The sequence of operations to repeat."""
 
@@ -177,7 +181,7 @@ class ConditionalBase[BodyT](OpBase):
 
     op_type: Literal["if"] = "if"
     """The type discriminator, always "if"."""
-    var: VariableRef
+    var: SymbolRef
     """The variable reference for the condition."""
     body: BodyT
     """The sequence of operations to execute if the condition is met."""

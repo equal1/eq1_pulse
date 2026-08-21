@@ -7,13 +7,14 @@ conversion between the units should be automatic.
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING, Any, Literal, Union
+from typing import TYPE_CHECKING, Any, Union
 
 if TYPE_CHECKING:
     pass
 
-from pydantic import TypeAdapter, model_validator
-from pydantic.json_schema import DEFAULT_REF_TEMPLATE, GenerateJsonSchema, JsonSchemaMode
+from pydantic import GetJsonSchemaHandler, TypeAdapter, model_validator
+from pydantic.json_schema import JsonSchemaValue
+from pydantic_core import CoreSchema
 
 from .arithmetic import (
     SupportUnitArithmeticOperations,
@@ -70,27 +71,37 @@ class BaseUnit(FrozenModel):
         return data
 
     @classmethod
-    def model_json_schema(
-        cls,
-        by_alias: bool = True,
-        ref_template: str = DEFAULT_REF_TEMPLATE,
-        schema_generator: type[GenerateJsonSchema] = GenerateJsonSchema,
-        mode: JsonSchemaMode = "validation",
-        *,
-        union_format: Literal["any_of", "primitive_type_array"] = "any_of",
-    ) -> dict[str, Any]:
-        """Generate the JSON schema for the model, adjusting for wrapped value representation."""
-        base_schema = super().model_json_schema(
-            by_alias=by_alias,
-            ref_template=ref_template,
-            schema_generator=schema_generator,
-            mode=mode,
-            union_format=union_format,
-        )
+    def __get_pydantic_json_schema__(cls, core_schema: CoreSchema, handler: GetJsonSchemaHandler) -> JsonSchemaValue:
+        """Add the ``"<value><unit>"`` string form to the accepted input forms.
+
+        :meth:`_model_validate` accepts the unit as a suffix on a string, e.g. ``"10us"``, as well
+        as the ``{"us": 10}`` object. Only the object form is ever produced, so the string
+        alternative belongs to the validation schema only.
+
+        :param core_schema: the core schema the JSON schema is generated from.
+        :param handler: the handler producing the default JSON schema.
+        :return: the JSON schema, with the string form added when describing accepted input.
+        """
+        json_schema = handler(core_schema)
+        if handler.mode == "serialization":
+            return json_schema
+
+        target = handler.resolve_ref_schema(json_schema)
+        # Falsy properties also cover BaseUnit itself, which declares no unit field.
+        if not target.get("properties"):
+            return json_schema
+
         unit, _ = get_unit_value_field_name_and_type(cls)
         assert str.isidentifier(unit)
 
-        return {"anyOf": [base_schema, {"type": "string", "pattern": unit + r"\s*$"}]}
+        title = target.pop("title", None)
+        object_schema = dict(target)
+        target.clear()
+        target["anyOf"] = [object_schema, {"type": "string", "pattern": unit + r"\s*$"}]
+        if title is not None:
+            target["title"] = title
+
+        return json_schema
 
 
 @register_unit_value_field("deg")

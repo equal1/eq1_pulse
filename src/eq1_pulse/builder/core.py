@@ -54,18 +54,28 @@ from ..models.channel_ops import (
     ShiftPhase,
     Wait,
 )
-from ..models.data_ops import Discriminate, PulseDecl, Store, StoreMode, StoreModeLiteral, VariableDecl
+from ..models.data_ops import (
+    Discriminate,
+    ExternalDecl,
+    ParameterDecl,
+    PulseDecl,
+    Store,
+    StoreMode,
+    StoreModeLiteral,
+    ValueLimits,
+    VariableDecl,
+)
 from ..models.external_block import ExternalBlock
 from ..models.pulse_types import PulseType
 from ..models.reference_types import VariableRef
 from ..models.sequence import Conditional, Iteration, OpSequence, Repetition
 from ._factories import (
     _convert_range_to_model,
-    _validate_explicit_variable_ref,
     _validate_variable_ref,
     arbitrary_pulse,
     channel,
     demod_integration,
+    ext,
     external_pulse,
     full_integration,
     phase,
@@ -74,6 +84,7 @@ from ._factories import (
     square_pulse,
     var,
 )
+from ._factories import _validate_explicit_variable_ref as _validate_explicit_variable_ref
 from ._factories import _validate_or_pass_through as _validate_or_pass_through
 from ._state import (
     _current_context,
@@ -81,6 +92,7 @@ from ._state import (
     _in_sequence,
     _pop_context,
     _push_context,
+    _register_external,
     _register_variable,
 )
 from ._state import _get_state as _get_state
@@ -89,8 +101,8 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
 
     from ..models.basic_types import AmplitudeLike, DurationLike, FrequencyLike, PhaseLike, ThresholdLike
-    from ..models.data_ops import ComparisonModeLike, ComplexToRealProjectionModeLike
-    from ..models.reference_types import ChannelRefLike, PulseRefLike, VariableRefLike
+    from ..models.data_ops import ComparisonModeLike, ComplexToRealProjectionModeLike, SymbolValueLike
+    from ..models.reference_types import ChannelRefLike, PulseRefLike, SymbolRefLike, VariableRefLike
 
 __all__ = (
     "arbitrary_pulse",
@@ -99,6 +111,8 @@ __all__ = (
     "channel",
     "demod_integration",
     "discriminate",
+    "ext",
+    "extern_decl",
     "external_block",
     "external_pulse",
     "for_",
@@ -106,6 +120,7 @@ __all__ = (
     "if_",
     "measure",
     "nested_sequence",
+    "param_decl",
     "phase",
     "play",
     "pulse_ref",
@@ -243,10 +258,10 @@ def sub_sequence() -> Iterator[OpSequence]:
 
 
 @contextmanager
-def repeat(count: int) -> Iterator[Repetition]:
+def repeat(count: int | SymbolRefLike) -> Iterator[Repetition]:
     """Context manager for building a repetition block.
 
-    :param count: Number of times to repeat
+    :param count: Number of times to repeat, or a variable/external reference resolved at run time
 
     :yield: The repetition being built
 
@@ -261,12 +276,17 @@ def repeat(count: int) -> Iterator[Repetition]:
         with build_sequence():
             with repeat(10):
                 play("qubit", square_pulse(duration="50ns", amplitude="100mV"))
+
+            var_decl("n", "int")
+            with repeat(var("n")):
+                play("qubit", square_pulse(duration="50ns", amplitude="100mV"))
     """
     parent = _current_context("repeat()")
 
     if not _in_sequence(parent):
         raise _not_a_sequence_context("repeat()")
 
+    count = _validate_or_pass_through(count, param_name="count", context="repeat()")
     rep = Repetition(count=count, body=OpSequence(items=[]))
     _add_to_sequence(parent, rep)
     _push_context(rep)
@@ -387,10 +407,10 @@ def for_(
 
 
 @contextmanager
-def if_(var: VariableRefLike) -> Iterator[Conditional]:
+def if_(var: SymbolRefLike) -> Iterator[Conditional]:
     """Context manager for building a conditional block.
 
-    :param var: Variable reference for the condition
+    :param var: Variable or external reference for the condition
 
     :yield: The conditional being built
 
@@ -408,15 +428,14 @@ def if_(var: VariableRefLike) -> Iterator[Conditional]:
             with if_("result"):
                 play("qubit", square_pulse(duration="50ns", amplitude="100mV"))
     """
-    # Validate variable reference
-    validated_var = _validate_variable_ref(var)
+    validated_var = _validate_or_pass_through(var, param_name="var", context="if_()")
 
     parent = _current_context("if_()")
 
     if not _in_sequence(parent):
         raise _not_a_sequence_context("if_()")
 
-    cond = Conditional(var=validated_var, body=OpSequence(items=[]))
+    cond = Conditional(var=validated_var, body=OpSequence(items=[]))  # type: ignore[arg-type]
     _add_to_sequence(parent, cond)
     _push_context(cond)
     try:
@@ -473,6 +492,148 @@ def var_decl(
     if not _in_sequence(context):
         raise _not_a_sequence_context("var_decl()")
     _add_to_sequence(context, var_decl_obj)
+
+
+def _build_limits(
+    min: SymbolValueLike | None,
+    max: SymbolValueLike | None,
+    allowed: list[SymbolValueLike] | None,
+) -> ValueLimits | None:
+    """Assemble a :class:`ValueLimits` from flat ``min``/``max``/``allowed`` keywords.
+
+    :param min: Smallest allowed value, or :obj:`None` if unbounded below
+    :param max: Largest allowed value, or :obj:`None` if unbounded above
+    :param allowed: Set of allowed values, or :obj:`None` if not restricted to a fixed set
+
+    :return: The assembled limits, or :obj:`None` if all three are :obj:`None`
+    """
+    if min is None and max is None and allowed is None:
+        return None
+    return ValueLimits(minimum=min, maximum=max, allowed=allowed)
+
+
+def param_decl(
+    name: str,
+    dtype: Literal["bool", "int", "float", "complex"],
+    *,
+    shape: tuple[int, ...] | None = None,
+    unit: str | None = None,
+    default: SymbolValueLike | None = None,
+    min: SymbolValueLike | None = None,
+    max: SymbolValueLike | None = None,
+    allowed: list[SymbolValueLike] | None = None,
+) -> None:
+    """Declare a parameter for use in the current context.
+
+    A parameter is a variable whose value is supplied by the caller when the program is
+    submitted, rather than computed inside the program. It is otherwise an ordinary variable:
+    reference it with :func:`var`, it obeys the same lexical scoping, and it shares the variable
+    namespace, so declaring a parameter and then a variable of the same name (or vice versa) is a
+    redeclaration error.
+
+    ``min``, ``max`` and ``allowed`` are declared and never enforced by eq1_pulse itself; see
+    :class:`~eq1_pulse.models.ValueLimits`.
+
+    :param name: Name of the parameter (must be a valid identifier)
+    :param dtype: Data type of the parameter ("bool", "int", "float", or "complex")
+    :param shape: Optional shape for array parameters (e.g., (10,) for 1D array)
+    :param unit: Optional unit string (e.g., "mV", "ns", "GHz") for the parameter
+    :param default: Value used if none is supplied at submission time, or :obj:`None` if required
+    :param min: Smallest allowed value, or :obj:`None` if unbounded below
+    :param max: Largest allowed value, or :obj:`None` if unbounded above
+    :param allowed: Set of allowed values, or :obj:`None` if not restricted to a fixed set
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import *
+
+        with build_sequence():
+            # A required parameter, supplied at submission time
+            param_decl("n_shots", "int", min=1, max=100_000)
+
+            # An optional parameter with a fallback default
+            param_decl("amp", "float", unit="mV", default=50, min=0, max=200)
+
+            with repeat(var("n_shots")):
+                play("qubit", square_pulse(duration="50ns", amplitude=var("amp")))
+    """
+    param_decl_obj = ParameterDecl(
+        name=name,
+        dtype=dtype,
+        shape=shape,
+        unit=unit,
+        default=default,
+        limits=_build_limits(min, max, allowed),
+    )
+
+    # Parameters share the variable namespace: a var_decl() of the same name is a redeclaration error.
+    _register_variable(name)
+
+    context = _current_context("param_decl()")
+    if not _in_sequence(context):
+        raise _not_a_sequence_context("param_decl()")
+    _add_to_sequence(context, param_decl_obj)
+
+
+def extern_decl(
+    name: str,
+    dtype: Literal["bool", "int", "float", "complex"],
+    *,
+    shape: tuple[int, ...] | None = None,
+    unit: str | None = None,
+    default: SymbolValueLike | None = None,
+    min: SymbolValueLike | None = None,
+    max: SymbolValueLike | None = None,
+    allowed: list[SymbolValueLike] | None = None,
+) -> None:
+    """Declare an external constant for use in the current context.
+
+    An external constant is a symbol resolved outside the program: its value is looked up per
+    submission in a calibration store by name, rather than supplied directly by the caller. It is
+    referenced with :func:`ext`. External symbols are declared in their own namespace, separate
+    from variables and parameters.
+
+    ``min``, ``max`` and ``allowed`` are declared and never enforced by eq1_pulse itself; see
+    :class:`~eq1_pulse.models.ValueLimits`.
+
+    :param name: Name of the external symbol, e.g. ``"q0.f01"``
+    :param dtype: Data type of the external symbol ("bool", "int", "float", or "complex")
+    :param shape: Optional shape for array-valued external symbols (e.g., (10,) for 1D array)
+    :param unit: Optional unit string (e.g., "mV", "ns", "GHz") for the external symbol
+    :param default: Value used if none is resolved at submission time, or :obj:`None` if required
+    :param min: Smallest allowed value, or :obj:`None` if unbounded below
+    :param max: Largest allowed value, or :obj:`None` if unbounded above
+    :param allowed: Set of allowed values, or :obj:`None` if not restricted to a fixed set
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import *
+
+        with build_sequence():
+            extern_decl("q0.f01", "float", unit="GHz")
+            extern_decl("readout.threshold", "float", unit="mV", default=0)
+
+            set_frequency("q0_drive", ext("q0.f01"))
+    """
+    extern_decl_obj = ExternalDecl(
+        name=name,
+        dtype=dtype,
+        shape=shape,
+        unit=unit,
+        default=default,
+        limits=_build_limits(min, max, allowed),
+    )
+
+    _register_external(name)
+
+    context = _current_context("extern_decl()")
+    if not _in_sequence(context):
+        raise _not_a_sequence_context("extern_decl()")
+    _add_to_sequence(context, extern_decl_obj)
 
 
 def pulse_decl(
@@ -589,15 +750,15 @@ def play(
     channel: ChannelRefLike,
     pulse: PulseType | PulseRefLike,
     *,
-    scale_amp: float | complex | VariableRefLike | None = None,
-    cond: VariableRefLike | None = None,
+    scale_amp: float | complex | SymbolRefLike | None = None,
+    cond: SymbolRefLike | None = None,
 ) -> None:
     """Play a pulse on a channel.
 
     :param channel: Channel to play on
     :param pulse: Pulse to play
     :param scale_amp: Optional amplitude scaling
-    :param cond: Optional condition variable
+    :param cond: Optional condition, as a variable or external reference
 
     Examples
 
@@ -607,13 +768,8 @@ def play(
 
         play("ch1", square_pulse(duration="10us", amplitude="100mV"))
     """
-    # scale_amp can be numeric or variable - only validate if it's a potential VariableRef type
-    if scale_amp is not None and isinstance(scale_amp, str | dict | VariableRef):
-        scale_amp = _validate_or_pass_through(scale_amp, param_name="scale_amp", context="play()")
-
-    # cond is variable-only - use strict validation
-    if cond is not None:
-        cond = _validate_variable_ref(cond)
+    scale_amp = _validate_or_pass_through(scale_amp, param_name="scale_amp", context="play()")
+    cond = _validate_or_pass_through(cond, param_name="cond", context="play()")
 
     op = Play(channel=channel, pulse=pulse, scale_amp=scale_amp, cond=cond)
 
@@ -625,7 +781,7 @@ def play(
 
 def wait(
     *channels: ChannelRefLike,
-    duration: DurationLike | VariableRefLike,
+    duration: DurationLike | SymbolRefLike,
 ) -> None:
     """Add wait operation on channel(s).
 
@@ -697,7 +853,7 @@ def barrier(
 
 def set_frequency(
     channel: ChannelRefLike,
-    frequency: FrequencyLike | VariableRefLike,
+    frequency: FrequencyLike | SymbolRefLike,
 ) -> None:
     """Set channel frequency.
 
@@ -724,7 +880,7 @@ def set_frequency(
 
 def shift_frequency(
     channel: ChannelRefLike,
-    frequency: FrequencyLike | VariableRefLike,
+    frequency: FrequencyLike | SymbolRefLike,
 ) -> None:
     """Shift channel frequency.
 
@@ -751,7 +907,7 @@ def shift_frequency(
 
 def set_phase(
     channel: ChannelRefLike,
-    phase: PhaseLike | VariableRefLike,
+    phase: PhaseLike | SymbolRefLike,
 ) -> None:
     """Set channel phase.
 
@@ -778,7 +934,7 @@ def set_phase(
 
 def shift_phase(
     channel: ChannelRefLike,
-    phase: PhaseLike | VariableRefLike,
+    phase: PhaseLike | SymbolRefLike,
 ) -> None:
     """Shift channel phase.
 
@@ -807,14 +963,14 @@ def record(
     channel: ChannelRefLike,
     var: VariableRefLike,
     *,
-    duration: DurationLike,
+    duration: DurationLike | SymbolRefLike,
     integration: FullIntegration | DemodIntegration,
 ) -> None:
     """Record (acquire) data from a channel.
 
     :param channel: Channel to record from
     :param var: Variable to store the result
-    :param duration: Recording duration
+    :param duration: Recording duration, or a variable/external reference
     :param integration: Integration configuration (use :func:`full_integration` or :func:`demod_integration`)
 
     Examples
@@ -838,8 +994,9 @@ def record(
     """
     # Validate variable reference
     validated_var = _validate_variable_ref(var)
+    validated_duration = _validate_or_pass_through(duration, param_name="duration", context="record()")
 
-    op = Record(channel=channel, var=validated_var, duration=duration, integration=integration)  # type: ignore[arg-type]
+    op = Record(channel=channel, var=validated_var, duration=validated_duration, integration=integration)  # type: ignore[arg-type]
 
     context = _current_context("record()")
     if not _in_sequence(context):
@@ -850,9 +1007,9 @@ def record(
 def discriminate(
     target: VariableRefLike,
     source: VariableRefLike,
-    threshold: ThresholdLike,
+    threshold: ThresholdLike | SymbolRefLike,
     *,
-    rotation: PhaseLike = 0,
+    rotation: PhaseLike | SymbolRefLike = 0,
     compare: ComparisonModeLike = ">=",
     project: ComplexToRealProjectionModeLike = "real",
 ) -> None:
@@ -863,8 +1020,8 @@ def discriminate(
 
     :param target: Variable to store the discrimination result (boolean)
     :param source: Source variable containing the measurement data
-    :param threshold: Threshold value for comparison
-    :param rotation: Phase rotation to apply before projection (default: 0)
+    :param threshold: Threshold value for comparison, or a variable/external reference
+    :param rotation: Phase rotation to apply before projection, or a variable/external reference (default: 0)
     :param compare: Comparison operator (default: ">=")
     :param project: Complex-to-real projection mode (default: "real")
 
@@ -884,12 +1041,14 @@ def discriminate(
     # Validate variable references
     validated_target = _validate_variable_ref(target)
     validated_source = _validate_variable_ref(source)
+    validated_threshold = _validate_or_pass_through(threshold, param_name="threshold", context="discriminate()")
+    validated_rotation = _validate_or_pass_through(rotation, param_name="rotation", context="discriminate()")
 
     op = Discriminate(
         target=validated_target,
         source=validated_source,
-        threshold=threshold,
-        rotation=rotation,  # type: ignore[arg-type]
+        threshold=validated_threshold,  # type: ignore[arg-type]
+        rotation=validated_rotation,  # type: ignore[arg-type]
         compare=compare,  # type: ignore[arg-type]
         project=project,  # type: ignore[arg-type]
     )
@@ -1024,7 +1183,7 @@ def external_block(
     channels: dict[str, ChannelRefLike] | None = None,
     params: dict[str, Any] | None = None,
     results: dict[str, VariableRefLike] | None = None,
-    duration: DurationLike | VariableRefLike | None = None,
+    duration: DurationLike | SymbolRefLike | None = None,
 ) -> None:
     """Reserve channels for an opaque, externally defined block of operations.
 

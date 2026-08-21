@@ -24,6 +24,7 @@ descriptions, examples, and can be exported to YAML or JSON format.
 
 from __future__ import annotations
 
+import argparse
 import importlib
 import inspect
 import json
@@ -97,6 +98,7 @@ def get_all_pydantic_models() -> list[type[BaseModel]]:
         "WrappedValueOrZeroModel",
         "OpBase",
         "PulseBase",
+        "SymbolDeclBase",
         "SequenceBase",
         "RepetitionBase",
         "IterationBase",
@@ -132,6 +134,7 @@ def generate_openapi_schema(
     version: str = _eq1_pulse_version,
     description: str | None = None,
     include_tags: bool = True,
+    separate_input_output_schemas: bool = True,
 ) -> dict[str, Any]:
     """Generate a complete OpenAPI 3.1.0 schema from eq1_pulse models.
 
@@ -144,6 +147,14 @@ def generate_openapi_schema(
     :param description: Optional description of the API. If :obj:`None`, a default
         description will be used
     :param include_tags: Whether to include tags in the schema for grouping models
+    :param separate_input_output_schemas: If :obj:`True` (the default), generate both the
+        validation (accepted-input) and serialization (emitted-output) schema for every model.
+        A model where the two agree still gets one definition; a model where they differ (e.g.
+        :class:`~eq1_pulse.models.basic_types.Duration`, which also accepts ``"10us"`` and ``0``
+        on input but only ever emits the ``{"us": 10}`` object) gets split into ``<Model>-Input``
+        and ``<Model>-Output`` components, mirroring FastAPI's ``separate_input_output_schemas``.
+        If :obj:`False`, only the validation schema is generated, under the plain model name, as
+        eq1_pulse did before this option existed -- accurate for input, silent about output.
 
     :return: Dictionary representation of the OpenAPI schema
 
@@ -176,10 +187,16 @@ def generate_openapi_schema(
     if not models_list:
         raise ValueError("No Pydantic models found in eq1_pulse.models package")
 
-    # Generate JSON schema for all models with OpenAPI-compatible references
-    # models_json_schema expects a list of tuples (model, mode)
+    # Generate JSON schema for all models with OpenAPI-compatible references.
+    # models_json_schema expects a list of tuples (model, mode). Requesting both modes per model
+    # lets pydantic emit accurate accepted-input and emitted-output shapes; models where the two
+    # modes agree collapse into a single definition, so this only splits where the shapes actually
+    # differ.
+    modes: tuple[Literal["validation", "serialization"], ...] = (
+        ("validation", "serialization") if separate_input_output_schemas else ("validation",)
+    )
     models_with_mode: list[tuple[type[BaseModel], Literal["validation", "serialization"]]] = [
-        (model, "validation") for model in models_list
+        (model, mode) for model in models_list for mode in modes
     ]
     key_map, definitions = models_json_schema(
         models_with_mode,
@@ -292,11 +309,24 @@ def main() -> None:
     .. code-block:: bash
 
         python -m eq1_pulse.utilities.openapi_generator
+        python -m eq1_pulse.utilities.openapi_generator --no-separate-input-output-schemas
     """
+    parser = argparse.ArgumentParser(description="Generate the OpenAPI schema for eq1_pulse models.")
+    parser.add_argument(
+        "--separate-input-output-schemas",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Split a model into <Model>-Input/<Model>-Output components when its accepted-input "
+            "and emitted-output shapes differ (default: enabled)."
+        ),
+    )
+    args = parser.parse_args()
+
     print("Generating OpenAPI schema for eq1_pulse models...")
 
     # Generate the schema
-    schema = generate_openapi_schema()
+    schema = generate_openapi_schema(separate_input_output_schemas=args.separate_input_output_schemas)
 
     # Get the number of models
     num_models = len(schema.get("components", {}).get("schemas", {}))

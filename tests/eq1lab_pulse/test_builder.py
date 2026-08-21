@@ -10,12 +10,15 @@ from eq1_pulse.builder import (
     demod_integration,
     discriminate,
     experimental,
+    ext,
+    extern_decl,
     external_block,
     external_pulse,
     for_,
     full_integration,
     if_,
     measure,
+    param_decl,
     phase,
     play,
     pulse_decl,
@@ -39,8 +42,10 @@ from eq1_pulse.models import (
     Conditional,
     Discriminate,
     ExternalBlock,
+    ExternalDecl,
     Iteration,
     OpSequence,
+    ParameterDecl,
     Play,
     PulseDecl,
     Record,
@@ -51,7 +56,9 @@ from eq1_pulse.models import (
     ShiftPhase,
     SquarePulse,
     Store,
+    ValueLimits,
     VariableDecl,
+    VariableRef,
 )
 
 
@@ -273,6 +280,18 @@ class TestControlFlow:
         assert seq.items[0].count == 10
         assert len(seq.items[0].body.items) == 1
 
+    def test_repeat_with_variable_count(self):
+        """Test repeat loop with a variable count."""
+        with build_sequence() as seq:
+            var_decl("n", "int")
+            with repeat(var("n")):
+                play("ch1", square_pulse(duration="10us", amplitude="100mV"))
+
+        assert len(seq.items) == 2
+        rep = seq.items[1]
+        assert isinstance(rep, Repetition)
+        assert rep.count == VariableRef("n")
+
     def test_for_loop(self):
         """Test for loop."""
         with build_sequence() as seq:
@@ -377,6 +396,109 @@ class TestVariables:
         assert isinstance(seq.items[0], PulseDecl)
         assert isinstance(seq.items[1], Play)
         assert isinstance(seq.items[2], Play)
+
+
+class TestParamAndExternDecl:
+    """Tests for param_decl() and extern_decl()."""
+
+    def test_param_decl_simple(self):
+        """Test a required parameter declaration with no default or limits."""
+        with build_sequence() as seq:
+            param_decl("n_shots", "int")
+
+        assert len(seq.items) == 1
+        assert isinstance(seq.items[0], ParameterDecl)
+        assert seq.items[0].name == "n_shots"
+        assert seq.items[0].dtype == "int"
+        assert seq.items[0].default is None
+        assert seq.items[0].limits is None
+
+    def test_param_decl_with_default_and_limits(self):
+        """Test a parameter declaration with a default and min/max/allowed limits."""
+        with build_sequence() as seq:
+            param_decl("n_shots", "int", default=1000, min=1, max=100_000)
+
+        assert len(seq.items) == 1
+        assert isinstance(seq.items[0], ParameterDecl)
+        assert seq.items[0].default == 1000
+        assert isinstance(seq.items[0].limits, ValueLimits)
+        assert seq.items[0].limits.minimum == 1
+        assert seq.items[0].limits.maximum == 100_000
+        assert seq.items[0].limits.allowed is None
+
+    def test_param_decl_with_allowed(self):
+        """Test a parameter declaration restricted to a fixed set of values."""
+        with build_sequence() as seq:
+            param_decl("mode", "int", allowed=[0, 1, 2])
+
+        assert isinstance(seq.items[0], ParameterDecl)
+        assert isinstance(seq.items[0].limits, ValueLimits)
+        assert seq.items[0].limits.allowed == [0, 1, 2]
+
+    def test_param_decl_registers_into_variable_namespace(self):
+        """A parameter is referenced with var() and shares the variable namespace."""
+        with build_sequence():
+            param_decl("n_shots", "int", default=1000)
+            ref = var("n_shots")
+            assert ref.var == "n_shots"
+
+    def test_param_decl_redeclaration_with_var_decl_raises(self):
+        """Declaring a variable with the same name as a parameter is a redeclaration error."""
+        with build_sequence():
+            param_decl("n_shots", "int")
+            with pytest.raises(RuntimeError, match="'n_shots' is already declared"):
+                var_decl("n_shots", "int")
+
+    def test_var_decl_redeclaration_with_param_decl_raises(self):
+        """Declaring a parameter with the same name as a variable is a redeclaration error."""
+        with build_sequence():
+            var_decl("n_shots", "int")
+            with pytest.raises(RuntimeError, match="'n_shots' is already declared"):
+                param_decl("n_shots", "int")
+
+    def test_extern_decl_simple(self):
+        """Test a required external constant declaration with no default or limits."""
+        with build_sequence() as seq:
+            extern_decl("q0.f01", "float", unit="GHz")
+
+        assert len(seq.items) == 1
+        assert isinstance(seq.items[0], ExternalDecl)
+        assert seq.items[0].name == "q0.f01"
+        assert seq.items[0].dtype == "float"
+        assert seq.items[0].unit == "GHz"
+        assert seq.items[0].default is None
+        assert seq.items[0].limits is None
+
+    def test_extern_decl_with_default_and_limits(self):
+        """Test an external constant declaration with a default and limits."""
+        with build_sequence() as seq:
+            extern_decl("readout.threshold", "float", unit="mV", default=0, min=-100, max=100)
+
+        assert isinstance(seq.items[0], ExternalDecl)
+        assert seq.items[0].default == 0
+        assert isinstance(seq.items[0].limits, ValueLimits)
+        assert seq.items[0].limits.minimum == -100
+        assert seq.items[0].limits.maximum == 100
+
+    def test_extern_decl_registers_into_external_namespace(self):
+        """An external constant is referenced with ext(), never var()."""
+        with build_sequence():
+            extern_decl("q0.f01", "float", unit="GHz")
+            ref = ext("q0.f01")
+            assert ref.ext == "q0.f01"
+
+    def test_extern_decl_does_not_share_variable_namespace(self):
+        """Declaring a variable with the same name as an external symbol is not a conflict."""
+        with build_sequence():
+            extern_decl("q0_f01", "float")
+            # Should not raise: variables and external symbols are separate namespaces.
+            var_decl("q0_f01", "float")
+
+    def test_ext_on_undeclared_symbol_raises(self):
+        """Using ext() on an undeclared external symbol raises RuntimeError."""
+        with build_sequence():
+            with pytest.raises(RuntimeError, match="External symbol 'q0.f01' has not been declared"):
+                ext("q0.f01")
 
 
 class TestMeasurement:
@@ -614,7 +736,7 @@ class TestErrorHandling:
         Note: if_ validates variables first, so it fails on undeclared variable
         before checking for context. This is acceptable behavior.
         """
-        with pytest.raises(RuntimeError, match="Variable 'result' has not been declared"):
+        with pytest.raises(RuntimeError, match="references undeclared variable 'result'"):
             with if_("result"):
                 pass
 

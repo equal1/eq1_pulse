@@ -44,7 +44,7 @@ from .nd_array import NumpyArray
 if TYPE_CHECKING:
     from .basic_types import LinSpaceLike, RangeLike
     from .nd_array import NumpyArrayLike
-    from .reference_types import VariableRefLike
+    from .reference_types import SymbolRefLike, VariableRefLike
 
 type DiscriminableOp = Annotated[
     ChannelOp | DataOp | ExternalBlock | Repetition | Iteration | Conditional, Discriminator("op_type")
@@ -96,7 +96,7 @@ class Repetition(RepetitionBase[OpSequence]):
 
     if TYPE_CHECKING:
 
-        def __init__(self, /, *, count: int, body: OpSequenceLike, **data): ...
+        def __init__(self, /, *, count: int | SymbolRefLike, body: OpSequenceLike, **data): ...
 
 
 class Iteration(IterationBase[OpSequence]):
@@ -139,7 +139,7 @@ class Conditional(ConditionalBase[OpSequence]):
 
     if TYPE_CHECKING:
 
-        def __init__(self, /, *, var: VariableRefLike, body: OpSequenceLike, **data): ...
+        def __init__(self, /, *, var: SymbolRefLike, body: OpSequenceLike, **data): ...
 
 
 __all__ = (

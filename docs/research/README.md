@@ -10,6 +10,7 @@ expensive to reproduce.
 | --------------------------------------------------------------------- | --------------------------------------------------------------------------- |
 | [openpulse-alignment-assessment.md](openpulse-alignment-assessment.md) | How eq1_pulse's builder and models align with OpenPulse / OpenQASM 3, and whether `Schedule` can be eliminated. **Start here.** |
 | [PR #7](https://github.com/equal1/eq1_pulse/pull/7) | The work that came out of it: isolate `Schedule`, unify on `OpSequence`, add the opaque `ExternalBlock`. Remaining follow-on work is tracked in [#8](https://github.com/equal1/eq1_pulse/issues/8). |
+| [pydantic-json-schema-assessment.md](pydantic-json-schema-assessment.md) | Why every `model_json_schema()` override in `models/` was silently bypassed, what the published OpenAPI document was actually describing, and the conversion to `__get_pydantic_json_schema__`. |
 
 ## Raw research dumps
 
@@ -21,6 +22,7 @@ expensive to reproduce.
 | [raw/04-channel-vs-frame-port.md](raw/04-channel-vs-frame-port.md)                                       | Flat `channel` vs OpenPulse `port` + `frame`; quantify's `(port, clock)` pair in detail; Braket / LabOne Q / Qibolab / old Qiskit Pulse comparison; recommendation for a portable JSON IR. |
 | [raw/05-operation-mapping.md](raw/05-operation-mapping.md)                                               | Operation-by-operation mapping of eq1_pulse ops to OpenPulse: conditional play, `record`/`trace` vs `capture_v0..v4`, `time_of_flight`, `discriminate`, `store` (result streams), `dc_comp`. Marks explicitly where no counterpart exists. |
 | [raw/06-waveforms-units-types-control-flow.md](raw/06-waveforms-units-types-control-flow.md)             | Waveform typing (closed union vs `extern` templates), amplitude units (normalised vs volts), OpenQASM 3 classical types and array restrictions, control-flow mapping and `cal`/`defcal` duration rules. |
+| [raw/07-pydantic-json-schema-customisation.deep-research.md](raw/07-pydantic-json-schema-customisation.deep-research.md) | Pydantic v2 JSON Schema customisation: why overriding `model_json_schema()` is bypassed for nested models, the `__get_pydantic_json_schema__` / `__get_pydantic_core_schema__` hooks, `WithJsonSchema` / `SkipJsonSchema` / `json_schema_extra` / `GenerateJsonSchema` and their precedence, validation vs serialization modes, `json_schema_input_type`, and FastAPI's `-Input`/`-Output` split. |
 
 ## Key primary sources
 
