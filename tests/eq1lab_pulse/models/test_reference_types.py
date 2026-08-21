@@ -1,8 +1,17 @@
+from typing import Any, ClassVar
+
 import pytest
-from pydantic import TypeAdapter, ValidationError
+from pydantic import TypeAdapter, ValidationError, model_serializer
 
 from eq1_pulse.models.identifier_str import str_is_external_symbol
-from eq1_pulse.models.reference_types import ChannelRef, ExternalRef, PulseRef, SymbolRef, VariableRef
+from eq1_pulse.models.reference_types import (
+    ChannelRef,
+    ExternalRef,
+    PulseRef,
+    Reference,
+    SymbolRef,
+    VariableRef,
+)
 
 
 def test_channel_ref():
@@ -152,3 +161,77 @@ def test_symbol_ref_union_serialization_is_unambiguous():
     assert adapter.dump_python(VariableRef("amp")) == "amp"
     assert adapter.dump_python(ExternalRef("q0.f01")) == {"ext": "q0.f01"}
     assert adapter.validate_json(adapter.dump_json(ExternalRef("q0.f01"))) == ExternalRef("q0.f01")
+
+
+def test_reference_subclass_must_define_exactly_one_field():
+    with pytest.raises(TypeError, match="exactly one field"):
+
+        class TwoFields(Reference):
+            a: str
+            b: str
+
+    with pytest.raises(TypeError, match="exactly one field"):
+
+        class NoFields(Reference):
+            pass
+
+
+def test_reference_subclass_overriding_the_serializer_must_declare_it():
+    with pytest.raises(TypeError, match="_serializes_bare = False"):
+
+        class Sneaky(Reference):
+            a: str
+
+            @model_serializer
+            def _wrap_serializer(self) -> Any:
+                return {"a": self.a}
+
+
+def test_wrapped_reference_must_override_the_serializer_and_the_schema():
+    with pytest.raises(TypeError, match="_wrap_serializer, model_json_schema"):
+
+        class Liar(Reference):
+            _serializes_bare: ClassVar[bool] = False
+
+            a: str
+
+    with pytest.raises(TypeError, match="does not override model_json_schema"):
+
+        class HalfDone(Reference):
+            _serializes_bare: ClassVar[bool] = False
+
+            a: str
+
+            @model_serializer
+            def _wrap_serializer(self) -> Any:
+                return {"a": self.a}
+
+
+def test_a_wrapped_reference_other_than_external_ref_also_dispatches_correctly():
+    class TagRef(Reference):
+        """A second wrapped reference, to show the mechanism is not special-cased to ExternalRef."""
+
+        _serializes_bare: ClassVar[bool] = False
+
+        tag: str
+
+        @model_serializer
+        def _wrap_serializer(self) -> Any:
+            return {"tag": self.tag}
+
+        @classmethod
+        def model_json_schema(cls, *args: Any, **kwargs: Any) -> dict[str, Any]:
+            """Keep the wrapped object schema."""
+            return super(Reference, cls).model_json_schema(*args, **kwargs)
+
+    adapter: TypeAdapter[VariableRef | TagRef] = TypeAdapter(VariableRef | TagRef)
+    assert adapter.dump_python(TagRef(tag="t")) == {"tag": "t"}
+    assert adapter.dump_python(VariableRef("v")) == "v"
+
+
+def test_foreign_instance_is_not_silently_serialized_bare():
+    ref = ExternalRef("q0.f01")
+    with pytest.warns(UserWarning, match="does not serialize bare"):
+        dumped = TypeAdapter(VariableRef).dump_python(ref)  # type: ignore[arg-type]
+
+    assert dumped != "q0.f01"

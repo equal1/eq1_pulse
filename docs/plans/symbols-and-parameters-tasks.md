@@ -90,6 +90,12 @@ gained a `_serializes_bare` guard. Without it the `SymbolRef` smart union serial
 `VariableRef` member accepted the value and won. See
 `test_symbol_ref_union_serialization_is_unambiguous`.
 
+The wrapped wire form is therefore a three-part contract: `_serializes_bare = False`, an overridden
+`_wrap_serializer`, and an overridden `model_json_schema`. `Reference.__pydantic_init_subclass__`
+rejects any subclass that declares one without the others, or that defines other than exactly one
+field, so a future reference class cannot silently reintroduce the bug or ship a schema that
+disagrees with its serializer.
+
 **Read:** plan §3.1, §3.2, and the §9 Q1/Q2 rows.
 **Goal:** an external symbol can be spelled, validated, and round-tripped. Nothing uses it yet.
 

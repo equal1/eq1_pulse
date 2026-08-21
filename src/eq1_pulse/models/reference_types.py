@@ -32,13 +32,72 @@ class Reference(BaseModel):
     """Base class for all symbolic references.
 
     Descendants must only define a single field (the reference name), which is serialized directly.
+
+    Note:
+        A descendant that keeps the wrapped object form instead must set :attr:`_serializes_bare`
+        to :obj:`False` *and* override both :meth:`_wrap_serializer` and :meth:`model_json_schema`;
+        see :class:`ExternalRef`. All three go together: the flag drives union dispatch, the
+        serializer produces the wire form, and the schema describes it. Declaring one without the
+        others is rejected when the class is created — see :meth:`__pydantic_init_subclass__`.
+
     """
 
     _serializes_bare: ClassVar[bool] = True
-    """Whether instances of this class serialize to their bare field value.
+    """Whether instances of this class serialize to their bare field value."""
 
-    A descendant that keeps the wrapped object form must set this to :obj:`False` *and* override
-    :meth:`_wrap_serializer`; see :class:`ExternalRef`."""
+    @classmethod
+    def __pydantic_init_subclass__(cls, **kwargs: Any) -> None:
+        """Enforce the invariants the serializer and the validator rely on.
+
+        These are checked when the subclass is created, so a violation is an import-time error
+        rather than a silently wrong wire format.
+
+        :param kwargs: class keyword arguments, passed through to the base implementation.
+        :raises TypeError: if the subclass does not define exactly one field, or if its
+            :attr:`_serializes_bare` declaration disagrees with the methods it overrides.
+        """
+        super().__pydantic_init_subclass__(**kwargs)
+
+        if len(cls.model_fields) != 1:
+            raise TypeError(
+                f"{cls.__name__} must define exactly one field, got {len(cls.model_fields)}: "
+                f"{list(cls.model_fields)}. A reference serializes to its single field."
+            )
+
+        overrides_serializer = cls._overrides_below_reference("_wrap_serializer")
+        if cls._serializes_bare:
+            if overrides_serializer:
+                raise TypeError(
+                    f"{cls.__name__} overrides _wrap_serializer but leaves _serializes_bare True. "
+                    f"A union serializer would then offer values of other reference classes to it "
+                    f"and accept the result; set _serializes_bare = False."
+                )
+        else:
+            missing = [
+                name for name in ("_wrap_serializer", "model_json_schema") if not cls._overrides_below_reference(name)
+            ]
+            if missing:
+                raise TypeError(
+                    f"{cls.__name__} sets _serializes_bare = False but does not override "
+                    f"{', '.join(missing)}. The base implementations unwrap to the single field, "
+                    f"which contradicts the declaration."
+                )
+
+    @classmethod
+    def _overrides_below_reference(cls, name: str) -> bool:
+        """Whether *name* is provided by a class below :class:`Reference` in the MRO.
+
+        :param name: the attribute to look for.
+        :return: :obj:`True` if a descendant of :class:`Reference` defines it, :obj:`False` if it
+            is inherited from :class:`Reference` itself.
+        """
+        for base in cls.__mro__:
+            if base is Reference:
+                break
+            if name in base.__dict__:
+                return True
+
+        return False
 
     @classmethod
     def _first_field_name(cls) -> str:
