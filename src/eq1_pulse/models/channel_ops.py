@@ -64,11 +64,11 @@ class DemodIntegration(IntegrationType):
 
     integration_type: Literal["demod"] = "demod"
     """The type discriminator, always "demod"."""
-    phase: Phase | None = None
+    phase: Phase | SymbolRef | None = None
     """Optional phase rotation to apply to the result."""
-    scale_cos: float = 1
+    scale_cos: float | SymbolRef = 1
     """Scaling factor for the real (cosine) part."""
-    scale_sin: float = 1
+    scale_sin: float | SymbolRef = 1
     """Scaling factor for the imaginary (sine) part."""
 
 
@@ -247,7 +247,7 @@ class Record(ChannelOpBase):
     """The duration of the acquisition."""
     integration: FullIntegration | DemodIntegration
     """The integration method to use."""
-    time_of_flight: Duration | None = None
+    time_of_flight: Duration | SymbolRef | None = None
     """Optional delay before starting acquisition."""
 
     if TYPE_CHECKING:
@@ -260,7 +260,7 @@ class Record(ChannelOpBase):
             var: VariableRefLike,
             duration: DurationLike | SymbolRefLike,
             integration: FullIntegration | DemodIntegration = ...,
-            time_of_flight: Duration | dict[str, float] | None = None,
+            time_of_flight: DurationLike | SymbolRefLike | None = None,
             **data,
         ): ...
 
@@ -286,7 +286,7 @@ class Trace(ChannelOpBase):
     """The total duration of the trace acquisition."""
     integration: FullIntegration | DemodIntegration | None = None
     """The integration method to use."""
-    time_of_flight: Duration | None = None
+    time_of_flight: Duration | SymbolRef | None = None
     """Optional delay before starting acquisition."""
 
     if TYPE_CHECKING:
@@ -299,7 +299,7 @@ class Trace(ChannelOpBase):
             var: VariableRef | str,
             duration: DurationLike | SymbolRefLike,
             integration: FullIntegration | DemodIntegration = ...,
-            time_of_flight: Duration | dict[str, float] | None = None,
+            time_of_flight: DurationLike | SymbolRefLike | None = None,
             **data,
         ): ...
 
@@ -327,7 +327,7 @@ class CompensateDC(ChannelOpBase):
     duration: Duration | SymbolRef | None
     """If :obj:`None`, reset channel-accumulated value without playing anything."""
 
-    max_amp: Magnitude | None = None
+    max_amp: Magnitude | SymbolRef | None = None
     """Maximum amplitude limit for the compensation pulse."""
 
     rise_time: Duration | SymbolRef | None = None
@@ -343,7 +343,7 @@ class CompensateDC(ChannelOpBase):
             channel: ChannelRefLike,
             *,
             duration: DurationLike | SymbolRefLike | None,
-            max_amp: MagnitudeLike | None = None,
+            max_amp: MagnitudeLike | SymbolRefLike | None = None,
             **data,
         ): ...
 

@@ -90,7 +90,7 @@ if TYPE_CHECKING:
 
     from ..models.basic_types import AmplitudeLike, DurationLike, FrequencyLike, PhaseLike, ThresholdLike
     from ..models.data_ops import ComparisonModeLike, ComplexToRealProjectionModeLike
-    from ..models.reference_types import ChannelRefLike, PulseRefLike, VariableRefLike
+    from ..models.reference_types import ChannelRefLike, PulseRefLike, SymbolRefLike, VariableRefLike
 
 __all__ = (
     "arbitrary_pulse",
@@ -243,10 +243,10 @@ def sub_sequence() -> Iterator[OpSequence]:
 
 
 @contextmanager
-def repeat(count: int) -> Iterator[Repetition]:
+def repeat(count: int | SymbolRefLike) -> Iterator[Repetition]:
     """Context manager for building a repetition block.
 
-    :param count: Number of times to repeat
+    :param count: Number of times to repeat, or a variable/external reference resolved at run time
 
     :yield: The repetition being built
 
@@ -261,12 +261,17 @@ def repeat(count: int) -> Iterator[Repetition]:
         with build_sequence():
             with repeat(10):
                 play("qubit", square_pulse(duration="50ns", amplitude="100mV"))
+
+            var_decl("n", "int")
+            with repeat(var("n")):
+                play("qubit", square_pulse(duration="50ns", amplitude="100mV"))
     """
     parent = _current_context("repeat()")
 
     if not _in_sequence(parent):
         raise _not_a_sequence_context("repeat()")
 
+    count = _validate_or_pass_through(count, param_name="count", context="repeat()")
     rep = Repetition(count=count, body=OpSequence(items=[]))
     _add_to_sequence(parent, rep)
     _push_context(rep)

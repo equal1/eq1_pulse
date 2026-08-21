@@ -10,7 +10,7 @@ from .base_models import LeanModel
 from .basic_types import Amplitude, Duration, Frequency, Magnitude, OpBase, Phase, Threshold, Voltage
 from .identifier_str import ExternalSymbolStr, IdentifierStr
 from .pulse_types import PulseType
-from .reference_types import VariableRef
+from .reference_types import SymbolRef, VariableRef
 
 if TYPE_CHECKING:
     from .basic_types import (
@@ -22,7 +22,7 @@ if TYPE_CHECKING:
         ThresholdLike,
         VoltageLike,
     )
-    from .reference_types import VariableRefLike
+    from .reference_types import SymbolRefLike, VariableRefLike
 
 __all__ = (
     "ComparisonMode",
@@ -296,9 +296,9 @@ class Discriminate(DataOpBase):
     """The target variable to store the discrimination result."""
     source: VariableRef
     """The source variable containing the data to discriminate."""
-    threshold: Threshold
+    threshold: Threshold | SymbolRef
     """The threshold value for discrimination."""
-    rotation: Phase = Phase(0)
+    rotation: Phase | SymbolRef = Phase(0)
     """Phase rotation to apply before discrimination."""
     compare: Annotated[ComparisonMode, PlainSerializer(str)] = ComparisonMode.GreaterEqual
     """The comparison mode to use."""
@@ -313,8 +313,8 @@ class Discriminate(DataOpBase):
             *,
             target: VariableRefLike,
             source: VariableRefLike,
-            threshold: ThresholdLike,
-            rotation: PhaseLike = 0,
+            threshold: ThresholdLike | SymbolRefLike,
+            rotation: PhaseLike | SymbolRefLike = 0,
             compare: ComparisonModeLike = ComparisonMode.GreaterEqual,
             project: ComplexToRealProjectionModeLike = ComplexToRealProjectionMode.RealPart,
             **data,

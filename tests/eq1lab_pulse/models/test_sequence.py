@@ -58,6 +58,16 @@ def test_repetition():
     assert rep.body == body
 
 
+def test_repetition_count_accepts_variable_and_external_ref():
+    """Test Repetition.count accepts a VariableRef or an ExternalRef, in addition to a literal."""
+    body = OpSequence([])
+    rep = Repetition(count=VariableRef("n"), body=body)
+    assert isinstance(rep.count, VariableRef)
+
+    rep = Repetition(count=ExternalRef(ext="q0.reps"), body=body)
+    assert isinstance(rep.count, ExternalRef)
+
+
 def test_iteration():
     """Test Iteration model."""
     pulse = SquarePulse(duration={"ns": 100}, amplitude={"V": 1.0})

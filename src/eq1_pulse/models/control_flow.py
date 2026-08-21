@@ -1,7 +1,7 @@
 """Base models for control flow operations."""
 
 from collections.abc import Iterable, Mapping
-from typing import TYPE_CHECKING, Any, Literal, Self, overload
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Self, overload
 
 from pydantic import (
     ConfigDict,
@@ -111,8 +111,12 @@ class RepetitionBase[BodyT](OpBase):
 
     op_type: Literal["repeat"] = "repeat"
     """The type discriminator, always "repeat"."""
-    count: int = Field(ge=0)
-    """Number of times to repeat the sequence."""
+    count: Annotated[int, Field(ge=0)] | SymbolRef
+    """Number of times to repeat the sequence.
+
+    The literal branch keeps its ``ge=0`` constraint; there is nothing to constrain on the symbol
+    branch, which is the "declare, never enforce" split every other symbol value follows.
+    """
     body: BodyT
     """The sequence of operations to repeat."""
 

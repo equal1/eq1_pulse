@@ -4,7 +4,7 @@ from typing import Any
 import pytest
 from pydantic import TypeAdapter
 
-from eq1_pulse.models.basic_types import Amplitude
+from eq1_pulse.models.basic_types import Amplitude, Phase, Threshold
 from eq1_pulse.models.data_ops import (
     ComparisonMode,
     ComplexToRealProjectionMode,
@@ -71,6 +71,8 @@ def test_pulse_decl_creation(pulse_decl: PulseDecl):
 def test_discriminate_creation(discriminate: Discriminate):
     assert discriminate.target.var == "result"
     assert discriminate.source.var == "data"
+    assert isinstance(discriminate.threshold, Threshold)
+    assert isinstance(discriminate.rotation, Phase)
     assert discriminate.threshold.V == 0.5
     assert discriminate.rotation.rad == 0.0
     assert discriminate.compare == ComparisonMode.GreaterEqual
@@ -87,6 +89,33 @@ def test_discriminate_target_rejects_external_ref():
             compare=">=",
             project="real",
         )
+
+
+def test_discriminate_threshold_and_rotation_accept_variable_and_external_ref():
+    disc = Discriminate(
+        target="result",
+        source="data",
+        threshold=VariableRef("thr"),
+        rotation=ExternalRef("q0.rot"),
+    )
+    assert isinstance(disc.threshold, VariableRef)
+    assert isinstance(disc.rotation, ExternalRef)
+
+    disc = Discriminate(
+        target="result",
+        source="data",
+        threshold=ExternalRef("q0.thr"),
+        rotation=VariableRef("rot"),
+    )
+    assert isinstance(disc.threshold, ExternalRef)
+    assert isinstance(disc.rotation, VariableRef)
+
+    # Still accepts its literal form.
+    disc = Discriminate(target="result", source="data", threshold={"V": 0.5}, rotation={"rad": 0.0})
+    assert isinstance(disc.threshold, Threshold)
+    assert isinstance(disc.rotation, Phase)
+    assert disc.threshold.V == 0.5
+    assert disc.rotation.rad == 0.0
 
 
 def test_store_creation(store: Store):

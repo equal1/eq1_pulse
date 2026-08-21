@@ -275,7 +275,18 @@ The concrete-only fields (task 4). Any builder change.
 
 ---
 
-## Task 4 — Widen the concrete-only read sites
+## Task 4 — Widen the concrete-only read sites ✅ done
+
+**Status:** done, 2026-08-21. `RepetitionBase.count` uses `Annotated[int, Field(ge=0)] | SymbolRef`
+so pyright/mypy accept the constrained-literal-branch-only split cleanly. As with `Conditional` in
+task 3, `Repetition`'s `TYPE_CHECKING`-only `__init__` override in `sequence.py` needed its own
+`count: int | SymbolRefLike` widening alongside the base class field. `DemodIntegration` has no
+custom `__init__` at all (plain pydantic-synthesized constructor), so widening `phase`/`scale_cos`/
+`scale_sin` needed no signature changes — only the field types. Added an explicit
+`test_demod_integration_scale_cos_sin_default_still_elided` test confirming
+`DemodIntegration().model_dump() == {"integration_type": "demod"}` after the widening. `repeat()`
+now routes `count` through `_validate_or_pass_through` before constructing `Repetition`, matching
+the pattern used by other builder functions for `SymbolRefLike` parameters.
 
 **Read:** plan §2 ("Also widened — concrete-only today") and §9 Q5.
 **Goal:** the nine fields that accept only a literal today also accept a `SymbolRef`.

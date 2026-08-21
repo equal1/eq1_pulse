@@ -52,6 +52,7 @@ from eq1_pulse.models import (
     SquarePulse,
     Store,
     VariableDecl,
+    VariableRef,
 )
 
 
@@ -272,6 +273,18 @@ class TestControlFlow:
         assert isinstance(seq.items[0], Repetition)
         assert seq.items[0].count == 10
         assert len(seq.items[0].body.items) == 1
+
+    def test_repeat_with_variable_count(self):
+        """Test repeat loop with a variable count."""
+        with build_sequence() as seq:
+            var_decl("n", "int")
+            with repeat(var("n")):
+                play("ch1", square_pulse(duration="10us", amplitude="100mV"))
+
+        assert len(seq.items) == 2
+        rep = seq.items[1]
+        assert isinstance(rep, Repetition)
+        assert rep.count == VariableRef("n")
 
     def test_for_loop(self):
         """Test for loop."""

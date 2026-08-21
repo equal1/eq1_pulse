@@ -96,7 +96,7 @@ class Repetition(RepetitionBase[OpSequence]):
 
     if TYPE_CHECKING:
 
-        def __init__(self, /, *, count: int, body: OpSequenceLike, **data): ...
+        def __init__(self, /, *, count: int | SymbolRefLike, body: OpSequenceLike, **data): ...
 
 
 class Iteration(IterationBase[OpSequence]):
