@@ -1,0 +1,295 @@
+# Execution breakdown: expression support
+
+Companion to [expressions-plan.md](expressions-plan.md) (issue #3). Five independently executable
+tasks, each sized for a single clean session.
+
+**Requires [symbols-and-parameters-tasks.md](symbols-and-parameters-tasks.md) to be complete.** Task 2
+below is a one-line alias change *because* #6 already routed every read site through `SymbolRef`. Run
+before that and every widening has to be done twice.
+
+**Run them in numeric order.** Each task assumes every lower-numbered task is complete and
+committed. Each leaves the tree green.
+
+---
+
+## Common preamble — paste into every session
+
+> **Environment.** `conda activate eq1_pulse-dev` before running anything. If the prompt does not
+> show `(eq1_pulse-dev)`, activation did not happen.
+>
+> **Conventions.** Follow `.github/copilot-instructions.md`. Load-bearing points: ReST docstrings
+> (`:param:` / `:return:` / `:raises:`, no `:type:` where the annotation says it); blank lines must
+> be **completely** empty; no trailing whitespace anywhere; max 2 consecutive blank lines at top
+> level, 1 inside a function; 120-column lines; `X | Y` inside `isinstance()`, never a tuple;
+> aligned pipes in markdown tables. Models inherit from the bases in `models/base_models.py`.
+> Discriminated unions via `Annotated[..., Discriminator("field")]`.
+>
+> **Verify.** `./qa/run_all_qa.sh` (pyright + mypy + pytest with coverage). It must pass before you
+> report done. If it passed before your change and fails after, you are not done.
+>
+> **Context.** Read `docs/plans/expressions-plan.md` — the sections named in your task — before
+> starting, and `docs/plans/symbols-and-parameters-plan.md` §2 and §3.2 for what #6 left you. Do not
+> re-litigate decisions recorded in either; §1 and §8 of the expressions plan list the closed ones.
+>
+> **Scope.** Do only what your task says. Each task lists an explicit *out of scope* set. If you
+> believe a listed exclusion is wrong, say so in your final message rather than acting on it.
+
+---
+
+## Dependency graph
+
+```text
+1 ──> 2 ──┬──────────────> 5
+     └──> 3 ──> 4 ────────┘
+```
+
+Safe merge: **3 + 4** (one builder feature split only by size). Do not merge 1 into anything — a
+recursive discriminated union is the task most likely to need a second pass, and it is the one every
+other task depends on.
+
+| #  | Task                                                  | Size | Model     | Reasoning | Context     | Touches                                    |
+| -- | ------------------------------------------------------- | ---- | --------- | --------- | ----------- | -------------------------------------------- |
+| 1  | `models/expressions.py` — the node set                | L    | Opus 5    | high      | 200k / ~60k | `models/expressions.py`, `tests/`            |
+| 2  | Widen operations to `ValueRef`; rebuild sweep         | M    | Sonnet 5  | high      | 200k / ~60k | `models/`, `tests/`                          |
+| 3  | Builder: `Expr` and its operators                     | M    | Sonnet 5  | high      | 200k / ~45k | `builder/_expressions.py`, `tests/`          |
+| 4  | Builder: leaf checking, acceptance, exports           | M    | Sonnet 5  | medium    | 200k / ~50k | `builder/`, `tests/`                         |
+| 5  | Schema, docs, example                                 | S    | Haiku 4.5 | medium    | 200k / ~30k | `utilities/`, `docs/`, `examples/`, `tests/` |
+
+**Reading the columns.** *Context* is `window / working set`. The 200k standard window is ample
+throughout; the second figure is roughly what needs to be resident. Task 2's working set is large
+because it spans six model modules at once, not because any one file is big.
+
+*Model* rationale: task 1 is a mutually recursive discriminated union with forward references and
+`model_rebuild()` ordering — the failure mode is silent (a union degrading to `dict`) and surfaces
+far from its cause, which is exactly where Opus pays for itself. Task 5 is checklist work against
+explicit criteria — Haiku is sufficient.
+
+---
+
+## Task 1 — `models/expressions.py`
+
+**Read:** plan §2 in full, and §8 Q3/Q4/Q7.
+**Goal:** the expression tree exists, validates, and round-trips. Nothing uses it yet.
+
+### Steps
+
+1. Create `src/eq1_pulse/models/expressions.py` with the seven node types from plan §2.1:
+   `ExprBase(LeanModel)`, `LiteralExpr`, `SymbolExpr`, `UnaryExpr`, `BinaryExpr`, `CompareExpr`,
+   `LogicalExpr`, `CallExpr`, and the `Expression` discriminated union on `expr_type`.
+
+   `expr_type` is declared **first** in every class — `LeanModel` treats the first single-valued
+   `Literal` field as the discriminator and always serializes it. `op` is multi-valued and is
+   therefore an ordinary field, which is what is wanted.
+
+2. `LiteralExpr.value` is `SymbolValue`, imported from `data_ops.py` where #6 put it.
+   `SymbolExpr.symbol` is `SymbolRef` from `reference_types.py`. Do not redefine either.
+
+3. `UnaryExpr.op` is `Literal["-"]` **only**. `abs` is a `CallExpr` function, not a unary op
+   (plan §8 Q3). `LogicalExpr` carries `operands: list[Expression]` and `op: Literal["and", "or", "not"]`.
+
+4. Validators — these three and no others:
+   - `CallExpr`: `min`/`max` take ≥ 2 args, every other function takes exactly 1.
+   - `LogicalExpr`: `not` takes exactly 1 operand, `and`/`or` take ≥ 2.
+   - depth: a module constant `MAX_EXPRESSION_DEPTH = 32` and a validator that raises a
+     `ValueError` naming the limit. It must turn what would be a `RecursionError` into a
+     `ValidationError` — test that, do not just assert the constant exists.
+
+   **No type inference, no unit checking, no simplification.** Plan §0 and §1 say why; a reviewer
+   will look for these having crept in.
+
+5. Add `type ValueRef = SymbolRef | Expression` **in this module** (plan §8 Q5 — putting it in
+   `reference_types.py` creates an import cycle) and a `ValueRefLike` beside it.
+
+6. Handle the recursion: `from __future__ import annotations`, forward references, and an explicit
+   `model_rebuild()` per node class at the bottom of the module. Verify by validating a
+   depth-3 tree from a plain dict — if a rebuild is missing, that is where it shows.
+
+7. `__all__`, sorted, exporting the seven node types, `Expression`, `ValueRef`, `ValueRefLike` and
+   `MAX_EXPRESSION_DEPTH`.
+
+8. Tests in `tests/eq1lab_pulse/models/test_expressions.py` (new):
+   - each node type constructs and round-trips through `model_dump` → `model_validate`;
+   - the `Expression` union discriminates each `expr_type` correctly;
+   - a depth-3 nested tree round-trips from a plain dict;
+   - `CallExpr` and `LogicalExpr` arity validators accept and reject;
+   - depth 33 raises `ValidationError`, **not** `RecursionError`;
+   - a `SymbolExpr` wrapping an `ExternalRef` round-trips with the `{"ext": ...}` form intact.
+
+### Acceptance
+
+- `./qa/run_all_qa.sh` passes.
+- No existing test changed.
+- `models/expressions.py` imports nothing from `channel_ops`, `pulse_types`, `sequence` or
+  `control_flow` — dependencies point one way.
+
+### Out of scope
+
+Using `Expression` in any operation model. Any builder change. Adding the module to
+`openapi_generator` (task 5).
+
+---
+
+## Task 2 — Widen operations to `ValueRef`; the rebuild sweep
+
+**Read:** plan §3 in full, and §2 of the #6 plan for the read-site inventory.
+**Goal:** an `Expression` is accepted wherever a `SymbolRef` is.
+
+### Steps
+
+1. Replace `SymbolRef` with `ValueRef` (and `SymbolRefLike` with `ValueRefLike`) at every site
+   listed in the #6 plan's §2 tables — **both** tables, including the concrete-only fields task 4
+   of #6 widened. Same list, same files, no new judgement about what counts as a read site.
+
+2. `ConditionalBase.var` is typed `ValueRef` like the rest, plus a model validator restricting it to
+   a predicate: a `SymbolRef`, a `CompareExpr`, or a `LogicalExpr`. Arithmetic nodes are rejected
+   with a message naming what was passed. Plan §3 consequence 1 and §8 Q2.
+
+3. Run the `model_rebuild()` sweep: every model whose fields now transitively mention `Expression`
+   needs rebuilding. That is `pulse_types`, `channel_ops`, `data_ops`, `external_block`,
+   `control_flow`, `sequence`, and `experimental/schedule`. Add a test that imports the package
+   fresh and validates one model of each family from a plain dict containing an expression — a
+   missed rebuild degrades the union to `dict` silently and this is what catches it.
+
+4. Tests:
+   - `test_channel_ops.py` / `test_pulse_types.py` — one widened field per family accepts an
+     `Expression`;
+   - `test_control_flow.py` — `Conditional` accepts `CompareExpr`, `LogicalExpr` and a bare
+     `SymbolRef`; rejects `BinaryExpr` and `LiteralExpr`;
+   - `test_sequence.py` — a sequence containing expressions round-trips through **JSON** (not just
+     `model_dump`).
+
+### Acceptance
+
+- `./qa/run_all_qa.sh` passes.
+- **The existing coercion tests in `test_pulse_types.py` pass unchanged.** `"10us"` is still a
+  `Duration`, `{"ns": 100}` is still a `Duration`, a bare identifier string is still a
+  `VariableRef`, `{"ext": ...}` is still an `ExternalRef`. A six-way smart union at every pulse
+  parameter is the highest regression risk in this plan and these tests are the guard.
+
+### Out of scope
+
+Any builder change. Simplification, evaluation, or type checking of expressions.
+
+---
+
+## Task 3 — Builder: `Expr` and its operators
+
+**Read:** plan §4.1, §4.2, and §8 Q1/Q6.
+**Goal:** Python operators build an `Expression` tree. Nothing consumes it yet.
+
+### Steps
+
+1. Create `src/eq1_pulse/builder/_expressions.py` with the `Expr` wrapper class and the `expr()`
+   entry point. `expr(x)` accepts an `Expr` (identity), a `SymbolRef`, a raw `SymbolValue`, or a
+   bare `Expression`, normalizing to `SymbolExpr` / `LiteralExpr` as appropriate.
+
+2. Operators per plan §4.2: `+ - * / %` with their reflected `r`-variants, unary `-`, `abs()`,
+   `< <= > >=`, and the methods `.eq()`, `.ne()`, `.and_()`, `.or_()`, `.not_()`, plus `.unwrap()`.
+
+3. **Do not overload `__eq__` or `__ne__`.** `Reference.__eq__` already means value comparison and
+   is tested; pydantic relies on it. `and`/`or`/`not` cannot be overloaded in Python at all — they
+   coerce to `bool`. Set `__hash__ = None` explicitly.
+
+   The class docstring must state the asymmetry — `<` works, `==` does not — and why, so a user
+   hitting it finds the answer where they are already looking.
+
+4. `Expr` is **not** a pydantic model. It is a plain class that holds an `Expression` and returns
+   new `Expr` instances from its operators.
+
+5. `abs()` maps to `CallExpr(function="abs")`, matching the model.
+
+6. Tests in `tests/eq1lab_pulse/test_builder_expressions.py` (new):
+   - each operator produces the right node with the right `op`;
+   - reflected forms: `2 * expr(var("a"))` and `expr(var("a")) * 2` differ only in operand order;
+   - `.eq()` / `.ne()` / `.and_()` / `.or_()` / `.not_()`;
+   - `expr(expr(x))` is `expr(x)`;
+   - `Expr` is unhashable;
+   - `expr(var("a")) == expr(var("a"))` does **not** return a `CompareExpr` — assert the actual
+     behaviour so a future change to `__eq__` is caught.
+
+### Acceptance
+
+- `./qa/run_all_qa.sh` passes.
+- `_expressions.py` does not import from `core.py` — dependencies among builder modules point one
+  way, as `_state.py` and `_factories.py` already establish.
+
+### Out of scope
+
+Wiring `Expr` into the operation builders (task 4). Exporting `expr` (task 4).
+
+---
+
+## Task 4 — Builder: leaf checking, acceptance, exports
+
+**Read:** plan §4.3.
+**Goal:** builder functions accept an `Expr` and check its leaves.
+
+### Steps
+
+1. In `builder/_factories.py`, add a tree walker that visits every `SymbolExpr` in an `Expression`
+   and calls `_check_variable_declared` or `_check_external_declared` per leaf. It belongs next to
+   the existing validation helpers, and it is the only new traversal in this plan.
+
+2. Extend `_validate_or_pass_through` and `_validate_explicit_variable_ref` with two branches: an
+   `Expr` (unwrap, walk the leaves, return the `Expression`) and a bare `Expression` model (walk,
+   return unchanged). A user deserializing a fragment should not have to re-wrap it.
+
+3. Export `expr` from `builder/core.py` and from `builder/__init__.py`'s import list and `__all__`,
+   both kept sorted.
+
+4. `if_()` accepts an `Expr` whose unwrapped node is a predicate, delegating the predicate check to
+   the model validator from task 2 rather than duplicating it. Update its docstring and add an
+   expression example.
+
+5. Tests, in `test_builder_expressions.py` and `test_validate_or_pass_through.py`:
+   - an expression in a pulse parameter, a `wait` duration, a `set_frequency`;
+   - an undeclared variable **or** external symbol anywhere in a tree raises, including nested three
+     levels deep — that is what the walker is for;
+   - `if_(expr(var("a")) > 5)` builds; `if_(expr(var("a")) + 1)` raises;
+   - a bare `Expression` model passed directly is accepted.
+
+### Acceptance
+
+- `./qa/run_all_qa.sh` passes.
+- `builder.__all__` is sorted and contains `expr`.
+- The plan's §5 example runs end to end.
+- The experimental schedule builder still imports and its tests pass — it shares `_factories`.
+
+### Out of scope
+
+Docs and the example file (task 5). Adding `expr` to `builder/experimental/`.
+
+---
+
+## Task 5 — Schema, docs, example
+
+**Read:** plan §6, §7.
+**Goal:** expressions are visible in the generated schema and documented.
+
+### Steps
+
+1. `utilities/openapi_generator.py` — three explicit edits: `"expressions"` into `model_modules`,
+   `"ExprBase"` into `excluded_base_classes`, and an `{"name": "expressions", "description": ...}`
+   entry in the tag list.
+
+2. `tests/test_openapi_generator.py` — the seven expression models are present; `ExprBase` is
+   absent.
+
+3. `examples/expression_ramsey.py` — the plan's §5 example, made runnable. Check how
+   `tests/test_examples.py` discovers examples before assuming it picks the file up.
+
+4. `docs/source/user_guide/builder_guide.rst` — an "Expressions" section: `expr()` is required (bare
+   `var("a") * 2` does not work, and why); `<`/`>` work but `==` does not, use `.eq()`; expressions
+   are recorded, never evaluated or dimension-checked by eq1_pulse.
+
+5. Build the docs (`cd docs && ./generate_html.sh`) and confirm no new Sphinx warnings.
+
+### Acceptance
+
+- `./qa/run_all_qa.sh` passes.
+- `python -m eq1_pulse.utilities.openapi_generator` runs and the seven models appear.
+- Docs build clean.
+
+### Out of scope
+
+Any model or builder change. If something is missing, report it rather than adding it here.
