@@ -324,7 +324,22 @@ the pattern used by other builder functions for `SymbolRefLike` parameters.
 
 ---
 
-## Task 5 — Builder: `ext()`, the external namespace, validation plumbing
+## Task 5 — Builder: `ext()`, the external namespace, validation plumbing ✅ done
+
+**Status:** done, 2026-08-21. Widening `_validate_or_pass_through`/`_validate_explicit_variable_ref`
+to return `T | SymbolRef` (instead of `T | VariableRef`) rippled into every call site typed
+`X | VariableRefLike` for a field the two functions actually route through — `square_pulse`,
+`sine_pulse`, `external_pulse`, `arbitrary_pulse` in `_factories.py`, and `play`/`wait`/
+`set_frequency`/`shift_frequency`/`set_phase`/`shift_phase`/`external_block` in `core.py` — each
+needed `VariableRefLike` widened to `SymbolRefLike` for pyright to accept the now-wider return
+value being assigned back to the parameter. The experimental schedule builder mirrors those same
+seven functions with its own copies and needed the identical widening to stay green, even though
+task 5 otherwise leaves `builder/experimental/` untouched — this is a type-hint-only fix forced by
+sharing `_factories.py`, not a functional addition. `core.py`'s re-export of
+`_validate_explicit_variable_ref` needed the same `from ._factories import X as X` idiom already
+used for `_validate_or_pass_through`, once a test started importing it from `builder.core` directly.
+Tests that need a declared external symbol before `extern_decl()` exists (task 6) call the internal
+`eq1_pulse.builder._state._register_external` directly.
 
 **Read:** plan §5.2, §5.3, §5.4.
 **Goal:** external references can be built and are checked for declaration.

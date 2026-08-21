@@ -2,8 +2,8 @@
 
 import pytest
 
-from eq1_pulse.builder.core import _validate_or_pass_through
-from eq1_pulse.models import Amplitude, Duration, Frequency, Phase, VariableRef
+from eq1_pulse.builder.core import _validate_explicit_variable_ref, _validate_or_pass_through
+from eq1_pulse.models import Amplitude, Duration, ExternalRef, Frequency, Phase, VariableRef
 
 
 class TestValidateOrPassThrough:
@@ -28,7 +28,7 @@ class TestValidateOrPassThrough:
 
     def test_model_instances_pass_through(self):
         """Model instances should pass through unchanged."""
-        result: Frequency | Duration | Amplitude | Phase | VariableRef
+        result: Frequency | Duration | Amplitude | Phase | VariableRef | ExternalRef
 
         duration = Duration(us=10)
         result = _validate_or_pass_through(duration, param_name="duration", context="test()")
@@ -245,3 +245,94 @@ class TestValidateOrPassThrough:
 
         # Numbers with spaces
         assert _validate_or_pass_through("10 us", param_name="test", context="test()") == "10 us"
+
+    def test_external_ref_instance_declared(self):
+        """ExternalRef instances should be validated if declared."""
+        from eq1_pulse.builder import build_sequence, ext
+        from eq1_pulse.builder._state import _register_external
+
+        with build_sequence():
+            _register_external("q0.f01")
+            e = ext("q0.f01")
+            result = _validate_or_pass_through(e, param_name="test", context="test()")
+            assert isinstance(result, ExternalRef)
+            assert result.ext == "q0.f01"
+
+    def test_external_ref_instance_undeclared_raises(self):
+        """ExternalRef instances referencing undeclared symbols should raise RuntimeError."""
+        from eq1_pulse.builder import build_sequence
+
+        with build_sequence():
+            ext_ref = ExternalRef(ext="q0.f01")
+            with pytest.raises(RuntimeError, match="External symbol 'q0.f01' has not been declared"):
+                _validate_or_pass_through(ext_ref, param_name="test", context="test()")
+
+    def test_dict_with_ext_key_declared(self):
+        """Dicts with 'ext' key referencing declared external symbols should return ExternalRef."""
+        from eq1_pulse.builder import build_sequence
+        from eq1_pulse.builder._state import _register_external
+
+        with build_sequence():
+            _register_external("q0.f01")
+            result = _validate_or_pass_through({"ext": "q0.f01"}, param_name="test", context="test()")
+            assert isinstance(result, ExternalRef)
+            assert result.ext == "q0.f01"
+
+    def test_dict_with_ext_key_undeclared_raises(self):
+        """Dicts with 'ext' key referencing undeclared external symbols should raise RuntimeError."""
+        from eq1_pulse.builder import build_sequence
+
+        with build_sequence():
+            with pytest.raises(RuntimeError, match="External symbol 'q0.f01' has not been declared"):
+                _validate_or_pass_through({"ext": "q0.f01"}, param_name="test", context="test()")
+
+    def test_identifier_like_string_never_promoted_to_external_ref(self):
+        """A bare identifier-like string is always a variable lookup, never an external symbol."""
+        from eq1_pulse.builder import build_sequence, var_decl
+
+        with build_sequence():
+            var_decl("q0_f01", "float")
+            result = _validate_or_pass_through("q0_f01", param_name="test", context="test()")
+            assert isinstance(result, VariableRef)
+            assert result.var == "q0_f01"
+
+
+class TestValidateExplicitVariableRef:
+    """Test suite for _validate_explicit_variable_ref function."""
+
+    def test_external_ref_instance_declared(self):
+        """ExternalRef instances should be validated if declared."""
+        from eq1_pulse.builder import build_sequence, ext
+        from eq1_pulse.builder._state import _register_external
+
+        with build_sequence():
+            _register_external("q0.f01")
+            e = ext("q0.f01")
+            result = _validate_explicit_variable_ref(e, param_name="test")
+            assert isinstance(result, ExternalRef)
+            assert result.ext == "q0.f01"
+
+    def test_external_ref_instance_undeclared_raises(self):
+        """ExternalRef instances referencing undeclared symbols should raise RuntimeError."""
+        from eq1_pulse.builder import build_sequence
+
+        with build_sequence():
+            ext_ref = ExternalRef(ext="q0.f01")
+            with pytest.raises(RuntimeError, match="External symbol 'q0.f01' has not been declared"):
+                _validate_explicit_variable_ref(ext_ref, param_name="test")
+
+    def test_dict_with_ext_key_declared(self):
+        """Dicts with 'ext' key referencing declared external symbols should return ExternalRef."""
+        from eq1_pulse.builder import build_sequence
+        from eq1_pulse.builder._state import _register_external
+
+        with build_sequence():
+            _register_external("q0.f01")
+            result = _validate_explicit_variable_ref({"ext": "q0.f01"}, param_name="test")
+            assert isinstance(result, ExternalRef)
+            assert result.ext == "q0.f01"
+
+    def test_identifier_like_string_pass_through_unchanged(self):
+        """A bare identifier-like string is not an explicit reference and passes through."""
+        result = _validate_explicit_variable_ref("q0_f01", param_name="test")
+        assert result == "q0_f01"

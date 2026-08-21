@@ -6,6 +6,7 @@ from eq1_pulse.builder import (
     build_sequence,
     demod_integration,
     discriminate,
+    ext,
     for_,
     if_,
     measure,
@@ -18,6 +19,7 @@ from eq1_pulse.builder import (
     var,
     var_decl,
 )
+from eq1_pulse.builder._state import _register_external
 
 
 class TestVariableDeclarationVerification:
@@ -172,3 +174,44 @@ class TestVariableDeclarationVerification:
                 # for_var is out of scope
                 with pytest.raises(RuntimeError, match="Variable 'for_var' has not been declared"):
                     var("for_var")
+
+
+class TestExternalSymbolDeclarationVerification:
+    """Tests for external symbol declaration verification."""
+
+    def test_ext_without_declaration_raises_error(self):
+        """Test that using ext() without declaring the external symbol raises an error."""
+        with build_sequence():
+            with pytest.raises(RuntimeError, match="External symbol 'q0.f01' has not been declared"):
+                ext("q0.f01")
+
+    def test_ext_with_declaration_succeeds(self):
+        """Test that using ext() after declaring the external symbol succeeds."""
+        with build_sequence():
+            _register_external("q0.f01")
+            # Should not raise
+            result = ext("q0.f01")
+            assert result.ext == "q0.f01"
+
+    def test_external_symbol_scoping_in_nested_contexts(self):
+        """Test that external symbols are scoped to their declaration context and nested contexts."""
+        with build_sequence():
+            _register_external("q0.f01")
+
+            # External symbol should be accessible in parent context
+            ext("q0.f01")
+
+            # External symbol should be accessible in nested repeat
+            with repeat(5):
+                ext("q0.f01")
+
+                # Declare an external symbol in nested context
+                _register_external("q0.pi_amp")
+                ext("q0.pi_amp")
+
+            # q0.f01 should still be accessible
+            ext("q0.f01")
+
+            # q0.pi_amp should NOT be accessible outside its context
+            with pytest.raises(RuntimeError, match="External symbol 'q0.pi_amp' has not been declared"):
+                ext("q0.pi_amp")

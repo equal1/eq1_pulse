@@ -85,7 +85,7 @@ if TYPE_CHECKING:
 
     from ...models.basic_types import AmplitudeLike, DurationLike, FrequencyLike, PhaseLike, ThresholdLike
     from ...models.data_ops import ComparisonModeLike, ComplexToRealProjectionModeLike
-    from ...models.reference_types import ChannelRefLike, PulseRefLike, VariableRefLike
+    from ...models.reference_types import ChannelRefLike, PulseRefLike, SymbolRefLike, VariableRefLike
 
 __all__ = (
     "ScheduleBlock",
@@ -752,7 +752,7 @@ def play(
     channel: ChannelRefLike,
     pulse: PulseType | PulseRefLike,
     *,
-    scale_amp: float | complex | VariableRefLike | None = None,
+    scale_amp: float | complex | SymbolRefLike | None = None,
     cond: VariableRefLike | None = None,
     **schedule_params: Unpack[ScheduleParams],
 ) -> OperationToken:
@@ -795,7 +795,7 @@ def play(
 
 def wait(
     *channels: ChannelRefLike,
-    duration: DurationLike | VariableRefLike,
+    duration: DurationLike | SymbolRefLike,
     **schedule_params: Unpack[ScheduleParams],
 ) -> OperationToken:
     """Add wait operation on a channel.
@@ -867,7 +867,7 @@ def barrier(
 
 def set_frequency(
     channel: ChannelRefLike,
-    frequency: FrequencyLike | VariableRefLike,
+    frequency: FrequencyLike | SymbolRefLike,
     **schedule_params: Unpack[ScheduleParams],
 ) -> OperationToken:
     """Set channel frequency.
@@ -900,7 +900,7 @@ def set_frequency(
 
 def shift_frequency(
     channel: ChannelRefLike,
-    frequency: FrequencyLike | VariableRefLike,
+    frequency: FrequencyLike | SymbolRefLike,
     **schedule_params: Unpack[ScheduleParams],
 ) -> OperationToken:
     """Shift channel frequency.
@@ -933,7 +933,7 @@ def shift_frequency(
 
 def set_phase(
     channel: ChannelRefLike,
-    phase: PhaseLike | VariableRefLike,
+    phase: PhaseLike | SymbolRefLike,
     **schedule_params: Unpack[ScheduleParams],
 ) -> OperationToken:
     """Set channel phase.
@@ -966,7 +966,7 @@ def set_phase(
 
 def shift_phase(
     channel: ChannelRefLike,
-    phase: PhaseLike | VariableRefLike,
+    phase: PhaseLike | SymbolRefLike,
     **schedule_params: Unpack[ScheduleParams],
 ) -> OperationToken:
     """Shift channel phase.

@@ -61,11 +61,11 @@ from ..models.reference_types import VariableRef
 from ..models.sequence import Conditional, Iteration, OpSequence, Repetition
 from ._factories import (
     _convert_range_to_model,
-    _validate_explicit_variable_ref,
     _validate_variable_ref,
     arbitrary_pulse,
     channel,
     demod_integration,
+    ext,
     external_pulse,
     full_integration,
     phase,
@@ -74,6 +74,7 @@ from ._factories import (
     square_pulse,
     var,
 )
+from ._factories import _validate_explicit_variable_ref as _validate_explicit_variable_ref
 from ._factories import _validate_or_pass_through as _validate_or_pass_through
 from ._state import (
     _current_context,
@@ -99,6 +100,7 @@ __all__ = (
     "channel",
     "demod_integration",
     "discriminate",
+    "ext",
     "external_block",
     "external_pulse",
     "for_",
@@ -594,7 +596,7 @@ def play(
     channel: ChannelRefLike,
     pulse: PulseType | PulseRefLike,
     *,
-    scale_amp: float | complex | VariableRefLike | None = None,
+    scale_amp: float | complex | SymbolRefLike | None = None,
     cond: VariableRefLike | None = None,
 ) -> None:
     """Play a pulse on a channel.
@@ -630,7 +632,7 @@ def play(
 
 def wait(
     *channels: ChannelRefLike,
-    duration: DurationLike | VariableRefLike,
+    duration: DurationLike | SymbolRefLike,
 ) -> None:
     """Add wait operation on channel(s).
 
@@ -702,7 +704,7 @@ def barrier(
 
 def set_frequency(
     channel: ChannelRefLike,
-    frequency: FrequencyLike | VariableRefLike,
+    frequency: FrequencyLike | SymbolRefLike,
 ) -> None:
     """Set channel frequency.
 
@@ -729,7 +731,7 @@ def set_frequency(
 
 def shift_frequency(
     channel: ChannelRefLike,
-    frequency: FrequencyLike | VariableRefLike,
+    frequency: FrequencyLike | SymbolRefLike,
 ) -> None:
     """Shift channel frequency.
 
@@ -756,7 +758,7 @@ def shift_frequency(
 
 def set_phase(
     channel: ChannelRefLike,
-    phase: PhaseLike | VariableRefLike,
+    phase: PhaseLike | SymbolRefLike,
 ) -> None:
     """Set channel phase.
 
@@ -783,7 +785,7 @@ def set_phase(
 
 def shift_phase(
     channel: ChannelRefLike,
-    phase: PhaseLike | VariableRefLike,
+    phase: PhaseLike | SymbolRefLike,
 ) -> None:
     """Shift channel phase.
 
@@ -1029,7 +1031,7 @@ def external_block(
     channels: dict[str, ChannelRefLike] | None = None,
     params: dict[str, Any] | None = None,
     results: dict[str, VariableRefLike] | None = None,
-    duration: DurationLike | VariableRefLike | None = None,
+    duration: DurationLike | SymbolRefLike | None = None,
 ) -> None:
     """Reserve channels for an opaque, externally defined block of operations.
 

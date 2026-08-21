@@ -16,12 +16,12 @@ from eq1_pulse.models import Phase
 from ..models.basic_types import Range
 from ..models.channel_ops import DemodIntegration, FullIntegration
 from ..models.pulse_types import ArbitrarySampledPulse, ExternalPulse, SinePulse, SquarePulse
-from ..models.reference_types import ChannelRef, PulseRef, VariableRef
-from ._state import _check_variable_declared, _is_variable_declared
+from ..models.reference_types import ChannelRef, ExternalRef, PulseRef, VariableRef
+from ._state import _check_external_declared, _check_variable_declared, _is_variable_declared
 
 if TYPE_CHECKING:
     from ..models.basic_types import AmplitudeLike, DurationLike, FrequencyLike, PhaseLike
-    from ..models.reference_types import VariableRefLike
+    from ..models.reference_types import SymbolRef, SymbolRefLike, VariableRefLike
 
 # ============================================================================
 # Basic model builders
@@ -104,30 +104,35 @@ def _validate_variable_ref(var_ref: VariableRefLike) -> VariableRef:
 
 
 def _validate_or_pass_through[T](
-    value: T | VariableRef,
+    value: T | SymbolRef,
     *,
     param_name: str,
     context: str,
-) -> T | VariableRef:
-    """Validate a parameter that can be a variable reference or literal value.
+) -> T | SymbolRef:
+    """Validate a parameter that can be a variable/external reference or literal value.
 
     - If value is :obj:`None`: pass through
     - If value is :class:`VariableRef`: validate it's declared, pass through
+    - If value is :class:`ExternalRef`: validate it's declared, pass through
     - If value is dict with ``"var"`` key: convert to :class:`VariableRef` and validate
-    - If value is dict without ``"var"`` key: pass through unchanged
+    - If value is dict with ``"ext"`` key: convert to :class:`ExternalRef` and validate
+    - If value is dict without ``"var"``/``"ext"`` key: pass through unchanged
     - If value is string AND identifier: treat as variable, validate, return :class:`VariableRef`
     - If value is string AND not identifier: pass through (e.g., ``"10us"``)
     - Otherwise: pass through unchanged (for model validation)
 
     This handles parameters like ``duration="10us"`` vs ``duration="my_var"`` vs ``duration=var("my_var")``.
 
+    An identifier-like string is always treated as a variable, never an external symbol -- an
+    external symbol must be spelled out explicitly with :func:`ext` or a ``{"ext": ...}`` dict.
+
     :param value: Parameter value
     :param param_name: Name of the parameter being validated (for error messages)
     :param context: Context/function name where validation occurs (for error messages)
 
-    :return: :class:`VariableRef` if identifier string or dict with ``"var"``, else unchanged value
+    :return: :class:`VariableRef`/:class:`ExternalRef` if a reference, else unchanged value
 
-    :raises RuntimeError: If identifier string references undeclared variable
+    :raises RuntimeError: If a reference names an undeclared variable or external symbol
     """
     if value is None:
         return None  # type: ignore[return-value]
@@ -136,12 +141,20 @@ def _validate_or_pass_through[T](
         _check_variable_declared(value.var)
         return value
 
+    if isinstance(value, ExternalRef):
+        _check_external_declared(value.ext)
+        return value
+
     if isinstance(value, dict):
         if "var" in value:
             var_ref = VariableRef(**value)
             _check_variable_declared(var_ref.var)
             return var_ref
-        # Dict without "var" key - pass through (e.g., {"ns": 100})
+        if "ext" in value:
+            ext_ref = ExternalRef(**value)
+            _check_external_declared(ext_ref.ext)
+            return ext_ref
+        # Dict without "var"/"ext" key - pass through (e.g., {"ns": 100})
         return value  # type: ignore[return-value]
 
     if isinstance(value, str) and value.isidentifier():
@@ -155,29 +168,40 @@ def _validate_or_pass_through[T](
     return value
 
 
-def _validate_explicit_variable_ref[T](value: T, *, param_name: str) -> T | VariableRef:
-    """Validate only *explicit* variable references, passing everything else through.
+def _validate_explicit_variable_ref[T](value: T, *, param_name: str) -> T | SymbolRef:
+    """Validate only *explicit* references, passing everything else through.
 
     Unlike :func:`_validate_or_pass_through`, an identifier-like string is **not**
     treated as a variable reference. Use this for free-form values where a bare
     string is more likely to be a literal than a variable name; callers wanting a
-    variable there must say so with :func:`var` or a ``{"var": ...}`` dict.
+    variable there must say so with :func:`var` or a ``{"var": ...}`` dict, and callers
+    wanting an external symbol must say so with :func:`ext` or a ``{"ext": ...}`` dict. A
+    bare string is never promoted to an :class:`ExternalRef`.
 
     :param value: Parameter value
     :param param_name: Name of the parameter being validated (for error messages)
 
-    :return: :class:`VariableRef` if explicitly one, else the value unchanged
+    :return: :class:`VariableRef`/:class:`ExternalRef` if explicitly one, else the value unchanged
 
-    :raises RuntimeError: If an explicit reference names an undeclared variable
+    :raises RuntimeError: If an explicit reference names an undeclared variable or external symbol
     """
     if isinstance(value, VariableRef):
         _check_variable_declared(value.var)
         return value
 
-    if isinstance(value, dict) and "var" in value:
-        var_ref = VariableRef(**value)
-        _check_variable_declared(var_ref.var)
-        return var_ref
+    if isinstance(value, ExternalRef):
+        _check_external_declared(value.ext)
+        return value
+
+    if isinstance(value, dict):
+        if "var" in value:
+            var_ref = VariableRef(**value)
+            _check_variable_declared(var_ref.var)
+            return var_ref
+        if "ext" in value:
+            ext_ref = ExternalRef(**value)
+            _check_external_declared(ext_ref.ext)
+            return ext_ref
 
     return value
 
@@ -189,10 +213,10 @@ def _validate_explicit_variable_ref[T](value: T, *, param_name: str) -> T | Vari
 
 def square_pulse(
     *,
-    duration: DurationLike | VariableRefLike,
-    amplitude: AmplitudeLike | VariableRefLike,
-    rise_time: DurationLike | VariableRefLike | None = None,
-    fall_time: DurationLike | VariableRefLike | None = None,
+    duration: DurationLike | SymbolRefLike,
+    amplitude: AmplitudeLike | SymbolRefLike,
+    rise_time: DurationLike | SymbolRefLike | None = None,
+    fall_time: DurationLike | SymbolRefLike | None = None,
 ) -> SquarePulse:
     """Create a square pulse.
 
@@ -226,10 +250,10 @@ def square_pulse(
 
 def sine_pulse(
     *,
-    duration: DurationLike | VariableRefLike,
-    amplitude: AmplitudeLike | VariableRefLike,
-    frequency: FrequencyLike | VariableRefLike,
-    to_frequency: FrequencyLike | VariableRefLike | None = None,
+    duration: DurationLike | SymbolRefLike,
+    amplitude: AmplitudeLike | SymbolRefLike,
+    frequency: FrequencyLike | SymbolRefLike,
+    to_frequency: FrequencyLike | SymbolRefLike | None = None,
 ) -> SinePulse:
     """Create a sine pulse.
 
@@ -272,8 +296,8 @@ def sine_pulse(
 def external_pulse(
     function: str,
     *,
-    duration: DurationLike | VariableRefLike,
-    amplitude: AmplitudeLike | VariableRefLike,
+    duration: DurationLike | SymbolRefLike,
+    amplitude: AmplitudeLike | SymbolRefLike,
     params: dict[str, Any] | None = None,
 ) -> ExternalPulse:
     """Create an external pulse reference.
@@ -336,8 +360,8 @@ def external_pulse(
 def arbitrary_pulse(
     samples: list[float] | list[complex],
     *,
-    duration: DurationLike | VariableRefLike,
-    amplitude: AmplitudeLike | VariableRefLike,
+    duration: DurationLike | SymbolRefLike,
+    amplitude: AmplitudeLike | SymbolRefLike,
     interpolation: str | None = None,
     time_points: list[float] | None = None,
 ) -> ArbitrarySampledPulse:
@@ -481,6 +505,27 @@ def var(name: str) -> VariableRef:
     """
     _check_variable_declared(name)
     return VariableRef(var=name)
+
+
+def ext(name: str) -> ExternalRef:
+    """Create an external symbol reference.
+
+    :param name: External symbol name, e.g. ``"q0.f01"``
+
+    :return: External symbol reference
+
+    :raises RuntimeError: If the external symbol has not been declared in current or parent contexts
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import ext
+
+        f01 = ext("q0.f01")
+    """
+    _check_external_declared(name)
+    return ExternalRef(ext=name)
 
 
 def channel(name: str) -> ChannelRef:

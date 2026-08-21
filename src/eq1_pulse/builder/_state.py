@@ -81,6 +81,8 @@ class BuilderState:
     unconsumed_blocks: list[list[Any]] = field(default_factory=list)
     # Declared variable names, one set per entry of context_stack.
     declared_variables: list[set[str]] = field(default_factory=list)
+    # Declared external symbol names, one set per entry of context_stack.
+    declared_externals: list[set[str]] = field(default_factory=list)
 
 
 _state: ContextVar[BuilderState | None] = ContextVar("builder_state", default=None)
@@ -125,6 +127,7 @@ def _push_context(context: BuilderContext) -> None:
     state.context_stack.append(context)
     state.unconsumed_blocks.append([])
     state.declared_variables.append(set())
+    state.declared_externals.append(set())
 
 
 def _pop_context() -> None:
@@ -133,6 +136,7 @@ def _pop_context() -> None:
     state.context_stack.pop()
     state.unconsumed_blocks.pop()
     state.declared_variables.pop()
+    state.declared_externals.pop()
 
 
 def _current_context(operation_name: str = "") -> Any:
@@ -206,4 +210,56 @@ def _check_variable_declared(name: str) -> None:
         raise RuntimeError(
             f"Variable '{name}' has not been declared. Use var_decl('{name}', dtype, ...) "
             f"before referencing this variable."
+        )
+
+
+def _register_external(name: str) -> None:
+    """Register an external symbol as declared in the current context.
+
+    :param name: External symbol name to register
+
+    :raises RuntimeError: If the external symbol is already declared in the current context
+    """
+    state = _get_state()
+    if not state.context_stack:
+        return  # No context active, skip registration
+
+    # Check if already declared in current context (not parent contexts)
+    current = state.declared_externals[-1]
+    if name in current:
+        raise RuntimeError(
+            f"External symbol '{name}' is already declared in the current context. "
+            f"Each external symbol can only be declared once per context."
+        )
+
+    # Register in current context
+    current.add(name)
+
+
+def _is_external_declared(name: str) -> bool:
+    """Check if an external symbol has been declared in the current or parent contexts.
+
+    External symbols are scoped to the context where they are declared and all nested contexts.
+
+    :param name: External symbol name to check
+
+    :return: :obj:`True` if the external symbol is declared, :obj:`False` otherwise
+    """
+    state = _get_state()
+
+    # Check from innermost to outermost context
+    return any(name in declared for declared in reversed(state.declared_externals))
+
+
+def _check_external_declared(name: str) -> None:
+    """Check if an external symbol has been declared and raise an error if not.
+
+    :param name: External symbol name to check
+
+    :raises RuntimeError: If the external symbol has not been declared in current or parent contexts
+    """
+    if not _is_external_declared(name):
+        raise RuntimeError(
+            f"External symbol '{name}' has not been declared. Use extern_decl('{name}', dtype, ...) "
+            f"before referencing this symbol."
         )
