@@ -157,7 +157,16 @@ Any use of `ExternalRef` in an operation model. Declarations. Any builder change
 
 ---
 
-## Task 2 — Declarations: limits, parameters, external symbols
+## Task 2 — Declarations: limits, parameters, external symbols ✅ done
+
+**Status:** done, 2026-08-21. `SymbolValue`'s string coercion reuses the `ExternalParamValue`
+pattern from `pulse_types.py` (`BeforeValidator` trying each dimensional `TypeAdapter` in turn),
+extended to the seven dimensional types the plan lists (`Amplitude`, `Duration`, `Frequency`,
+`Phase`, `Magnitude`, `Voltage`, `Threshold`); unlike `ExternalParamValue`, `SymbolValue` has no
+bare `str` member, so an unmatched string is left to fail validation rather than falling back to
+`str`. `SymbolDeclBase` needed its own `TYPE_CHECKING`-only `__init__` override (mirroring
+`DataOpBase`'s) so pyright's synthesized constructor for `VariableDecl`/`ParameterDecl`/
+`ExternalDecl` accepts each subclass's own `name` field.
 
 **Read:** plan §3.3, §3.4, and the §9 Q3/Q4/Q6/Q7 rows.
 **Goal:** the three declaration kinds exist and carry unit, default and limits.

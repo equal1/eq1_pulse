@@ -98,6 +98,7 @@ def get_all_pydantic_models() -> list[type[BaseModel]]:
         "WrappedValueOrZeroModel",
         "OpBase",
         "PulseBase",
+        "SymbolDeclBase",
         "SequenceBase",
         "RepetitionBase",
         "IterationBase",
