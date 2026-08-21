@@ -117,7 +117,7 @@ class TestVariableDeclarationTracking:
 
     def test_undeclared_var_in_if_raises_error(self):
         """Test that if_ with undeclared condition variable raises error."""
-        with pytest.raises(RuntimeError, match="Variable 'condition' has not been declared"):
+        with pytest.raises(RuntimeError, match="references undeclared variable 'condition'"):
             with build_sequence():
                 with if_("condition"):
                     pass
@@ -514,7 +514,7 @@ class TestVariableReferencesInBuilderFunctions:
 
     def test_play_undeclared_cond_raises(self):
         """Test play() raises error for undeclared cond variable."""
-        with pytest.raises(RuntimeError, match="Variable 'undefined_cond' has not been declared"):
+        with pytest.raises(RuntimeError, match="references undeclared variable 'undefined_cond'"):
             with build_sequence():
                 pulse = square_pulse(duration="10us", amplitude="100mV")
                 play("qubit", pulse, cond="undefined_cond")

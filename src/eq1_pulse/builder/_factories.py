@@ -440,9 +440,9 @@ def full_integration() -> FullIntegration:
 
 def demod_integration(
     *,
-    phase: PhaseLike | None = None,
-    scale_cos: float = 1.0,
-    scale_sin: float = 1.0,
+    phase: PhaseLike | SymbolRefLike | None = None,
+    scale_cos: float | SymbolRefLike = 1.0,
+    scale_sin: float | SymbolRefLike = 1.0,
 ) -> DemodIntegration:
     """Create a demodulation integration configuration.
 
@@ -450,9 +450,9 @@ def demod_integration(
     output signal (at the channel's frequency and phase) before integration.
     This is useful for extracting the in-phase and quadrature components.
 
-    :param phase: Optional phase rotation to apply to the result
-    :param scale_cos: Scaling factor for the real (cosine) part (default: 1.0)
-    :param scale_sin: Scaling factor for the imaginary (sine) part (default: 1.0)
+    :param phase: Optional phase rotation to apply to the result, or a variable/external reference
+    :param scale_cos: Scaling factor for the real (cosine) part, or a variable/external reference (default: 1.0)
+    :param scale_sin: Scaling factor for the imaginary (sine) part, or a variable/external reference (default: 1.0)
 
     :return: Demodulation integration configuration object
 
@@ -474,10 +474,14 @@ def demod_integration(
         record("readout", var="result", duration="1us",
                integration=demod_integration(scale_cos=1.0, scale_sin=-1.0))
     """
+    validated_phase = _validate_or_pass_through(phase, param_name="phase", context="demod_integration()")
+    validated_scale_cos = _validate_or_pass_through(scale_cos, param_name="scale_cos", context="demod_integration()")
+    validated_scale_sin = _validate_or_pass_through(scale_sin, param_name="scale_sin", context="demod_integration()")
+
     return DemodIntegration(
-        phase=phase,  # type: ignore[arg-type]
-        scale_cos=scale_cos,
-        scale_sin=scale_sin,
+        phase=validated_phase,  # type: ignore[arg-type]
+        scale_cos=validated_scale_cos,  # type: ignore[arg-type]
+        scale_sin=validated_scale_sin,  # type: ignore[arg-type]
     )
 
 

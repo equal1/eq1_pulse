@@ -407,10 +407,10 @@ def for_(
 
 
 @contextmanager
-def if_(var: VariableRefLike) -> Iterator[Conditional]:
+def if_(var: SymbolRefLike) -> Iterator[Conditional]:
     """Context manager for building a conditional block.
 
-    :param var: Variable reference for the condition
+    :param var: Variable or external reference for the condition
 
     :yield: The conditional being built
 
@@ -428,15 +428,14 @@ def if_(var: VariableRefLike) -> Iterator[Conditional]:
             with if_("result"):
                 play("qubit", square_pulse(duration="50ns", amplitude="100mV"))
     """
-    # Validate variable reference
-    validated_var = _validate_variable_ref(var)
+    validated_var = _validate_or_pass_through(var, param_name="var", context="if_()")
 
     parent = _current_context("if_()")
 
     if not _in_sequence(parent):
         raise _not_a_sequence_context("if_()")
 
-    cond = Conditional(var=validated_var, body=OpSequence(items=[]))
+    cond = Conditional(var=validated_var, body=OpSequence(items=[]))  # type: ignore[arg-type]
     _add_to_sequence(parent, cond)
     _push_context(cond)
     try:
@@ -752,14 +751,14 @@ def play(
     pulse: PulseType | PulseRefLike,
     *,
     scale_amp: float | complex | SymbolRefLike | None = None,
-    cond: VariableRefLike | None = None,
+    cond: SymbolRefLike | None = None,
 ) -> None:
     """Play a pulse on a channel.
 
     :param channel: Channel to play on
     :param pulse: Pulse to play
     :param scale_amp: Optional amplitude scaling
-    :param cond: Optional condition variable
+    :param cond: Optional condition, as a variable or external reference
 
     Examples
 
@@ -769,13 +768,8 @@ def play(
 
         play("ch1", square_pulse(duration="10us", amplitude="100mV"))
     """
-    # scale_amp can be numeric or variable - only validate if it's a potential VariableRef type
-    if scale_amp is not None and isinstance(scale_amp, str | dict | VariableRef):
-        scale_amp = _validate_or_pass_through(scale_amp, param_name="scale_amp", context="play()")
-
-    # cond is variable-only - use strict validation
-    if cond is not None:
-        cond = _validate_variable_ref(cond)
+    scale_amp = _validate_or_pass_through(scale_amp, param_name="scale_amp", context="play()")
+    cond = _validate_or_pass_through(cond, param_name="cond", context="play()")
 
     op = Play(channel=channel, pulse=pulse, scale_amp=scale_amp, cond=cond)
 
@@ -969,14 +963,14 @@ def record(
     channel: ChannelRefLike,
     var: VariableRefLike,
     *,
-    duration: DurationLike,
+    duration: DurationLike | SymbolRefLike,
     integration: FullIntegration | DemodIntegration,
 ) -> None:
     """Record (acquire) data from a channel.
 
     :param channel: Channel to record from
     :param var: Variable to store the result
-    :param duration: Recording duration
+    :param duration: Recording duration, or a variable/external reference
     :param integration: Integration configuration (use :func:`full_integration` or :func:`demod_integration`)
 
     Examples
@@ -1000,8 +994,9 @@ def record(
     """
     # Validate variable reference
     validated_var = _validate_variable_ref(var)
+    validated_duration = _validate_or_pass_through(duration, param_name="duration", context="record()")
 
-    op = Record(channel=channel, var=validated_var, duration=duration, integration=integration)  # type: ignore[arg-type]
+    op = Record(channel=channel, var=validated_var, duration=validated_duration, integration=integration)  # type: ignore[arg-type]
 
     context = _current_context("record()")
     if not _in_sequence(context):

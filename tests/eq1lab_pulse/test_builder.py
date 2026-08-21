@@ -736,7 +736,7 @@ class TestErrorHandling:
         Note: if_ validates variables first, so it fails on undeclared variable
         before checking for context. This is acceptable behavior.
         """
-        with pytest.raises(RuntimeError, match="Variable 'result' has not been declared"):
+        with pytest.raises(RuntimeError, match="references undeclared variable 'result'"):
             with if_("result"):
                 pass
 
