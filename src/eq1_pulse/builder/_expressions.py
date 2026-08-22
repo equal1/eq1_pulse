@@ -168,7 +168,7 @@ class Expr:
         :param other: The other operand.
         :return: An :class:`Expr` wrapping the conjunction.
         """
-        return Expr(LogicalExpr(logical_op="and", operands=[self.unwrap(), expr(other).unwrap()]))
+        return Expr(LogicalExpr(logical_op="and", lhs=self.unwrap(), rhs=expr(other).unwrap()))
 
     def or_(self, other: _ExprOperand) -> Expr:
         """Build a :class:`~.expressions.LogicalExpr` ORing this expression with *other*.
@@ -178,7 +178,7 @@ class Expr:
         :param other: The other operand.
         :return: An :class:`Expr` wrapping the disjunction.
         """
-        return Expr(LogicalExpr(logical_op="or", operands=[self.unwrap(), expr(other).unwrap()]))
+        return Expr(LogicalExpr(logical_op="or", lhs=self.unwrap(), rhs=expr(other).unwrap()))
 
     def not_(self) -> Expr:
         """Build a :class:`~.expressions.LogicalExpr` negating this expression.
@@ -187,7 +187,7 @@ class Expr:
 
         :return: An :class:`Expr` wrapping the negation.
         """
-        return Expr(LogicalExpr(logical_op="not", operands=[self.unwrap()]))
+        return Expr(LogicalExpr(logical_op="not", lhs=None, rhs=self.unwrap()))
 
 
 def expr(value: _ExprOperand) -> Expr:

@@ -137,7 +137,9 @@ def _check_expression_leaves(node: Expression) -> None:
             stack.append(current.lhs)
             stack.append(current.rhs)
         elif isinstance(current, LogicalExpr):
-            stack.extend(current.operands)
+            if current.lhs is not None:
+                stack.append(current.lhs)
+            stack.append(current.rhs)
         elif isinstance(current, CallExpr):
             stack.extend(current.args)
 

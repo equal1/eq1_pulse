@@ -187,19 +187,22 @@ class TestLogicalOperators:
         node = a.and_(True).unwrap()
         assert isinstance(node, LogicalExpr)
         assert node.logical_op == "and"
-        assert node.operands == [a.unwrap(), expr(True).unwrap()]
+        assert node.lhs == a.unwrap()
+        assert node.rhs == expr(True).unwrap()
 
     def test_or(self, a):
         node = a.or_(True).unwrap()
         assert isinstance(node, LogicalExpr)
         assert node.logical_op == "or"
-        assert node.operands == [a.unwrap(), expr(True).unwrap()]
+        assert node.lhs == a.unwrap()
+        assert node.rhs == expr(True).unwrap()
 
     def test_not(self, a):
         node = a.not_().unwrap()
         assert isinstance(node, LogicalExpr)
         assert node.logical_op == "not"
-        assert node.operands == [a.unwrap()]
+        assert node.lhs is None
+        assert node.rhs == a.unwrap()
 
 
 def test_expr_is_unhashable(a):

@@ -54,10 +54,8 @@ def nested_negations(levels: int) -> Any:
         pytest.param(
             LogicalExpr(
                 logical_op="and",
-                operands=[
-                    CompareExpr(compare_op="<", lhs=SymbolExpr(symbol=VariableRef("x")), rhs=LiteralExpr(value=1)),
-                    SymbolExpr(symbol=VariableRef("flag")),
-                ],
+                lhs=CompareExpr(compare_op="<", lhs=SymbolExpr(symbol=VariableRef("x")), rhs=LiteralExpr(value=1)),
+                rhs=SymbolExpr(symbol=VariableRef("flag")),
             ),
             id="logical",
         ),
@@ -94,7 +92,7 @@ def test_union_discriminates_on_node_key(key: str, node_type: type):
         "unary_op": {"unary_op": "-", "rhs": operand},
         "binary_op": {"binary_op": "+", "lhs": operand, "rhs": operand},
         "compare_op": {"compare_op": "<", "lhs": operand, "rhs": operand},
-        "logical_op": {"logical_op": "or", "operands": [operand, operand]},
+        "logical_op": {"logical_op": "or", "lhs": operand, "rhs": operand},
         "function": {"function": "sqrt", "args": [operand]},
     }
     node: Any = expression_adapter().validate_python(documents[key])
@@ -155,19 +153,51 @@ def test_call_arity_rejected(function: Any, count: int):
         CallExpr(function=function, args=args)
 
 
-@pytest.mark.parametrize(("logical_op", "count"), [("not", 1), ("and", 2), ("and", 3), ("or", 2)])
-def test_logical_operand_count_accepted(logical_op: Any, count: int):
-    """``not`` takes exactly one operand; ``and``/``or`` take two or more."""
-    operands: list[Expression] = [LiteralExpr(value=index) for index in range(count)]
-    assert len(LogicalExpr(logical_op=logical_op, operands=operands).operands) == count
+def test_logical_not_accepted():
+    """``not`` takes exactly one operand with lhs=None."""
+    expr = LogicalExpr(logical_op="not", lhs=None, rhs=LiteralExpr(value=1))
+    assert expr.logical_op == "not"
+    assert expr.lhs is None
 
 
-@pytest.mark.parametrize(("logical_op", "count"), [("not", 0), ("not", 2), ("and", 1), ("or", 0)])
-def test_logical_operand_count_rejected(logical_op: Any, count: int):
-    """A wrong operand count is a validation error naming the connective."""
-    operands: list[Expression] = [LiteralExpr(value=index) for index in range(count)]
-    with pytest.raises(ValidationError, match=logical_op):
-        LogicalExpr(logical_op=logical_op, operands=operands)
+def test_logical_and_accepted():
+    """``and`` takes two operands."""
+    expr = LogicalExpr(
+        logical_op="and",
+        lhs=LiteralExpr(value=1),
+        rhs=LiteralExpr(value=2),
+    )
+    assert expr.logical_op == "and"
+    assert expr.lhs is not None
+    assert expr.rhs is not None
+
+
+def test_logical_or_accepted():
+    """``or`` takes two operands."""
+    expr = LogicalExpr(
+        logical_op="or",
+        lhs=LiteralExpr(value=1),
+        rhs=LiteralExpr(value=2),
+    )
+    assert expr.logical_op == "or"
+
+
+def test_logical_not_rejected_with_lhs():
+    """``not`` rejects a non-None lhs."""
+    with pytest.raises(ValidationError, match="not"):
+        LogicalExpr(logical_op="not", lhs=LiteralExpr(value=1), rhs=LiteralExpr(value=2))
+
+
+def test_logical_and_rejected_without_lhs():
+    """``and`` requires lhs to be set."""
+    with pytest.raises(ValidationError, match="and"):
+        LogicalExpr(logical_op="and", lhs=None, rhs=LiteralExpr(value=1))
+
+
+def test_logical_or_rejected_without_lhs():
+    """``or`` requires lhs to be set."""
+    with pytest.raises(ValidationError, match="or"):
+        LogicalExpr(logical_op="or", lhs=None, rhs=LiteralExpr(value=1))
 
 
 def test_tree_at_the_depth_limit_builds_and_serializes():
@@ -237,7 +267,8 @@ def test_exact_serialization_of_mixed_tree_with_warnings_as_errors():
     )
     tree = LogicalExpr(
         logical_op="and",
-        operands=[compare_node, SymbolExpr(symbol=VariableRef("flag"))],
+        lhs=compare_node,
+        rhs=SymbolExpr(symbol=VariableRef("flag")),
     )
 
     with warnings.catch_warnings():
@@ -302,7 +333,7 @@ def test_binary_and_compare_expr_do_not_collide():
         ),
         pytest.param(
             "logical_op",
-            {"logical_op": "not", "operands": [{"value": 1}]},
+            {"logical_op": "not", "lhs": None, "rhs": {"value": 1}},
             LogicalExpr,
             id="logical",
         ),

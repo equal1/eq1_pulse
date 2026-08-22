@@ -220,7 +220,8 @@ value union it builds on, and building on it first only means fixing it twice.
    it. `SymbolExpr.symbol` is `SymbolRef` from `reference_types.py`. Do not redefine either.
 
 5. `UnaryExpr.unary_op` is `Literal["-"]` **only**. `abs` is a `CallExpr` function, not a unary op
-   (plan §8 Q3). `LogicalExpr` carries `operands: list[Expression]` and `logical_op: Literal["and", "or", "not"]`.
+   (plan §8 Q3). `LogicalExpr` carries `lhs: Expression | None` and `rhs: Expression`, with
+   `logical_op: Literal["and", "or", "not"]`. `not` has `lhs=None`, `and`/`or` require non-None `lhs`.
 
 6. Validators — these three and no others:
    - `CallExpr`: `min`/`max` take ≥ 2 args, every other function takes exactly 1.

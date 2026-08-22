@@ -93,7 +93,8 @@ ExprBase(LeanModel)
 │                  lhs: Expression, rhs: Expression
 ├── CompareExpr    compare_op: "<" | "<=" | ">" | ">=" | "==" | "!="
 │                  lhs: Expression, rhs: Expression
-├── LogicalExpr    logical_op: "and" | "or" | "not"        operands: list[Expression]
+├── LogicalExpr    logical_op: "and" | "or" | "not"
+│                  lhs: Expression | None, rhs: Expression
 └── CallExpr       function: Literal[...]                   args: list[Expression]
 
 Expression = Annotated[LiteralExpr | SymbolExpr | UnaryExpr | BinaryExpr | CompareExpr | LogicalExpr | CallExpr,
@@ -106,9 +107,10 @@ because their result type is categorically different — both yield booleans, an
 predicate?" is answerable from the discriminator alone, without inspecting `op`. Applying that rule
 consistently is what makes it a rule rather than a special case for comparisons.
 
-`LogicalExpr` takes a `list[Expression]` for `operands` rather than `lhs`/`rhs` because `not` is unary and
-`and`/`or` are naturally n-ary; a validator checks that `not` has exactly one operand and
-`and`/`or` have at least two. Same shape, and the same kind of validator, as `CallExpr` arity.
+`LogicalExpr` uses `lhs: Expression | None` and `rhs: Expression` to represent logical operations.
+`not` is unary with `lhs=None` and the operand in `rhs`. `and`/`or` are binary with operands in
+`lhs` and `rhs`. For n-ary logical operations, nest the expressions (e.g., ``and(and(a, b), c)``).
+A validator ensures `not` has `lhs=None` and `and`/`or` have a non-None `lhs`.
 
 `LiteralExpr.value` reuses `SymbolValue` from #6 — the same union that types a declaration's
 `default`. One notion of "a concrete value" across both plans. #10 rewrote that union: it lists **one

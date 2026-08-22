@@ -185,24 +185,27 @@ class CompareExpr(ExprBase):
 
 
 class LogicalExpr(ExprBase):
-    """A boolean connective over one or more operands.
+    """A boolean connective over operands.
 
-    ``operands`` is a list rather than ``left``/``right`` because ``not`` is unary while ``and`` and
-    ``or`` are naturally n-ary. A validator checks the count.
+    ``not`` is unary with only an ``rhs``, while ``and`` and ``or`` are binary with both ``lhs``
+    and ``rhs``. For n-ary operations, nest the expressions (e.g., ``and(and(a, b), c)``).
     """
 
     logical_op: Literal["and", "or", "not"]
     """The boolean connective."""
-    operands: list[Expression]
-    """The operands the connective is applied to."""
+    lhs: Expression | None = None
+    """The left operand, or None for ``not``. Not serialized when None."""
+    rhs: Expression
+    """The right operand, or the only operand for ``not``."""
 
     @model_validator(mode="after")
-    def _validate_operand_count(self) -> Self:
+    def _validate_operands(self) -> Self:
         if self.logical_op == "not":
-            if len(self.operands) != 1:
-                raise ValueError(f'"not" takes exactly 1 operand, got {len(self.operands)}')
-        elif len(self.operands) < 2:
-            raise ValueError(f'"{self.logical_op}" takes at least 2 operands, got {len(self.operands)}')
+            if self.lhs is not None:
+                raise ValueError('"not" must have lhs=None')
+        else:  # and, or
+            if self.lhs is None:
+                raise ValueError(f'"{self.logical_op}" requires lhs to be set')
         return self
 
 
