@@ -17,18 +17,25 @@ import cmath
 import operator
 from collections.abc import Callable, Iterable
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, Self, TypedDict, TypeGuard, overload
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+    Any,
+    ClassVar,
+    Final,
+    Literal,
+    NamedTuple,
+    Self,
+    TypedDict,
+    TypeGuard,
+    get_args,
+    overload,
+)
 
 from pydantic import Field, model_validator
 
-from .base_models import (
-    FrozenLeanModel,
-    FrozenModel,
-    FrozenWrappedValueModel,
-    LeanModel,
-    WrappedValueOrZeroModel,
-    register_unit_of_zero,
-)
+from .arithmetic import get_unit_value_field_name_and_type
+from .base_models import FrozenLeanModel, FrozenModel, FrozenWrappedValueModel, LeanModel, WrappedValueModel
 from .complex import complex_from_tuple
 from .units import (
     ComplexMillivolts,
@@ -46,6 +53,7 @@ from .units import (
     Radians,
     Seconds,
     Turns,
+    UnitDiscriminator,
     Volts,
 )
 
@@ -70,16 +78,16 @@ class ArithmeticFrozenWrappedValueModel[ScalarType](FrozenWrappedValueModel):
     """Base class for wrapped value models that support arithmetic operations."""
 
     def __neg__(self: Self) -> Self:
-        return type(self).model_construct(value=-self.value)  # type: ignore[return-value]
+        return type(self).model_construct(root=-self.root)  # type: ignore[return-value]
 
     def __pos__(self: Self) -> Self:
-        return type(self).model_construct(value=+self.value)  # type: ignore[return-value]
+        return type(self).model_construct(root=+self.root)  # type: ignore[return-value]
 
     def __add__(self: Self, other: Self) -> Self:
-        return type(self).model_construct(value=self.value + other.value)  # type: ignore[return-value]
+        return type(self).model_construct(root=self.root + other.root)  # type: ignore[return-value]
 
     def __sub__(self: Self, other: Self) -> Self:
-        return type(self).model_construct(value=self.value - other.value)  # type: ignore[return-value]
+        return type(self).model_construct(root=self.root - other.root)  # type: ignore[return-value]
 
     @overload
     def __floordiv__(self: Self, other: ScalarType) -> Self: ...
@@ -89,17 +97,17 @@ class ArithmeticFrozenWrappedValueModel[ScalarType](FrozenWrappedValueModel):
 
     def __floordiv__(self: Self, other: ScalarType | Self) -> Self | ScalarType:
         if isinstance(other, type(self)) or isinstance(self, type(other)):
-            return self.value // other.value  # type: ignore
-        return type(self).model_construct(value=self.value // other)  # type: ignore[return-value]
+            return self.root // other.root  # type: ignore
+        return type(self).model_construct(root=self.root // other)  # type: ignore[return-value]
 
     def __mod__(self: Self, other: Self) -> Self:
-        return type(self).model_construct(value=self.value % other.value)  # type: ignore[return-value]
+        return type(self).model_construct(root=self.root % other.root)  # type: ignore[return-value]
 
     def __mul__(self: Self, other: ScalarType) -> Self:
-        return type(self).model_construct(value=self.value * other)  # type: ignore[return-value]
+        return type(self).model_construct(root=self.root * other)  # type: ignore[return-value]
 
     def __rmul__(self: Self, other: ScalarType) -> Self:
-        return type(self).model_construct(value=other * self.value)  # type: ignore[return-value]
+        return type(self).model_construct(root=other * self.root)  # type: ignore[return-value]
 
     @overload
     def __truediv__(self, other: ScalarType) -> Self: ...
@@ -108,8 +116,8 @@ class ArithmeticFrozenWrappedValueModel[ScalarType](FrozenWrappedValueModel):
 
     def __truediv__(self: Self, other: ScalarType | Self) -> Self | ScalarType:
         if isinstance(other, type(self)):
-            return self.value / other.value  # type: ignore
-        return type(self).model_construct(value=self.value / other)  # type: ignore[return-value]
+            return self.root / other.root  # type: ignore
+        return type(self).model_construct(root=self.root / other)  # type: ignore[return-value]
 
 
 class ComparisonCompatibleUnitAndTypes(NamedTuple):
@@ -235,11 +243,15 @@ def _comparable_hash(self: ComparableWrappedValueOrZeroModel) -> int:
     type_info = _find_registered_equality_comparison_type_info(type(self))
     if type_info is None:
         return object.__hash__(self)
-    return hash(getattr(self.value, type_info.unit))
+    return hash(getattr(self.root, type_info.unit))
 
 
-class ComparableWrappedValueOrZeroModel(WrappedValueOrZeroModel):
-    """A :class:`WrappedValueOrZeroModel` that supports comparison with zero literal and compatible types.
+class ComparableWrappedValueOrZeroModel(WrappedValueModel):
+    """A :class:`WrappedValueModel` that supports comparison with the zero literal and compatible types.
+
+    Zero is no longer a *wire* form -- ``Duration.model_validate(0)`` raises -- but it remains the
+    one value that means the same thing in every unit, so comparing against it is well defined and
+    is what "OrZero" names here.
 
     The unit of comparison and additional compatible types for equality checks is registered using the
     :func:`register_equality_comparison_unit` decorator
@@ -248,17 +260,17 @@ class ComparableWrappedValueOrZeroModel(WrappedValueOrZeroModel):
     def __eq__(self, value: object) -> bool:
         """Check equality with another object, considering zero literal and wrapped value types.
 
-        It handles comparisons with the literal 0 and other WrappedValueOrZeroModel instances which
+        It handles comparisons with the literal 0 and other WrappedValueModel instances which
         have compatible value types. (either same type of registered as `extra_equality_compatible_types`)
         """
-        if isinstance(value, WrappedValueOrZeroModel):
+        if isinstance(value, WrappedValueModel):
             cls = type(self)
             unit_of_comparison = _get_equality_comparison_unit(cls, type(value))
             if unit_of_comparison is None:
                 return NotImplemented
             return (  # type: ignore[no-any-return]
-                self.value == value.value
-                or getattr(self.value, unit_of_comparison) == getattr(value.value, unit_of_comparison)
+                self.root == value.root
+                or getattr(self.root, unit_of_comparison) == getattr(value.root, unit_of_comparison)
             )
 
         if isinstance(value, int | float | complex) and value == 0:
@@ -267,7 +279,7 @@ class ComparableWrappedValueOrZeroModel(WrappedValueOrZeroModel):
             if unit_of_zero is None:
                 return NotImplemented
 
-            return getattr(self.value, unit_of_zero) == 0  # type: ignore[no-any-return]
+            return getattr(self.root, unit_of_zero) == 0  # type: ignore[no-any-return]
 
         return super().__eq__(value)
 
@@ -294,17 +306,17 @@ class ComparableWrappedValueOrZeroModel(WrappedValueOrZeroModel):
 
         :return: The result of ``op``, or :obj:`None` if ``other`` is not comparable
         """
-        if isinstance(other, WrappedValueOrZeroModel):
+        if isinstance(other, WrappedValueModel):
             unit_of_comparison = _get_equality_comparison_unit(type(self), type(other))
             if unit_of_comparison is None:
                 return None
-            return bool(op(getattr(self.value, unit_of_comparison), getattr(other.value, unit_of_comparison)))
+            return bool(op(getattr(self.root, unit_of_comparison), getattr(other.root, unit_of_comparison)))
 
         if isinstance(other, int | float | complex) and other == 0:
             unit_of_zero = _get_raw_value_attribute(type(self))
             if unit_of_zero is None:
                 return None
-            return bool(op(getattr(self.value, unit_of_zero), 0))
+            return bool(op(getattr(self.root, unit_of_zero), 0))
 
         return None
 
@@ -343,10 +355,9 @@ class ComparableWrappedValueOrZeroModel(WrappedValueOrZeroModel):
         if unit_of_zero is None:
             return NotImplemented  # type: ignore[no-any-return]
 
-        return bool(getattr(self.value, unit_of_zero))  # type: ignore[no-any-return]
+        return bool(getattr(self.root, unit_of_zero))  # type: ignore[no-any-return]
 
 
-@register_unit_of_zero("deg")
 @register_comparison_unit("turns")
 class Angle(ComparableWrappedValueOrZeroModel, ArithmeticFrozenWrappedValueModel[int | float]):
     r"""A model representing an angle in either degrees, radians, turns or half-turns.
@@ -358,7 +369,7 @@ class Angle(ComparableWrappedValueOrZeroModel, ArithmeticFrozenWrappedValueModel
     if TYPE_CHECKING:
 
         @overload
-        def __init__(self, _: Literal[0], /): ...
+        def __init__(self, _: Literal[0] | str, /): ...
 
         @overload
         def __init__(self, /, *, deg: int | float): ...
@@ -376,28 +387,28 @@ class Angle(ComparableWrappedValueOrZeroModel, ArithmeticFrozenWrappedValueModel
             """"""  # noqa: D419
             ...
 
-    value: Degrees | Radians | Turns | HalfTurns
+    root: Annotated[Degrees | Radians | Turns | HalfTurns, UnitDiscriminator()]
     """The underlying angle value in one of the supported units."""
 
     @property
     def deg(self) -> int | float:
         """Value in degrees."""
-        return self.value.deg
+        return self.root.deg
 
     @property
     def rad(self) -> float:
         """Value in radians."""
-        return self.value.rad
+        return self.root.rad
 
     @property
     def turns(self) -> float:
         """Value in turns."""
-        return self.value.turns
+        return self.root.turns
 
     @property
     def half_turns(self) -> float:
         """Value in half-turns."""
-        return self.value.half_turns
+        return self.root.half_turns
 
     if TYPE_CHECKING:
 
@@ -428,7 +439,7 @@ class Phase(Angle):
     if TYPE_CHECKING:
 
         @overload
-        def __init__(self, _: Literal[0], /): ...
+        def __init__(self, _: Literal[0] | str, /): ...
 
         @overload
         def __init__(self, /, *, deg: int | float): ...
@@ -453,7 +464,7 @@ class Phase(Angle):
         :return: The operand as an :class:`Amplitude`, or :obj:`None` if incompatible
         """
         if isinstance(other, str) or other == 0 or isinstance(other, dict):
-            return Amplitude.model_validate(other)  # type: ignore[arg-type]
+            return Amplitude(other)  # type: ignore[arg-type]
         if isinstance(other, Amplitude):
             return other
         if isinstance(other, ComplexVoltage):
@@ -484,7 +495,6 @@ class Phase(Angle):
         return lhs * self.complex_rotation
 
 
-@register_unit_of_zero("s")
 @register_comparison_unit("s", raw="_raw")
 class Time(ComparableWrappedValueOrZeroModel, ArithmeticFrozenWrappedValueModel[int | float]):
     """A model representing time (instant or difference).
@@ -496,33 +506,33 @@ class Time(ComparableWrappedValueOrZeroModel, ArithmeticFrozenWrappedValueModel[
     Conversion to nanoseconds is rounded to the nearest integer.
     """
 
-    value: Seconds | Milliseconds | Microseconds | Nanoseconds
+    root: Annotated[Seconds | Milliseconds | Microseconds | Nanoseconds, UnitDiscriminator()]
     """The underlying time value in one of the supported units."""
 
     @property
     def s(self) -> float:
         """Value in seconds."""
-        return self.value.s
+        return self.root.s
 
     @property
     def ms(self) -> float:
         """Value in milliseconds."""
-        return self.value.ms
+        return self.root.ms
 
     @property
     def us(self) -> float:
         """Value in microseconds."""
-        return self.value.us
+        return self.root.us
 
     @property
     def ns(self) -> int:
         """Value in nanoseconds."""
-        return self.value.ns
+        return self.root.ns
 
     if TYPE_CHECKING:
 
         @overload
-        def __init__(self, _: Literal[0], /): ...
+        def __init__(self, _: Literal[0] | str, /): ...
 
         @overload
         def __init__(self, /, *, s: float): ...
@@ -546,7 +556,7 @@ class Time(ComparableWrappedValueOrZeroModel, ArithmeticFrozenWrappedValueModel[
 
     def __bool__(self) -> bool:
         """Return True if the time value is non-zero."""
-        return bool(self.value._raw)
+        return bool(self.root._raw)
 
 
 class Duration(Time):
@@ -555,7 +565,7 @@ class Duration(Time):
     if TYPE_CHECKING:
 
         @overload
-        def __init__(self, _: Literal[0], /): ...
+        def __init__(self, _: Literal[0] | str, /): ...
 
         @overload
         def __init__(self, /, *, s: float): ...
@@ -575,30 +585,29 @@ class Duration(Time):
     @classmethod
     def _validate_nonnegative_raw_value(cls, data, handler):
         data = handler(data)
-        if data.value._raw < 0:
+        if data.root._raw < 0:
             raise ValueError("expected nonnegative duration value")
         return data
 
 
-@register_unit_of_zero("V")
 @register_comparison_unit("V", raw="_raw")
 class Voltage(ComparableWrappedValueOrZeroModel, ArithmeticFrozenWrappedValueModel[int | float]):
     """A model representing a real voltage in volts or millivolts."""
 
-    value: Volts | Millivolts
+    root: Annotated[Volts | Millivolts, UnitDiscriminator()]
 
     @property
     def V(self) -> int | float:
-        return self.value.V
+        return self.root.V
 
     @property
     def mV(self) -> int | float:
-        return self.value.mV
+        return self.root.mV
 
     if TYPE_CHECKING:
 
         @overload
-        def __init__(self, _: Literal[0], /): ...
+        def __init__(self, _: Literal[0] | str, /): ...
 
         @overload
         def __init__(self, /, *, V: int | float): ...
@@ -622,7 +631,6 @@ class Voltage(ComparableWrappedValueOrZeroModel, ArithmeticFrozenWrappedValueMod
                 raise TypeError(f"expected Volts or Millivolts, got {type(value)}")  # pragma: no cover
 
 
-@register_unit_of_zero("V")
 @register_comparison_unit("V", compatible_with=Voltage, raw="_raw")
 class ComplexVoltage(ComparableWrappedValueOrZeroModel, ArithmeticFrozenWrappedValueModel[int | float | complex]):
     """A model representing a complex voltage in volts or millivolts.
@@ -631,20 +639,20 @@ class ComplexVoltage(ComparableWrappedValueOrZeroModel, ArithmeticFrozenWrappedV
     and are used with with mixing or demodulation operations.
     """
 
-    value: ComplexVolts | ComplexMillivolts
+    root: Annotated[ComplexVolts | ComplexMillivolts, UnitDiscriminator()]
 
     @property
     def V(self) -> complex:
-        return self.value.V
+        return self.root.V
 
     @property
     def mV(self) -> complex:
-        return self.value.mV
+        return self.root.mV
 
     if TYPE_CHECKING:
 
         @overload
-        def __init__(self, _: Literal[0], /): ...
+        def __init__(self, _: Literal[0] | str, /): ...
 
         @overload
         def __init__(self, /, *, V: complex): ...
@@ -659,7 +667,7 @@ class ComplexVoltage(ComparableWrappedValueOrZeroModel, ArithmeticFrozenWrappedV
     @classmethod
     def create_from(cls, real: Voltage, imag: Voltage = Voltage(0), /) -> Self:  # noqa: B008
         """Create a ComplexVoltage from a Voltage, setting the imaginary part to zero."""
-        if isinstance(real.value, Volts):
+        if isinstance(real.root, Volts):
             return cls(V=complex(real.V, imag.V))
         else:
             return cls(mV=complex(real.mV, imag.mV))
@@ -667,21 +675,21 @@ class ComplexVoltage(ComparableWrappedValueOrZeroModel, ArithmeticFrozenWrappedV
     @property
     def real(self) -> Voltage:
         """Get the real part of the complex voltage as a Voltage instance."""
-        return Voltage.from_value(self.value.real)
+        return Voltage.from_value(self.root.real)
 
     @property
     def imag(self) -> Voltage:
         """Get the imaginary part of the complex voltage as a Voltage instance."""
-        return Voltage.from_value(self.value.imag)
+        return Voltage.from_value(self.root.imag)
 
     def __abs__(self) -> Magnitude:
         """Get the magnitude of the complex voltage as a Magnitude instance."""
-        return Magnitude.from_value(abs(self.value))  # type: ignore[arg-type]
+        return Magnitude.from_value(abs(self.root))  # type: ignore[arg-type]
 
     @property
     def phase(self) -> Phase:
         """Get the phase of the complex voltage as a Phase instance (radians)."""
-        return Phase(rad=cmath.phase(self.value._raw))  # type: ignore[arg-type]
+        return Phase(rad=cmath.phase(self.root._raw))  # type: ignore[arg-type]
 
     @property
     def angle(self) -> Angle:
@@ -689,33 +697,32 @@ class ComplexVoltage(ComparableWrappedValueOrZeroModel, ArithmeticFrozenWrappedV
         return Angle(deg=self.phase.deg)  # type: ignore[arg-type]
 
 
-@register_unit_of_zero("Hz")
 @register_comparison_unit("Hz", raw="_raw")
 class Frequency(ComparableWrappedValueOrZeroModel, ArithmeticFrozenWrappedValueModel[int | float]):
     """A model representing a frequency in Hertz, Kilohertz, Megahertz, or Gigahertz."""
 
-    value: Hertz | Kilohertz | Megahertz | Gigahertz
+    root: Annotated[Hertz | Kilohertz | Megahertz | Gigahertz, UnitDiscriminator()]
 
     @property
     def Hz(self) -> int | float:
-        return self.value.Hz
+        return self.root.Hz
 
     @property
     def kHz(self) -> int | float:
-        return self.value.kHz
+        return self.root.kHz
 
     @property
     def MHz(self) -> int | float:
-        return self.value.MHz
+        return self.root.MHz
 
     @property
     def GHz(self) -> int | float:
-        return self.value.GHz
+        return self.root.GHz
 
     if TYPE_CHECKING:
 
         @overload
-        def __init__(self, _: Literal[0], /): ...
+        def __init__(self, _: Literal[0] | str, /): ...
 
         @overload
         def __init__(self, /, Hz: float): ...
@@ -740,7 +747,7 @@ class Amplitude(ComplexVoltage):
     if TYPE_CHECKING:
 
         @overload
-        def __init__(self, _: Literal[0], /): ...
+        def __init__(self, _: Literal[0] | str, /): ...
 
         @overload
         def __init__(self, /, *, V: float | complex): ...
@@ -757,7 +764,7 @@ class Threshold(Voltage):
     if TYPE_CHECKING:
 
         @overload
-        def __init__(self, _: Literal[0], /): ...
+        def __init__(self, _: Literal[0] | str, /): ...
 
         @overload
         def __init__(self, /, *, V: float): ...
@@ -774,7 +781,7 @@ class Magnitude(Voltage):
     if TYPE_CHECKING:
 
         @overload
-        def __init__(self, _: Literal[0], /): ...
+        def __init__(self, _: Literal[0] | str, /): ...
 
         @overload
         def __init__(self, /, *, V: float): ...
@@ -788,9 +795,53 @@ class Magnitude(Voltage):
     @classmethod
     def _validate_nonnegative_raw_value(cls, data, handler):
         data = handler(data)
-        if data.value._raw < 0:
+        if data.root._raw < 0:
             raise ValueError("expected nonnegative magnitude value")
         return data
+
+
+_DIMENSION_TAGS: Final[dict[type[Time] | type[Voltage] | type[Frequency] | type[Angle], str]] = {
+    Time: "time",
+    Voltage: "voltage",
+    Frequency: "frequency",
+    Angle: "angle",
+}
+"""The one type per dimension the open value unions (:data:`~.data_ops.SymbolValue`,
+:data:`~.pulse_types.ExternalParamValue`) list -- see issue #10 -- mapped to the tag each is given in
+those unions. Their refinements (:class:`Duration`, :class:`Amplitude`, :class:`Threshold`,
+:class:`Magnitude`, :class:`Phase`) stay the correct types for *closed* fields, where the field
+itself says which refinement applies."""
+
+
+def dimension_unit_tag_map() -> dict[str, str]:
+    """Map each unit key to the tag of the dimension that owns it.
+
+    Read from the same :func:`~.arithmetic.register_unit_value_field` registry
+    :class:`~.units.UnitDiscriminator` reads, so a new unit needs no change here.
+    """
+    tags: dict[str, str] = {}
+    for quantity, dimension_tag in _DIMENSION_TAGS.items():
+        for unit in get_args(quantity.model_fields["root"].annotation):
+            unit_tag, _ = get_unit_value_field_name_and_type(unit)
+            tags[unit_tag] = dimension_tag
+    return tags
+
+
+def dimension_tag_of(value: Any) -> str | None:
+    """Return the tag *value* is expressed in.
+
+    Checked against :data:`~.data_ops.SymbolValue` and :data:`~.pulse_types.ExternalParamValue`'s
+    dimensional members.
+
+    :param value: A candidate value for an open, dimension-carrying union
+    :return: ``"time"``, ``"voltage"``, ``"frequency"`` or ``"angle"`` if *value* is a :class:`Time`,
+        :class:`Voltage`, :class:`Frequency` or :class:`Angle` (or a refinement of one), otherwise
+        :obj:`None`
+    """
+    for quantity, tag in _DIMENSION_TAGS.items():
+        if isinstance(value, quantity):
+            return tag
+    return None
 
 
 class OpBase(FrozenLeanModel):

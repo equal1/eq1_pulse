@@ -17,6 +17,41 @@ Import the builder functions:
 
     from eq1_pulse.builder import *
 
+The Builder vs. the Model
+--------------------------
+
+The builder takes what you mean; the model takes what the wire says.
+
+``play("qubit", square_pulse(duration="10us", amplitude="100mV"))`` accepts a channel name as a
+bare string, a duration as a unit-suffixed string, and an amplitude the same way. Of these, only the
+channel string is a wire form: :class:`~eq1_pulse.models.channel_ops.Play` is typed to accept a bare
+string directly, because that *is* the canonical spelling of a channel reference. The duration and
+amplitude strings are not -- ``"10us"``/``"100mV"`` are authoring conveniences the builder resolves
+into the canonical unit objects (``{"us": 10}``, ``{"mV": 100}``) before constructing anything, and
+``model_validate`` never accepts them.
+
+.. code-block:: python
+
+    from eq1_pulse.builder import build_sequence, play, square_pulse
+    from eq1_pulse.models.sequence import OpSequence
+
+    with build_sequence() as seq:
+        play("qubit", square_pulse(duration="10us", amplitude="100mV"))
+
+    # The builder produced this canonical JSON document -- durations and amplitudes as unit
+    # objects, the channel as its bare name -- not the "10us" / "100mV" strings that were written:
+    document = seq.model_dump_json(indent=2)
+    print(document)
+
+    # Anything that produces this same document, from any source, re-reads into an identical
+    # sequence: model_validate() never sees or accepts the authoring strings, only the wire form.
+    assert OpSequence.model_validate_json(document) == seq
+
+This is why a model's `*Like` type aliases (:data:`~eq1_pulse.models.basic_types.DurationLike`,
+:data:`~eq1_pulse.models.reference_types.ChannelRefLike`, ...) exist only in the builder's function
+signatures, under ``TYPE_CHECKING``: they describe what a *constructor call* accepts, not what
+``model_validate`` accepts from the wire.
+
 Building Sequences
 -------------------
 
@@ -768,7 +803,7 @@ JSON Output
       },
       {
         "op_type": "for",
-        "var": "amp",
+        "var": {"var": "amp"},
         "items": {
           "start": 0.0,
           "stop": 100.0,
@@ -783,7 +818,7 @@ JSON Output
               "duration": {
                 "ns": 100
               },
-              "amplitude": "amp"
+              "amplitude": {"var": "amp"}
             }
           },
           {
@@ -802,7 +837,7 @@ JSON Output
           {
             "op_type": "record",
             "channel": "readout",
-            "var": "raw",
+            "var": {"var": "raw"},
             "duration": {
               "us": 1
             },
@@ -812,8 +847,8 @@ JSON Output
           },
           {
             "op_type": "discriminate",
-            "target": "state",
-            "source": "raw",
+            "target": {"var": "state"},
+            "source": {"var": "raw"},
             "threshold": {
               "mV": 0.5
             }
@@ -821,7 +856,7 @@ JSON Output
           {
             "op_type": "store",
             "key": "rabi_amplitude",
-            "source": "state",
+            "source": {"var": "state"},
             "mode": "average"
           },
           {

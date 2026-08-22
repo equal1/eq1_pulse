@@ -17,8 +17,6 @@ def validate_complex_tuple(value: object) -> complex:
             return complex(float(real), float(imag))  # type: ignore
         case [real, imag]:
             return complex(float(real), float(imag))  # type: ignore
-        case str() as s:
-            return complex(s)
         case np.complexfloating() as c:
             return complex(c.real, c.imag)
         case np.ndarray() as a if a.shape == (2,) and issubclass(a.dtype.type, np.integer | np.floating):
@@ -37,19 +35,7 @@ type complex_from_tuple = Annotated[
     BeforeValidator(validate_complex_tuple),
     PlainSerializer(serialize_complex_as_tuple, return_type=tuple[float, float]),
     WithJsonSchema(
-        {
-            "anyOf": [
-                {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
-                {
-                    "type": "string",
-                    "pattern": r"^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?"
-                    + r"[+-](\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?j$",
-                },
-            ]
-        }
+        {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
     ),
 ]
-"""Complex number serialized as a tuple of two floats (real, imag).
-
-It also allows a string representation of a complex number as input.
-"""
+"""Complex number serialized as a tuple of two floats (real, imag)."""

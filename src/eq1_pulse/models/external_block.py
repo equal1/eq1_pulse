@@ -14,7 +14,7 @@ from pydantic import model_validator
 from .basic_types import Duration, OpBase
 from .identifier_str import FullyQualifiedIdentifier
 from .pulse_types import ExternalParamValue
-from .reference_types import ChannelRef, SymbolRef, VariableRef
+from .reference_types import ChannelTarget, SymbolRef, VariableRef
 
 if TYPE_CHECKING:
     from .basic_types import DurationLike
@@ -68,7 +68,9 @@ class ExternalBlock(OpBase):
     5. The IR does not know the referenced program's signature -- opacity is the point. Arity and
        type checking of :attr:`params`/:attr:`results`/:attr:`channels` belongs to whatever resolves
        :attr:`program`. The IR validates only what it can see: that :attr:`results` variables are
-       declared, that :attr:`channels` values are valid channel references, and rule 4 above.
+       declared, that :attr:`channels` values are valid channel targets -- a channel name, or an
+       :class:`~.reference_types.ExternalRef` when the calibration store owns the name -- and
+       rule 4 above.
     """
 
     op_type: Literal["external_block"] = "external_block"
@@ -81,7 +83,7 @@ class ExternalBlock(OpBase):
     :attr:`~.pulse_types.ExternalPulse.function`.
     """
 
-    channels: dict[str, ChannelRef]
+    channels: dict[str, ChannelTarget]
     """Channels claimed by the block, keyed by the role each plays in the referenced program.
 
     The reservation set is exactly ``channels.values()``.

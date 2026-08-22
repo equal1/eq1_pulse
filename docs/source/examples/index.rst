@@ -98,7 +98,7 @@ When you run an example, you'll see output like:
     [
       {
         "op_type": "for",
-        "var": "amp",
+        "var": {"var": "amp"},
         ...
       }
     ]
@@ -125,7 +125,7 @@ A sequence contains an ordered list of operations.
 
     {
       "op_type": "for",
-      "var": "amp",
+      "var": {"var": "amp"},
       "items": {
         "start": 0,
         "stop": 100,

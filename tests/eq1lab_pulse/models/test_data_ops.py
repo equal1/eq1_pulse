@@ -1,10 +1,11 @@
 from collections.abc import Callable
 from typing import Any
 
+import numpy as np
 import pytest
 from pydantic import TypeAdapter
 
-from eq1_pulse.models.basic_types import Amplitude, Phase, Threshold
+from eq1_pulse.models.basic_types import Phase, Threshold, Voltage
 from eq1_pulse.models.data_ops import (
     ComparisonMode,
     ComplexToRealProjectionMode,
@@ -15,6 +16,7 @@ from eq1_pulse.models.data_ops import (
     PulseDecl,
     Store,
     StoreMode,
+    SymbolValue,
     ValueLimits,
     VariableDecl,
 )
@@ -43,8 +45,8 @@ def pulse_decl(square_pulse: SquarePulse) -> PulseDecl:
 @pytest.fixture
 def discriminate() -> Discriminate:
     return Discriminate(
-        target="result",
-        source="data",
+        target=VariableRef("result"),
+        source=VariableRef("data"),
         threshold={"V": 0.5},
         rotation={"rad": 0.0},
         compare=">=",
@@ -83,7 +85,7 @@ def test_discriminate_target_rejects_external_ref():
     with pytest.raises(ValueError):
         Discriminate(
             target=ExternalRef("q0"),  # type: ignore[arg-type]
-            source="data",
+            source=VariableRef("data"),
             threshold={"V": 0.5},
             rotation={"rad": 0.0},
             compare=">=",
@@ -93,8 +95,8 @@ def test_discriminate_target_rejects_external_ref():
 
 def test_discriminate_threshold_and_rotation_accept_variable_and_external_ref():
     disc = Discriminate(
-        target="result",
-        source="data",
+        target=VariableRef("result"),
+        source=VariableRef("data"),
         threshold=VariableRef("thr"),
         rotation=ExternalRef("q0.rot"),
     )
@@ -102,8 +104,8 @@ def test_discriminate_threshold_and_rotation_accept_variable_and_external_ref():
     assert isinstance(disc.rotation, ExternalRef)
 
     disc = Discriminate(
-        target="result",
-        source="data",
+        target=VariableRef("result"),
+        source=VariableRef("data"),
         threshold=ExternalRef("q0.thr"),
         rotation=VariableRef("rot"),
     )
@@ -111,7 +113,9 @@ def test_discriminate_threshold_and_rotation_accept_variable_and_external_ref():
     assert isinstance(disc.rotation, VariableRef)
 
     # Still accepts its literal form.
-    disc = Discriminate(target="result", source="data", threshold={"V": 0.5}, rotation={"rad": 0.0})
+    disc = Discriminate(
+        target=VariableRef("result"), source=VariableRef("data"), threshold={"V": 0.5}, rotation={"rad": 0.0}
+    )
     assert isinstance(disc.threshold, Threshold)
     assert isinstance(disc.rotation, Phase)
     assert disc.threshold.V == 0.5
@@ -192,12 +196,23 @@ def test_external_decl_with_optional_fields():
 
 
 def test_value_limits_accepts_dimensional_and_scalar_bounds():
-    limits = ValueLimits(minimum={"mV": 0}, maximum="1V", allowed=[True, False])
-    assert isinstance(limits.minimum, Amplitude)
+    limits = ValueLimits(minimum={"mV": 0}, maximum={"V": 1}, allowed=[True, False])
+    assert isinstance(limits.minimum, Voltage)
     assert limits.minimum.mV == 0
-    assert isinstance(limits.maximum, Amplitude)
+    assert isinstance(limits.maximum, Voltage)
     assert limits.maximum.V == 1
     assert limits.allowed == [True, False]
+
+
+def test_symbol_value_numpy_complex_forms_are_tagged_as_complex():
+    """A 2-element numpy array or a numpy complex scalar is recognized as the complex tag.
+
+    :func:`~eq1_pulse.models.complex.validate_complex_tuple` accepts both, so the discriminator
+    must route them there instead of falling through to :obj:`None`.
+    """
+    adapter: TypeAdapter[Any] = TypeAdapter(SymbolValue)
+    assert adapter.validate_python(np.array([1.0, 2.0])) == 1 + 2j
+    assert adapter.validate_python(np.complex128(1 + 2j)) == 1 + 2j
 
 
 def test_value_limits_default_elision():
@@ -224,7 +239,7 @@ def test_parameter_decl_limits_elided_when_none():
             id="pulse_decl",
         ),
         pytest.param(
-            lambda: Discriminate(target="result", source="data", threshold={"mV": 500}),
+            lambda: Discriminate(target=VariableRef("result"), source=VariableRef("data"), threshold={"mV": 500}),
             id="discriminate",
         ),
         pytest.param(lambda: Store(key="test", source=VariableRef("data"), mode=StoreMode.Last), id="store"),

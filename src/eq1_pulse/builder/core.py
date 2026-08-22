@@ -67,8 +67,10 @@ from ..models.data_ops import (
 )
 from ..models.external_block import ExternalBlock
 from ..models.pulse_types import PulseType
-from ..models.reference_types import VariableRef
+from ..models.reference_types import PulseRef, VariableRef
 from ..models.sequence import Conditional, Iteration, OpSequence, Repetition
+from ._coerce import as_channel_ref, as_duration, as_frequency, as_phase, as_pulse_ref, as_symbol_value, as_threshold
+from ._factories import _coerce_or_ref as _coerce_or_ref
 from ._factories import (
     _convert_range_to_model,
     _validate_variable_ref,
@@ -199,7 +201,7 @@ def build_sequence() -> Iterator[OpSequence]:
             "Schedules are built with eq1_pulse.builder.experimental and cannot contain "
             "sequence operations."
         )
-    seq = OpSequence(items=[])
+    seq = OpSequence([])
     _push_context(seq)
     try:
         yield seq
@@ -244,7 +246,7 @@ def sub_sequence() -> Iterator[OpSequence]:
         raise _not_a_sequence_context("sub_sequence()")
 
     # Create the nested sequence
-    nested_seq = OpSequence(items=[])
+    nested_seq = OpSequence([])
 
     # Add it to the parent sequence
     _add_to_sequence(context, nested_seq)
@@ -258,7 +260,7 @@ def sub_sequence() -> Iterator[OpSequence]:
 
 
 @contextmanager
-def repeat(count: int | SymbolRefLike) -> Iterator[Repetition]:
+def repeat(count: int | str | SymbolRefLike) -> Iterator[Repetition]:
     """Context manager for building a repetition block.
 
     :param count: Number of times to repeat, or a variable/external reference resolved at run time
@@ -287,7 +289,7 @@ def repeat(count: int | SymbolRefLike) -> Iterator[Repetition]:
         raise _not_a_sequence_context("repeat()")
 
     count = _validate_or_pass_through(count, param_name="count", context="repeat()")
-    rep = Repetition(count=count, body=OpSequence(items=[]))
+    rep = Repetition(count=count, body=OpSequence([]))  # type: ignore[arg-type]
     _add_to_sequence(parent, rep)
     _push_context(rep)
     try:
@@ -299,7 +301,7 @@ def repeat(count: int | SymbolRefLike) -> Iterator[Repetition]:
 @overload
 @contextmanager
 def for_(
-    var: VariableRefLike,
+    var: str | VariableRefLike,
     items: Iterable[Any] | Range | LinSpace,
 ) -> Iterator[Iteration]: ...
 
@@ -307,14 +309,14 @@ def for_(
 @overload
 @contextmanager
 def for_(
-    var: list[VariableRefLike],
+    var: list[str | VariableRefLike],
     items: list[Iterable[Any] | Range | LinSpace] | Iterable[Any] | Range | LinSpace,
 ) -> Iterator[Iteration]: ...
 
 
 @contextmanager
 def for_(
-    var: VariableRefLike | list[VariableRefLike],
+    var: str | VariableRefLike | list[str | VariableRefLike],
     items: Iterable[Any] | Range | LinSpace | list[Iterable[Any] | Range | LinSpace],
 ) -> Iterator[Iteration]:
     """Context manager for building an iteration (for loop).
@@ -397,7 +399,7 @@ def for_(
     if not _in_sequence(parent):
         raise _not_a_sequence_context("for_()")
 
-    iter_obj = Iteration(var=validated_vars, items=validated_items, body=OpSequence(items=[]))
+    iter_obj = Iteration(var=validated_vars, items=validated_items, body=OpSequence([]))
     _add_to_sequence(parent, iter_obj)
     _push_context(iter_obj)
     try:
@@ -407,7 +409,7 @@ def for_(
 
 
 @contextmanager
-def if_(var: SymbolRefLike) -> Iterator[Conditional]:
+def if_(var: str | SymbolRefLike) -> Iterator[Conditional]:
     """Context manager for building a conditional block.
 
     :param var: Variable or external reference for the condition
@@ -435,7 +437,7 @@ def if_(var: SymbolRefLike) -> Iterator[Conditional]:
     if not _in_sequence(parent):
         raise _not_a_sequence_context("if_()")
 
-    cond = Conditional(var=validated_var, body=OpSequence(items=[]))  # type: ignore[arg-type]
+    cond = Conditional(var=validated_var, body=OpSequence([]))  # type: ignore[arg-type]
     _add_to_sequence(parent, cond)
     _push_context(cond)
     try:
@@ -509,7 +511,11 @@ def _build_limits(
     """
     if min is None and max is None and allowed is None:
         return None
-    return ValueLimits(minimum=min, maximum=max, allowed=allowed)
+    return ValueLimits(
+        minimum=None if min is None else as_symbol_value(min),
+        maximum=None if max is None else as_symbol_value(max),
+        allowed=None if allowed is None else [as_symbol_value(value) for value in allowed],
+    )
 
 
 def param_decl(
@@ -564,7 +570,7 @@ def param_decl(
         dtype=dtype,
         shape=shape,
         unit=unit,
-        default=default,
+        default=None if default is None else as_symbol_value(default),
         limits=_build_limits(min, max, allowed),
     )
 
@@ -624,7 +630,7 @@ def extern_decl(
         dtype=dtype,
         shape=shape,
         unit=unit,
-        default=default,
+        default=None if default is None else as_symbol_value(default),
         limits=_build_limits(min, max, allowed),
     )
 
@@ -748,10 +754,10 @@ def nested_sequence[R, **P](func: Callable[P, R]) -> Callable[P, R]:
 
 def play(
     channel: ChannelRefLike,
-    pulse: PulseType | PulseRefLike,
+    pulse: PulseType | str | PulseRefLike,
     *,
-    scale_amp: float | complex | SymbolRefLike | None = None,
-    cond: SymbolRefLike | None = None,
+    scale_amp: float | complex | str | SymbolRefLike | None = None,
+    cond: str | SymbolRefLike | None = None,
 ) -> None:
     """Play a pulse on a channel.
 
@@ -768,6 +774,9 @@ def play(
 
         play("ch1", square_pulse(duration="10us", amplitude="100mV"))
     """
+    channel = as_channel_ref(channel)
+    if isinstance(pulse, PulseRef | str) or (isinstance(pulse, dict) and "pulse_name" in pulse):
+        pulse = as_pulse_ref(pulse)
     scale_amp = _validate_or_pass_through(scale_amp, param_name="scale_amp", context="play()")
     cond = _validate_or_pass_through(cond, param_name="cond", context="play()")
 
@@ -808,7 +817,8 @@ def wait(
     if not _in_sequence(context):
         raise _not_a_sequence_context("wait()")
 
-    duration = _validate_or_pass_through(duration, param_name="duration", context="wait()")
+    channels = tuple(as_channel_ref(ch) for ch in channels)  # type: ignore[assignment]
+    duration = _coerce_or_ref(duration, coerce=as_duration, param_name="duration", context="wait()")  # type: ignore[assignment]
 
     op = Wait(*channels, duration=duration)  # type: ignore[arg-type]
 
@@ -843,7 +853,7 @@ def barrier(
             play("drive", square_pulse(duration="20us", amplitude="80mV"))
             play("readout", square_pulse(duration="20us", amplitude="40mV"))
     """
-    op = Barrier(*channels)
+    op = Barrier(*(as_channel_ref(ch) for ch in channels))
 
     context = _current_context("barrier()")
     if not _in_sequence(context):
@@ -868,7 +878,8 @@ def set_frequency(
 
         set_frequency("qubit", "5GHz")
     """
-    frequency = _validate_or_pass_through(frequency, param_name="frequency", context="set_frequency()")
+    channel = as_channel_ref(channel)
+    frequency = _coerce_or_ref(frequency, coerce=as_frequency, param_name="frequency", context="set_frequency()")  # type: ignore[assignment]
 
     op = SetFrequency(channel=channel, frequency=frequency)
 
@@ -895,7 +906,8 @@ def shift_frequency(
 
         shift_frequency("qubit", "100MHz")
     """
-    frequency = _validate_or_pass_through(frequency, param_name="frequency", context="shift_frequency()")
+    channel = as_channel_ref(channel)
+    frequency = _coerce_or_ref(frequency, coerce=as_frequency, param_name="frequency", context="shift_frequency()")  # type: ignore[assignment]
 
     op = ShiftFrequency(channel=channel, frequency=frequency)
 
@@ -922,7 +934,8 @@ def set_phase(
 
         set_phase("qubit", "90deg")
     """
-    phase = _validate_or_pass_through(phase, param_name="phase", context="set_phase()")
+    channel = as_channel_ref(channel)
+    phase = _coerce_or_ref(phase, coerce=as_phase, param_name="phase", context="set_phase()")  # type: ignore[assignment]
 
     op = SetPhase(channel=channel, phase=phase)
 
@@ -949,7 +962,8 @@ def shift_phase(
 
         shift_phase("qubit", "45deg")
     """
-    phase = _validate_or_pass_through(phase, param_name="phase", context="shift_phase()")
+    channel = as_channel_ref(channel)
+    phase = _coerce_or_ref(phase, coerce=as_phase, param_name="phase", context="shift_phase()")  # type: ignore[assignment]
 
     op = ShiftPhase(channel=channel, phase=phase)
 
@@ -961,7 +975,7 @@ def shift_phase(
 
 def record(
     channel: ChannelRefLike,
-    var: VariableRefLike,
+    var: str | VariableRefLike,
     *,
     duration: DurationLike | SymbolRefLike,
     integration: FullIntegration | DemodIntegration,
@@ -994,7 +1008,8 @@ def record(
     """
     # Validate variable reference
     validated_var = _validate_variable_ref(var)
-    validated_duration = _validate_or_pass_through(duration, param_name="duration", context="record()")
+    channel = as_channel_ref(channel)
+    validated_duration = _coerce_or_ref(duration, coerce=as_duration, param_name="duration", context="record()")
 
     op = Record(channel=channel, var=validated_var, duration=validated_duration, integration=integration)  # type: ignore[arg-type]
 
@@ -1005,8 +1020,8 @@ def record(
 
 
 def discriminate(
-    target: VariableRefLike,
-    source: VariableRefLike,
+    target: str | VariableRefLike,
+    source: str | VariableRefLike,
     threshold: ThresholdLike | SymbolRefLike,
     *,
     rotation: PhaseLike | SymbolRefLike = 0,
@@ -1041,8 +1056,10 @@ def discriminate(
     # Validate variable references
     validated_target = _validate_variable_ref(target)
     validated_source = _validate_variable_ref(source)
-    validated_threshold = _validate_or_pass_through(threshold, param_name="threshold", context="discriminate()")
-    validated_rotation = _validate_or_pass_through(rotation, param_name="rotation", context="discriminate()")
+    validated_threshold = _coerce_or_ref(
+        threshold, coerce=as_threshold, param_name="threshold", context="discriminate()"
+    )
+    validated_rotation = _coerce_or_ref(rotation, coerce=as_phase, param_name="rotation", context="discriminate()")
 
     op = Discriminate(
         target=validated_target,
@@ -1061,7 +1078,7 @@ def discriminate(
 
 def store(
     key: str,
-    source: VariableRefLike,
+    source: str | VariableRefLike,
     *,
     mode: StoreMode | StoreModeLiteral = "last",
 ) -> None:
@@ -1113,7 +1130,7 @@ def store(
 def measure(
     channel: ChannelRefLike | tuple[ChannelRefLike, ChannelRefLike],
     *,
-    result_var: VariableRefLike,
+    result_var: str | VariableRefLike,
     duration: DurationLike,
     amplitude: AmplitudeLike,
     integration: FullIntegration | DemodIntegration,
@@ -1182,7 +1199,7 @@ def external_block(
     program: str | None = None,
     channels: dict[str, ChannelRefLike] | None = None,
     params: dict[str, Any] | None = None,
-    results: dict[str, VariableRefLike] | None = None,
+    results: dict[str, str | VariableRefLike] | None = None,
     duration: DurationLike | SymbolRefLike | None = None,
 ) -> None:
     """Reserve channels for an opaque, externally defined block of operations.
@@ -1253,7 +1270,8 @@ def external_block(
     if results is not None:
         results = {key: _validate_variable_ref(value) for key, value in results.items()}
 
-    duration = _validate_or_pass_through(duration, param_name="duration", context="external_block()")
+    resolved_channels = {role: as_channel_ref(ch) for role, ch in resolved_channels.items()}  # type: ignore[assignment]
+    duration = _coerce_or_ref(duration, coerce=as_duration, param_name="duration", context="external_block()")
 
     op = ExternalBlock(
         program=program,

@@ -30,7 +30,7 @@ See :class:`~.channel_ops.Wait` for why both identities hold.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import TYPE_CHECKING, Annotated, ClassVar, Literal, overload
+from typing import TYPE_CHECKING, Annotated, ClassVar, Literal
 
 from pydantic import Discriminator
 
@@ -68,16 +68,12 @@ class OpSequence(SequenceBase[OpSequenceItem]):
     _context_kind: ClassVar[Literal["sequence"]] = "sequence"
 
     if TYPE_CHECKING:  # mypy food
-        items: list[OpSequenceItem]
-        """List of operation sequence items."""
+        # Restating the inherited field defers the pydantic mypy plugin until the recursive
+        # OpSequenceItem alias has resolved, instead of crashing on it; restating the inherited
+        # __init__ stops the same plugin synthesizing a root-only one over it.
+        root: list[OpSequenceItem]
 
-        @overload
-        def __init__(self, items: Iterable[OpSequenceItem], **data): ...
-
-        @overload
-        def __init__(self, **data): ...
-
-        def __init__(self, *args, **data): ...
+        def __init__(self, items: Iterable[OpSequenceItem] = (), /, **data): ...
 
 
 if TYPE_CHECKING:

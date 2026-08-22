@@ -14,6 +14,7 @@ from eq1_pulse.models.experimental.schedule import (
     Schedule,
 )
 from eq1_pulse.models.pulse_types import SquarePulse
+from eq1_pulse.models.reference_types import VariableRef
 
 # Previous tests remain unchanged...
 
@@ -58,7 +59,7 @@ def test_schedule_iteration():
     op = Play(channel="chan1", pulse=SquarePulse(duration=Duration(ns=100), amplitude=Amplitude(V=1.0)))
     schedule.add_op(op, name="op1")
 
-    iteration = SchedIteration(var="i", items=[1, 2, 3], body=schedule)
+    iteration = SchedIteration(var=VariableRef("i"), items=[1, 2, 3], body=schedule)
 
     outer_schedule = Schedule()
     outer_schedule.add_op(iteration, name="iterate")
@@ -76,7 +77,7 @@ def test_schedule_conditional():
     op = Play(channel="chan1", pulse=SquarePulse(duration=Duration(ns=100), amplitude=Amplitude(V=1.0)))
     schedule.add_op(op, name="op1")
 
-    conditional = SchedConditional(var="x", body=schedule)
+    conditional = SchedConditional(var=VariableRef("x"), body=schedule)
 
     outer_schedule = Schedule()
     outer_schedule.add_op(conditional, name="if_block")
@@ -92,7 +93,7 @@ def test_schedule_conditional_list():
         [
             Schedule.op(
                 SchedConditional(
-                    var="x",
+                    var=VariableRef("x"),
                     body=[
                         Schedule.op(
                             Play(
@@ -119,7 +120,7 @@ def test_schedule_conditional_list():
             "name": "if_block",
             "op": {
                 "op_type": "if",
-                "var": "x",
+                "var": {"var": "x"},
                 "body": [
                     {
                         "op": {

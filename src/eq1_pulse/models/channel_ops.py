@@ -14,7 +14,7 @@ from pydantic import Discriminator
 from .base_models import LeanModel
 from .basic_types import Duration, Frequency, Magnitude, OpBase, Phase
 from .pulse_types import PulseType
-from .reference_types import ChannelRef, PulseRef, SymbolRef, VariableRef
+from .reference_types import ChannelTarget, PulseRef, SymbolRef, VariableRef
 
 if TYPE_CHECKING:
     from .basic_types import DurationLike, FrequencyLike, MagnitudeLike, PhaseLike
@@ -75,7 +75,7 @@ class DemodIntegration(IntegrationType):
 class ChannelOpBase(OpBase):
     """Base class for operations involving a single channel."""
 
-    channel: ChannelRef
+    channel: ChannelTarget
     """The channel on which the operation is performed."""
 
     def __init__(self, channel: ChannelRefLike, **data):  # noqa: D107
@@ -104,7 +104,7 @@ class Play(ChannelOpBase):
 class ChannelsOpBase(OpBase):
     """Base class for operations involving multiple channels."""
 
-    channels: list[ChannelRef]
+    channels: list[ChannelTarget]
     """The channels involved in the operation."""
 
     def __init__(self, *channels: ChannelRefLike, **data):

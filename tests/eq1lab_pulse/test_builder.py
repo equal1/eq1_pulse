@@ -56,10 +56,13 @@ from eq1_pulse.models import (
     ShiftPhase,
     SquarePulse,
     Store,
+    Time,
     ValueLimits,
     VariableDecl,
     VariableRef,
+    Voltage,
 )
+from eq1_pulse.models.reference_types import ChannelRef, ExternalRef
 
 
 class TestBuildSequence:
@@ -368,7 +371,7 @@ class TestVariables:
     def test_channel_reference(self):
         """Test channel reference creation."""
         ch = channel("qubit")
-        assert ch.channel == "qubit"
+        assert ch.root == "qubit"
 
     def test_pulse_reference(self):
         """Test pulse reference creation."""
@@ -435,6 +438,22 @@ class TestParamAndExternDecl:
         assert isinstance(seq.items[0].limits, ValueLimits)
         assert seq.items[0].limits.allowed == [0, 1, 2]
 
+    def test_param_decl_coerces_unit_suffixed_string_default_and_limits(self):
+        """A unit-suffixed string default/min/max/allowed is coerced to the dimensional quantity."""
+        with build_sequence() as seq:
+            param_decl("amp", "float", unit="mV", default="10us", min="5us", max="20us", allowed=["10us", "15us"])
+
+        assert isinstance(seq.items[0], ParameterDecl)
+        assert isinstance(seq.items[0].default, Time)
+        assert seq.items[0].default.us == 10
+        assert isinstance(seq.items[0].limits, ValueLimits)
+        assert isinstance(seq.items[0].limits.minimum, Time)
+        assert seq.items[0].limits.minimum.us == 5
+        assert isinstance(seq.items[0].limits.maximum, Time)
+        assert seq.items[0].limits.maximum.us == 20
+        assert seq.items[0].limits.allowed is not None
+        assert [value.us for value in seq.items[0].limits.allowed] == [10, 15]  # type: ignore[union-attr]
+
     def test_param_decl_registers_into_variable_namespace(self):
         """A parameter is referenced with var() and shares the variable namespace."""
         with build_sequence():
@@ -479,6 +498,15 @@ class TestParamAndExternDecl:
         assert isinstance(seq.items[0].limits, ValueLimits)
         assert seq.items[0].limits.minimum == -100
         assert seq.items[0].limits.maximum == 100
+
+    def test_extern_decl_coerces_unit_suffixed_string_default(self):
+        """A unit-suffixed string default is coerced to the dimensional quantity."""
+        with build_sequence() as seq:
+            extern_decl("readout.threshold", "float", unit="mV", default="100mV")
+
+        assert isinstance(seq.items[0], ExternalDecl)
+        assert isinstance(seq.items[0].default, Voltage)
+        assert seq.items[0].default.mV == 100
 
     def test_extern_decl_registers_into_external_namespace(self):
         """An external constant is referenced with ext(), never var()."""
@@ -625,6 +653,21 @@ class TestExternalBlock:
         assert op.channels == {"drive": "q0", "readout": "q0_ro"}
         assert op.results is not None
         assert op.results["iq"].var == "iq"
+
+    def test_channels_accept_an_externally_supplied_name(self):
+        """A channel name the calibration store owns is an ``ext()``, declared like any other."""
+        with build_sequence() as seq:
+            extern_decl("q0.drive", "float")
+            external_block(program="eq1.cal.cz", channels={"drive": ext("q0.drive"), "readout": "q0_ro"})
+
+        op = seq.items[1]
+        assert isinstance(op, ExternalBlock)
+        assert op.channels == {"drive": ExternalRef("q0.drive"), "readout": ChannelRef("q0_ro")}
+
+    def test_an_undeclared_external_channel_is_rejected(self):
+        """The declaration check that guards every other external symbol guards this one too."""
+        with build_sequence(), pytest.raises(RuntimeError, match="has not been declared"):
+            external_block(program="eq1.cal.cz", channels={"drive": ext("q0.drive")})
 
     def test_positional_channels_form(self):
         """Test the positional channels form generates deterministic role keys."""

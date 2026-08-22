@@ -24,10 +24,9 @@ from eq1_pulse.models.basic_types import (
 
 
 def test_threshold_schema():
-    """Test the JSON schema of Threshold."""
+    """Test the JSON schema of Threshold: the tagged union of its units, and nothing else."""
     expected_schema = {
-        "anyOf": [
-            {"const": 0, "type": "integer"},
+        "oneOf": [
             {"$ref": "#/$defs/Volts"},
             {"$ref": "#/$defs/Millivolts"},
         ],
@@ -35,6 +34,7 @@ def test_threshold_schema():
     }
     schema = Threshold.model_json_schema()
     definitions = schema.pop("$defs")
+    schema.pop("description")
     assert schema == expected_schema
     # the definitions travel with the schema, so every $ref above resolves
     assert {"Volts", "Millivolts"} <= definitions.keys()
@@ -94,10 +94,9 @@ def test_threshold_invalid_init():
 
 
 def test_angle_schema():
-    """Test the JSON schema of Angle."""
+    """Test the JSON schema of Angle: the tagged union of its units, and nothing else."""
     expected_schema = {
-        "anyOf": [
-            {"const": 0, "type": "integer"},
+        "oneOf": [
             {"$ref": "#/$defs/Degrees"},
             {"$ref": "#/$defs/Radians"},
             {"$ref": "#/$defs/Turns"},
@@ -107,6 +106,7 @@ def test_angle_schema():
     }
     schema = Angle.model_json_schema()
     definitions = schema.pop("$defs")
+    schema.pop("description")
     assert schema == expected_schema
     # the definitions travel with the schema, so every $ref above resolves
     assert {"Degrees", "Radians", "Turns", "HalfTurns"} <= definitions.keys()
@@ -119,11 +119,16 @@ def test_angle_zero_init():
     assert a.rad == 0
 
 
-def test_angle_zero_validate():
-    """Test zero validation of Angle."""
-    a = Angle.model_validate(0)
-    assert a.deg == 0
-    assert a.rad == 0
+def test_angle_zero_is_not_a_wire_form():
+    """The bare ``0`` is a constructor argument, not something ``model_validate`` accepts.
+
+    Zero means the same thing in every unit, which is what made it convenient to write and what
+    made it ambiguous to read back: it was accepted in place of any unit and emitted in exactly
+    one. ``Angle(0)`` is the surviving spelling (issue #10).
+    """
+    with pytest.raises(ValidationError):
+        Angle.model_validate(0)
+    assert Angle(0).deg == 0
 
 
 def test_angle_init_degrees():
@@ -976,18 +981,13 @@ def test_complex_voltage_model_validation():
     assert amp.V == 1.5 + 2j
     assert isinstance(amp, Amplitude)
 
-    # Test Amplitude validation
-    amp = Amplitude.model_validate_json('{"V": "1.5+2j"}')
-    assert amp.V == 1.5 + 2j
-    assert isinstance(amp, Amplitude)
-
     # Test validation with real numbers
     amp = Amplitude.model_validate_json('{"V": 1.5}')
     assert amp.V == 1.5
     assert isinstance(amp, Amplitude)
 
     # Test validation with millivolts
-    amp = Amplitude.model_validate_json('{"mV": "1500+2000j"}')
+    amp = Amplitude.model_validate_json('{"mV": [1500, 2000]}')
     assert amp.mV == 1500 + 2000j
     assert isinstance(amp, Amplitude)
 
@@ -996,7 +996,10 @@ def test_complex_voltage_model_validation():
         Amplitude.model_validate_json('{"V": "invalid"}')
 
     with pytest.raises(ValidationError):
-        Amplitude.model_validate_json('{"V": "1.5+2j", "mV": 1500}')
+        Amplitude.model_validate_json('{"V": "1.5+2j"}')
+
+    with pytest.raises(ValidationError):
+        Amplitude.model_validate_json('{"V": [1.5, 2], "mV": 1500}')
 
     with pytest.raises(ValidationError):
         Amplitude.model_validate_json("{}")
@@ -1048,8 +1051,8 @@ def test_time_model_validation():
 def test_frequency_model_validation():
     """Test JSON model validation for Frequency."""
     # Test each frequency unit
-    freq = Frequency.model_validate_json(" 0 ")
-    assert freq.Hz == 0
+    with pytest.raises(ValidationError):
+        Frequency.model_validate_json(" 0 ")
 
     freq = Frequency.model_validate_json(' {"Hz": 1000000.0} ')
     assert freq.Hz == 1e6
@@ -1071,10 +1074,13 @@ def test_frequency_model_validation():
         Frequency.model_validate_json('{"Hz": 1e6, "MHz": 1.0}')
 
 
-def test_frequency_model_string_data_validation_for_zero():
-    """Test string data JSON model validation for Frequency."""
-    freq = Frequency.model_validate_strings("  0  ")
-    assert freq.Hz == 0
+def test_frequency_bare_zero_string_is_not_a_zero():
+    """Neither ``"0"`` nor ``0`` is a frequency on the wire; ``Frequency(0)`` still is one."""
+    with pytest.raises(ValidationError):
+        Frequency.model_validate_strings("  0  ")
+    with pytest.raises(ValidationError):
+        Frequency.model_validate(0)
+    assert Frequency(0).Hz == 0
 
 
 def test_frequency_model_string_data_validation():

@@ -1,93 +1,104 @@
-import inspect
-from typing import Any, ClassVar
+"""One wire form per reference: three tagged objects and one bare channel name.
+
+``{"var": ...}``, ``{"ext": ...}`` and ``{"pulse_name": ...}`` are what the tagged references
+validate and serialize, in both directions; ``"q0_drive"`` is what a channel does. Nothing accepts
+a form it does not emit, which is what the schema-symmetry ledger next door measures.
+"""
+
+from typing import Annotated, Any
 
 import pytest
-from pydantic import TypeAdapter, ValidationError, model_serializer
+from pydantic import TypeAdapter, ValidationError
 
 from eq1_pulse.models.identifier_str import str_is_external_symbol
 from eq1_pulse.models.reference_types import (
     ChannelRef,
+    ChannelTarget,
     ExternalRef,
     PulseRef,
     Reference,
+    ReferenceDiscriminator,
     SymbolRef,
     VariableRef,
 )
 
+TAGGED_REFERENCES: list[tuple[type[Reference], str, str]] = [
+    (VariableRef, "var", "var1"),
+    (ExternalRef, "ext", "q0[1].amp"),
+    (PulseRef, "pulse_name", "pulse1"),
+]
 
-def test_channel_ref():
+
+@pytest.mark.parametrize(("reference", "tag", "name"), TAGGED_REFERENCES, ids=lambda p: getattr(p, "__name__", p))
+def test_tagged_reference_round_trips_as_its_object(reference, tag, name):
+    """The tagged object is the wire form in both directions, and the constructor takes the name."""
+    ref = reference(name)
+    assert getattr(ref, tag) == name
+    assert ref.model_dump() == {tag: name}
+    assert reference.model_validate({tag: name}) == ref
+    assert reference.model_validate_json(ref.model_dump_json()) == ref
+
+
+@pytest.mark.parametrize(("reference", "tag", "name"), TAGGED_REFERENCES, ids=lambda p: getattr(p, "__name__", p))
+def test_tagged_reference_rejects_the_bare_name(reference, tag, name):
+    """A bare name is not a wire form: the constructor takes one, ``model_validate`` does not."""
+    with pytest.raises(ValidationError):
+        reference.model_validate(name)
+
+
+@pytest.mark.parametrize(("reference", "tag", "name"), TAGGED_REFERENCES, ids=lambda p: getattr(p, "__name__", p))
+def test_tagged_reference_rejects_extra_fields(reference, tag, name):
+    """A tagged object is exactly one field wide; an extra key is not silently dropped."""
+    with pytest.raises(ValidationError):
+        reference.model_validate({tag: name, "unexpected": "value"})
+
+
+@pytest.mark.parametrize(("reference", "tag", "name"), TAGGED_REFERENCES, ids=lambda p: getattr(p, "__name__", p))
+def test_tagged_reference_schema_is_the_same_object_in_both_modes(reference, tag, name):
+    """The default object schema is correct in both modes, so neither needs a hook."""
+    schema = reference.model_json_schema()
+    assert schema["type"] == "object"
+    assert tag in schema["properties"]
+    assert schema == reference.model_json_schema(mode="serialization")
+
+
+def test_reference_compares_equal_to_its_bare_name():
+    """The Python-level convenience the wire format no longer offers; plan §6 keeps it."""
+    assert VariableRef("a") == "a"
+    assert ExternalRef("q0.f01") == "q0.f01"
+    assert PulseRef("pi") == "pi"
+    assert VariableRef("a") != VariableRef("b")
+
+
+def test_channel_ref_round_trips_as_the_bare_name():
     ref = ChannelRef("ch1")
-    assert ref.channel == "ch1"
-
-
-def test_channel_ref_serialization():
-    ref = ChannelRef("ch1")
-    assert ref.model_dump() == "ch1"  # type: ignore
-
-
-def test_channel_ref_validation():
-    ref = ChannelRef.model_validate("ch1")
-    assert ref.channel == "ch1"
-
-
-def test_channel_ref_json_validation():
-    ref = ChannelRef.model_validate_json('"ch1"')
-    assert ref.channel == "ch1"
-
-
-def test_channel_ref_json_serialization():
-    ref = ChannelRef("ch1")
+    assert ref.root == "ch1"
+    assert ref.model_dump() == "ch1"
     assert ref.model_dump_json() == '"ch1"'
+    assert ChannelRef.model_validate("ch1") == ref
+    assert ChannelRef.model_validate_json('"ch1"') == ref
 
 
-def test_pulse_ref():
-    ref = PulseRef("pulse1")
-    assert ref.pulse_name == "pulse1"
+def test_channel_ref_rejects_the_wrapped_form():
+    """``{"channel": "ch1"}`` was only ever an input; the bare string is the wire form."""
+    with pytest.raises(ValidationError):
+        ChannelRef.model_validate({"channel": "ch1"})
 
 
-def test_pulse_ref_serialization():
-    ref = PulseRef("pulse1")
-    assert ref.model_dump() == "pulse1"  # type: ignore
+def test_channel_ref_compares_equal_to_its_bare_name():
+    """It leaves the :class:`Reference` hierarchy, so it carries this one member of its own."""
+    assert ChannelRef("ch1") == "ch1"
+    assert ChannelRef("ch1") == ChannelRef("ch1")
+    assert ChannelRef("ch1") != ChannelRef("ch2")
+    assert ChannelRef("ch1") != "ch2"
 
 
-def test_pulse_ref_validation():
-    ref = PulseRef.model_validate("pulse1")
-    assert ref.pulse_name == "pulse1"
-
-
-def test_pulse_ref_json_validation():
-    ref = PulseRef.model_validate_json('"pulse1"')
-    assert ref.pulse_name == "pulse1"
-
-
-def test_pulse_ref_json_serialization():
-    ref = PulseRef("pulse1")
-    assert ref.model_dump_json() == '"pulse1"'
-
-
-def test_variable_ref():
-    ref = VariableRef("var1")
-    assert ref.var == "var1"
-
-
-def test_variable_ref_serialization():
-    ref = VariableRef("var1")
-    assert ref.model_dump() == "var1"  # type: ignore
-
-
-def test_variable_ref_validation():
-    ref = VariableRef.model_validate("var1")
-    assert ref.var == "var1"
-
-
-def test_variable_ref_json_validation():
-    ref = VariableRef.model_validate_json('"var1"')
-    assert ref.var == "var1"
-
-
-def test_variable_ref_json_serialization():
-    ref = VariableRef("var1")
-    assert ref.model_dump_json() == '"var1"'
+def test_channel_ref_schema_is_a_string_in_both_modes():
+    """A root model publishes what it wraps -- here the identifier string -- and no object."""
+    schema = ChannelRef.model_json_schema()
+    assert schema["$defs"][schema["$ref"].rsplit("/", 1)[-1]] == {"type": "string"}
+    assert "properties" not in schema
+    assert schema == ChannelRef.model_json_schema(mode="serialization")
 
 
 EXTERNAL_SYMBOLS_ACCEPTED = ["q0", "q0[1]", "q0.f01", "q0[1].amp", "chip.q0[3].readout.threshold"]
@@ -109,131 +120,57 @@ def test_external_symbol_grammar_rejects(symbol):
         ExternalRef(symbol)
 
 
-def test_external_ref():
-    ref = ExternalRef("q0[1].amp")
-    assert ref.ext == "q0[1].amp"
-
-
-def test_external_ref_serialization_is_wrapped():
-    ref = ExternalRef("q0[1].amp")
-    assert ref.model_dump() == {"ext": "q0[1].amp"}
-    assert ref.model_dump_json() == '{"ext":"q0[1].amp"}'
-
-
-def test_external_ref_validation():
-    assert ExternalRef.model_validate({"ext": "q0.f01"}).ext == "q0.f01"
-    assert ExternalRef.model_validate("q0.f01").ext == "q0.f01"
-
-
-def test_external_ref_json_round_trip():
-    ref = ExternalRef("chip.q0[3].readout.threshold")
-    assert ExternalRef.model_validate_json(ref.model_dump_json()) == ref
-
-
-def test_external_ref_json_schema_is_an_object():
-    schema = ExternalRef.model_json_schema()
-    assert schema["type"] == "object"
-    assert "properties" in schema
-    assert "ext" in schema["properties"]
-
-
-def test_variable_ref_serialization_is_still_bare():
-    ref = VariableRef("amp")
-    assert ref.model_dump() == "amp"  # type: ignore
-    assert ref.model_dump_json() == '"amp"'
-
-
-def test_symbol_ref_resolves_bare_string_to_a_variable():
+def test_symbol_ref_is_keyed_on_var_and_ext():
     adapter: TypeAdapter[SymbolRef] = TypeAdapter(SymbolRef)
-    ref = adapter.validate_python("amp")
-    assert isinstance(ref, VariableRef)
-    assert ref.var == "amp"
-
-
-def test_symbol_ref_resolves_wrapped_form_to_an_external():
-    adapter: TypeAdapter[SymbolRef] = TypeAdapter(SymbolRef)
-    ref = adapter.validate_python({"ext": "q0.f01"})
-    assert isinstance(ref, ExternalRef)
-    assert ref.ext == "q0.f01"
-
-
-def test_symbol_ref_union_serialization_is_unambiguous():
-    adapter: TypeAdapter[SymbolRef] = TypeAdapter(SymbolRef)
-    assert adapter.dump_python(VariableRef("amp")) == "amp"
+    assert adapter.validate_python({"var": "amp"}) == VariableRef("amp")
+    assert adapter.validate_python({"ext": "q0.f01"}) == ExternalRef("q0.f01")
+    assert adapter.dump_python(VariableRef("amp")) == {"var": "amp"}
     assert adapter.dump_python(ExternalRef("q0.f01")) == {"ext": "q0.f01"}
-    assert adapter.validate_json(adapter.dump_json(ExternalRef("q0.f01"))) == ExternalRef("q0.f01")
 
 
-def test_reference_subclass_must_define_exactly_one_field():
-    with pytest.raises(TypeError, match="exactly one field"):
-
-        class TwoFields(Reference):
-            a: str
-            b: str
-
-    with pytest.raises(TypeError, match="exactly one field"):
-
-        class NoFields(Reference):
-            pass
+def test_symbol_ref_has_no_bare_form_left():
+    """Neither member has a shorthand, so there is no resolution order to depend on."""
+    adapter: TypeAdapter[SymbolRef] = TypeAdapter(SymbolRef)
+    with pytest.raises(ValidationError):
+        adapter.validate_python("amp")
 
 
-def test_reference_subclass_overriding_the_serializer_must_declare_it():
-    with pytest.raises(TypeError, match="_serializes_bare = False"):
-
-        class Sneaky(Reference):
-            a: str
-
-            @model_serializer
-            def _wrap_serializer(self) -> Any:
-                return {"a": self.a}
+def test_channel_target_tells_the_two_forms_apart_by_json_type():
+    adapter: TypeAdapter[ChannelTarget] = TypeAdapter(ChannelTarget)
+    assert adapter.validate_python("q0_drive") == ChannelRef("q0_drive")
+    assert adapter.validate_python({"ext": "q0.drive"}) == ExternalRef("q0.drive")
+    assert adapter.dump_python(ChannelRef("q0_drive")) == "q0_drive"
+    assert adapter.dump_python(ExternalRef("q0.drive")) == {"ext": "q0.drive"}
 
 
-def test_wrapped_reference_must_override_the_serializer():
-    with pytest.raises(TypeError, match="_wrap_serializer"):
+@pytest.mark.parametrize(
+    ("union", "malformed"),
+    [
+        (SymbolRef, {"vr": "amp"}),
+        (SymbolRef, "amp"),
+        (ChannelTarget, {"channel": "ch1"}),
+        (ChannelTarget, {"ex": "q0.drive"}),
+        (ChannelTarget, 5),
+    ],
+)
+def test_a_malformed_reference_produces_exactly_one_error(union, malformed):
+    """Selection is a tag lookup, not a scoring pass, so a union does not report one error per member."""
+    adapter: TypeAdapter[Any] = TypeAdapter(union)
+    with pytest.raises(ValidationError) as excinfo:
+        adapter.validate_python(malformed)
 
-        class Liar(Reference):
-            _serializes_bare: ClassVar[bool] = False
-
-            a: str
-
-
-def test_a_wrapped_reference_other_than_external_ref_also_dispatches_correctly():
-    class TagRef(Reference):
-        """A second wrapped reference, to show the mechanism is not special-cased to ExternalRef.
-
-        Overriding ``_wrap_serializer`` is enough: ``__get_pydantic_json_schema__`` branches on
-        ``_serializes_bare`` in the base class, so a wrapped reference needs no schema override.
-        """
-
-        _serializes_bare: ClassVar[bool] = False
-
-        tag: str
-
-        @model_serializer
-        def _wrap_serializer(self) -> Any:
-            return {"tag": self.tag}
-
-    adapter: TypeAdapter[VariableRef | TagRef] = TypeAdapter(VariableRef | TagRef)
-    assert adapter.dump_python(TagRef(tag="t")) == {"tag": "t"}
-
-    assert TagRef.model_json_schema() == {
-        "properties": {"tag": {"title": "Tag", "type": "string"}},
-        "required": ["tag"],
-        "title": "TagRef",
-        "type": "object",
-        "description": inspect.cleandoc(TagRef.__doc__ or ""),
-    }
-    assert TagRef.model_json_schema(mode="serialization") == {
-        "properties": {"tag": {"type": "string"}},
-        "required": ["tag"],
-        "type": "object",
-    }
-    assert adapter.dump_python(VariableRef("v")) == "v"
+    assert len(excinfo.value.errors()) == 1
+    assert excinfo.value.errors()[0]["type"].startswith("union_tag_")
 
 
-def test_foreign_instance_is_not_silently_serialized_bare():
-    ref = ExternalRef("q0.f01")
-    with pytest.warns(UserWarning, match="does not serialize bare"):
-        dumped = TypeAdapter(VariableRef).dump_python(ref)  # type: ignore[arg-type]
+def test_the_discriminator_reads_its_tags_off_the_members():
+    """Adding a reference type means declaring it, with no tag table to keep in step."""
+    assert ReferenceDiscriminator._tag_of(VariableRef) == "var"
+    assert ReferenceDiscriminator._tag_of(ExternalRef) == "ext"
+    assert ReferenceDiscriminator._tag_of(PulseRef) == "pulse_name"
+    assert ReferenceDiscriminator._tag_of(ChannelRef) == ReferenceDiscriminator._BARE_TAG
 
-    assert dumped != "q0.f01"
+
+def test_the_discriminator_needs_a_union():
+    with pytest.raises(TypeError, match="union of reference models"):
+        TypeAdapter(Annotated[VariableRef, ReferenceDiscriminator()])

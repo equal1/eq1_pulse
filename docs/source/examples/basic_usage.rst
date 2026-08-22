@@ -365,7 +365,7 @@ JSON Output
         "duration": {
           "us": 1.0
         },
-        "var": "result",
+        "var": {"var": "result"},
         "integration": {
           "type": "demod"
         }

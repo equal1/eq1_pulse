@@ -1,9 +1,10 @@
 from typing import Any
 
 import numpy as np
-from pydantic import TypeAdapter
+import pytest
+from pydantic import TypeAdapter, ValidationError
 
-from eq1_pulse.models.basic_types import Amplitude, Duration, Frequency, Magnitude, Phase
+from eq1_pulse.models.basic_types import Amplitude, Duration, Frequency, Magnitude, Phase, Voltage
 from eq1_pulse.models.pulse_types import (
     ArbitrarySampledPulse,
     ExternalParamValue,
@@ -458,11 +459,23 @@ def test_arbitrary_sample_pulse_json_serialization_with_complex_samples():
     )
 
 
-def test_external_param_value_amplitude():
-    """Test that an Amplitude instance round-trips through ExternalParamValue."""
-    value: Any = TypeAdapter(ExternalParamValue).validate_python(Amplitude(V=0.5))
-    assert isinstance(value, Amplitude)
+def test_external_param_value_voltage():
+    """Test that a Voltage instance round-trips through ExternalParamValue."""
+    value: Any = TypeAdapter(ExternalParamValue).validate_python(Voltage(V=0.5))
+    assert isinstance(value, Voltage)
     assert value.V == 0.5
+
+
+def test_external_param_value_amplitude_is_rejected():
+    """Test that an Amplitude instance -- not a Voltage subclass -- is rejected by ExternalParamValue.
+
+    :class:`~.basic_types.Amplitude` and :class:`~.basic_types.Voltage` are siblings under
+    :class:`~.basic_types.ComplexVoltage`, not a subclass relationship, and merging them is out of
+    scope (plan §6). A caller who wants a complex voltage in an open union passes
+    :class:`~.basic_types.Voltage` with a complex value instead.
+    """
+    with pytest.raises(ValidationError):
+        TypeAdapter(ExternalParamValue).validate_python(Amplitude(V=0.5))
 
 
 def test_external_param_value_duration():
@@ -531,20 +544,39 @@ def test_external_param_value_scalars():
     assert adapter.validate_python(1 + 2j) == 1 + 2j
 
 
-def test_external_param_value_unit_suffixed_strings_are_coerced():
-    """Test that unit-suffixed strings are coerced to their typed dimensional quantity."""
+def test_external_param_value_numpy_complex_forms_are_tagged_as_complex():
+    """A 2-element numpy array or a numpy complex scalar is recognized as the complex tag.
+
+    :func:`~eq1_pulse.models.complex.validate_complex_tuple` accepts both, so the discriminator
+    must route them there instead of falling through to :obj:`None`.
+    """
     adapter: TypeAdapter[Any] = TypeAdapter(ExternalParamValue)
-    assert adapter.validate_python("10us") == Duration(us=10)
-    assert adapter.validate_python("100mV") == Amplitude(mV=100)
-    assert adapter.validate_python("5GHz") == Frequency(GHz=5)
+    assert adapter.validate_python(np.array([1.0, 2.0])) == 1 + 2j
+    assert adapter.validate_python(np.complex128(1 + 2j)) == 1 + 2j
+
+
+def test_external_param_value_strings_are_kept_as_plain_strings():
+    """Test that a unit-suffixed string is kept as a plain string, not coerced to a dimensional quantity.
+
+    A bare string in :data:`ExternalParamValue` is opaque data passed to an external program, not an
+    authored quantity, so it is never coerced -- however unit-suffixed it looks.
+    """
+    adapter: TypeAdapter[Any] = TypeAdapter(ExternalParamValue)
+    assert adapter.validate_python("10us") == "10us"
+    assert adapter.validate_python("100mV") == "100mV"
+    assert adapter.validate_python("5GHz") == "5GHz"
     assert adapter.validate_python("foo") == "foo"
 
 
 def test_external_param_value_variable_ref_round_trips_through_json():
-    """Test that a VariableRef survives a JSON round-trip through ExternalParamValue."""
+    """Test that a VariableRef survives a JSON round-trip through ExternalParamValue.
+
+    It is spelled ``{"var": ...}`` here and everywhere else: the ``{"var_ref": ...}`` spelling
+    this union used to invent for itself went with the rest of the ad-hoc tagging.
+    """
     adapter: TypeAdapter[Any] = TypeAdapter(ExternalParamValue)
     dumped = adapter.dump_json(VariableRef(var="x"))
-    assert dumped == b'{"var_ref":"x"}'
+    assert dumped == b'{"var":"x"}'
     restored = adapter.validate_json(dumped)
     assert restored == VariableRef(var="x")
 
@@ -553,7 +585,7 @@ def test_external_param_value_pulse_ref_round_trips_through_json():
     """Test that a PulseRef survives a JSON round-trip through ExternalParamValue."""
     adapter: TypeAdapter[Any] = TypeAdapter(ExternalParamValue)
     dumped = adapter.dump_json(PulseRef(pulse_name="p1"))
-    assert dumped == b'{"pulse_ref":"p1"}'
+    assert dumped == b'{"pulse_name":"p1"}'
     restored = adapter.validate_json(dumped)
     assert restored == PulseRef(pulse_name="p1")
 
