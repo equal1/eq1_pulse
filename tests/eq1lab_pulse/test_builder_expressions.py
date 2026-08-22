@@ -21,6 +21,7 @@ from eq1_pulse.models.expressions import (
     Expression,
     LiteralExpr,
     LogicalExpr,
+    NotExpr,
     SymbolExpr,
     UnaryExpr,
 )
@@ -181,7 +182,10 @@ class TestComparisonOperators:
 
 
 class TestLogicalOperators:
-    """``.and_()`` / ``.or_()`` / ``.not_()`` build ``LogicalExpr``; ``and``/``or``/``not`` cannot be overloaded."""
+    """``.and_()`` / ``.or_()`` build ``LogicalExpr``; ``.not_()`` builds ``NotExpr``.
+
+    ``and``/``or``/``not`` cannot be overloaded in Python, hence the method spellings.
+    """
 
     def test_and(self, a):
         node = a.and_(True).unwrap()
@@ -199,9 +203,8 @@ class TestLogicalOperators:
 
     def test_not(self, a):
         node = a.not_().unwrap()
-        assert isinstance(node, LogicalExpr)
-        assert node.logical_op == "not"
-        assert node.lhs is None
+        assert isinstance(node, NotExpr)
+        assert node.not_op == "not"
         assert node.rhs == a.unwrap()
 
 

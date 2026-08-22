@@ -344,7 +344,7 @@ def test_demod_integration_scale_cos_sin_default_still_elided():
 
 def test_wait_duration_accepts_expression():
     """``Wait.duration`` accepts an ``Expression``, not just a bare ``SymbolRef``."""
-    duration = BinaryExpr(binary_op="+", left=SymbolExpr(symbol=VariableRef("d")), right=LiteralExpr(value={"ns": 10}))
+    duration = BinaryExpr(binary_op="+", lhs=SymbolExpr(symbol=VariableRef("d")), rhs=LiteralExpr(value={"ns": 10}))
     wait_op = Wait("ch1", "ch2", duration=duration)
     assert isinstance(wait_op.duration, BinaryExpr)
 

@@ -125,7 +125,7 @@ def test_discriminate_threshold_and_rotation_accept_variable_and_external_ref():
 
 def test_discriminate_threshold_accepts_expression():
     """``Discriminate.threshold`` accepts an ``Expression``, not just a bare ``SymbolRef``."""
-    threshold = BinaryExpr(binary_op="+", left=SymbolExpr(symbol=VariableRef("t")), right=LiteralExpr(value={"V": 0.1}))
+    threshold = BinaryExpr(binary_op="+", lhs=SymbolExpr(symbol=VariableRef("t")), rhs=LiteralExpr(value={"V": 0.1}))
     disc = Discriminate(target=VariableRef("result"), source=VariableRef("data"), threshold=threshold)
     assert isinstance(disc.threshold, BinaryExpr)
 

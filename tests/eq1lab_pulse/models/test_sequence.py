@@ -283,8 +283,8 @@ def test_sequence_external_param_references_round_trip_without_degrading():
 
 def test_sequence_with_expressions_round_trips_through_json():
     """A sequence with a widened field holding an Expression round-trips through JSON, not just model_dump."""
-    count = BinaryExpr(binary_op="+", left=SymbolExpr(symbol=VariableRef("n")), right=LiteralExpr(value=1))
-    predicate = CompareExpr(compare_op=">", left=SymbolExpr(symbol=VariableRef("x")), right=LiteralExpr(value=1))
+    count = BinaryExpr(binary_op="+", lhs=SymbolExpr(symbol=VariableRef("n")), rhs=LiteralExpr(value=1))
+    predicate = CompareExpr(compare_op=">", lhs=SymbolExpr(symbol=VariableRef("x")), rhs=LiteralExpr(value=1))
     pulse = SquarePulse(duration={"ns": 100}, amplitude={"V": 1.0})
     play = Play(channel="ch1", pulse=pulse)
 

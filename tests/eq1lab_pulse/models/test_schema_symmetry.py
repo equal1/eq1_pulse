@@ -73,8 +73,8 @@ def _canonical_round_trip_instances():
         ExternalBlock(program="eq1.cal.measure", channels={"readout": "ch1"}, duration=Duration("10us")),
         BinaryExpr(
             binary_op="*",
-            left=SymbolExpr(symbol=VariableRef(var="scale")),
-            right=LiteralExpr(value=Amplitude("80mV")),
+            lhs=SymbolExpr(symbol=VariableRef(var="scale")),
+            rhs=LiteralExpr(value=Amplitude("80mV")),
         ),
         Repetition(count=3, body=OpSequence([Wait(channels=["ch1"], duration=Duration("10us"))])),
         OpSequence([Wait(channels=["ch1"], duration=Duration("10us"))]),

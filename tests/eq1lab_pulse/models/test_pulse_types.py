@@ -11,6 +11,7 @@ from eq1_pulse.models.expressions import (
     CompareExpr,
     LiteralExpr,
     LogicalExpr,
+    NotExpr,
     SymbolExpr,
     UnaryExpr,
 )
@@ -663,24 +664,29 @@ def test_external_param_value_complex_round_trips_through_json():
         pytest.param({"value": 1}, LiteralExpr, id="literal"),
         pytest.param({"symbol": {"var": "x"}}, SymbolExpr, id="symbol"),
         pytest.param(
-            {"unary_op": "-", "operand": {"value": 1}},
+            {"unary_op": "-", "rhs": {"value": 1}},
             UnaryExpr,
             id="unary",
         ),
         pytest.param(
-            {"binary_op": "+", "left": {"value": 1}, "right": {"value": 2}},
+            {"binary_op": "+", "lhs": {"value": 1}, "rhs": {"value": 2}},
             BinaryExpr,
             id="binary",
         ),
         pytest.param(
-            {"compare_op": "<", "left": {"value": 1}, "right": {"value": 2}},
+            {"compare_op": "<", "lhs": {"value": 1}, "rhs": {"value": 2}},
             CompareExpr,
             id="compare",
         ),
         pytest.param(
-            {"logical_op": "and", "operands": [{"value": 1}, {"value": 2}]},
+            {"logical_op": "and", "lhs": {"value": 1}, "rhs": {"value": 2}},
             LogicalExpr,
             id="logical",
+        ),
+        pytest.param(
+            {"not_op": "not", "rhs": {"value": 1}},
+            NotExpr,
+            id="not",
         ),
         pytest.param(
             {"function": "abs", "args": [{"value": 1}]},

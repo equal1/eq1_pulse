@@ -8,11 +8,16 @@ unit conversion to decide whether ``ext("q0.f01") + var("detuning")`` is legal. 
 IR hands outwards.
 
 There is one node type per *arity and result kind* rather than one per operator --
-:class:`BinaryExpr` with ``op="+"``, not an ``AddExpr``. :class:`CompareExpr` and
-:class:`LogicalExpr` are split out of :class:`BinaryExpr` for the same reason applied one level up:
-both yield booleans, both are valid where an arithmetic node is not, and keeping them distinct makes
-"is this a predicate?" answerable from the wire key alone -- ``compare_op`` / ``logical_op`` versus
-``binary_op`` -- as well as in Python.
+:class:`BinaryExpr` with ``op="+"``, not an ``AddExpr``. :class:`CompareExpr`, :class:`NotExpr` and
+:class:`LogicalExpr` are split out of :class:`UnaryExpr`/:class:`BinaryExpr` for the same reason
+applied one level up: all three yield booleans, all are valid where an arithmetic node is not, and
+keeping them distinct makes "is this a predicate?" answerable from the wire key alone -- ``compare_op``
+/ ``not_op`` / ``logical_op`` versus ``unary_op`` / ``binary_op`` -- as well as in Python.
+:class:`NotExpr` and :class:`LogicalExpr` are themselves split by arity, the same way
+:class:`UnaryExpr` and :class:`BinaryExpr` are: ``not`` is unary, ``and``/``or`` are binary, and a
+single node type spanning both would need an optional field and a validator to enforce which
+operator requires which -- exactly the awkwardness arity-specific node types elsewhere in this
+module avoid.
 """
 
 from __future__ import annotations
@@ -38,6 +43,7 @@ __all__ = (
     "Expression",
     "LiteralExpr",
     "LogicalExpr",
+    "NotExpr",
     "SymbolExpr",
     "UnaryExpr",
     "ValueRef",
@@ -60,7 +66,7 @@ serialize. Hand-written expressions do not approach 32.
 class ExprBase(LeanModel):
     """Base class for all expression nodes.
 
-    Each node is keyed on a field it already needs -- the operator for the four operator nodes, and
+    Each node is keyed on a field it already needs -- the operator for the five operator nodes, and
     the single payload field for the other three -- rather than on a separate discriminator field.
     """
 
@@ -184,29 +190,38 @@ class CompareExpr(ExprBase):
     """The right-hand operand."""
 
 
-class LogicalExpr(ExprBase):
-    """A boolean connective over operands.
+class NotExpr(ExprBase):
+    """Boolean negation of a single operand.
 
-    ``not`` is unary with only an ``rhs``, while ``and`` and ``or`` are binary with both ``lhs``
-    and ``rhs``. For n-ary operations, nest the expressions (e.g., ``and(and(a, b), c)``).
+    Split out from :class:`LogicalExpr` by arity, the same way :class:`UnaryExpr` is split from
+    :class:`BinaryExpr`: ``not`` is the only unary boolean connective, so it gets its own node
+    instead of an optional ``lhs`` on a node shared with the binary ones.
     """
 
-    logical_op: Literal["and", "or", "not"]
-    """The boolean connective."""
-    lhs: Expression | None = None
-    """The left operand, or None for ``not``. Not serialized when None."""
-    rhs: Expression
-    """The right operand, or the only operand for ``not``."""
+    not_op: Literal["not"]
+    """The operator applied to :attr:`rhs`.
 
-    @model_validator(mode="after")
-    def _validate_operands(self) -> Self:
-        if self.logical_op == "not":
-            if self.lhs is not None:
-                raise ValueError('"not" must have lhs=None')
-        else:  # and, or
-            if self.lhs is None:
-                raise ValueError(f'"{self.logical_op}" requires lhs to be set')
-        return self
+    Declared without a default even though it has exactly one possible value: it is the
+    discriminator for this node, first in the class, so :class:`~.base_models.LeanModel` serializes
+    it always regardless of whether it has one.
+    """
+    rhs: Expression
+    """The expression being negated."""
+
+
+class LogicalExpr(ExprBase):
+    """A boolean connective over two operands.
+
+    ``and``/``or`` only -- ``not`` is :class:`NotExpr`. For n-ary ``and``/``or``, nest the
+    expressions (e.g., ``and(and(a, b), c)``).
+    """
+
+    logical_op: Literal["and", "or"]
+    """The boolean connective."""
+    lhs: Expression
+    """The left operand."""
+    rhs: Expression
+    """The right operand."""
 
 
 type ExpressionFunction = Literal["min", "max", "abs", "sqrt", "sin", "cos", "tan", "exp", "log"]
@@ -244,6 +259,7 @@ _EXPRESSION_TAGS: Final[dict[type[ExprBase], str]] = {
     UnaryExpr: "unary_op",
     BinaryExpr: "binary_op",
     CompareExpr: "compare_op",
+    NotExpr: "not_op",
     LogicalExpr: "logical_op",
     CallExpr: "function",
 }
@@ -270,6 +286,7 @@ type Expression = Annotated[
     | Annotated[UnaryExpr, Tag("unary_op")]
     | Annotated[BinaryExpr, Tag("binary_op")]
     | Annotated[CompareExpr, Tag("compare_op")]
+    | Annotated[NotExpr, Tag("not_op")]
     | Annotated[LogicalExpr, Tag("logical_op")]
     | Annotated[CallExpr, Tag("function")],
     Discriminator(expression_tag_of),
@@ -309,5 +326,6 @@ SymbolExpr.model_rebuild()
 UnaryExpr.model_rebuild()
 BinaryExpr.model_rebuild()
 CompareExpr.model_rebuild()
+NotExpr.model_rebuild()
 LogicalExpr.model_rebuild()
 CallExpr.model_rebuild()

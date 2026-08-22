@@ -206,26 +206,28 @@ value union it builds on, and building on it first only means fixing it twice.
    dumps `{"mV": 100}` and revalidates as `Voltage`, the same narrowing `Duration` → `Time` already
    gets — is worth its own test so it reads as intended rather than as a bug.
 
-2. Create `src/eq1_pulse/models/expressions.py` with the seven node types from plan §2.1:
+2. Create `src/eq1_pulse/models/expressions.py` with the eight node types from plan §2.1:
    `ExprBase(LeanModel)`, `LiteralExpr`, `SymbolExpr`, `UnaryExpr`, `BinaryExpr`, `CompareExpr`,
-   `LogicalExpr`, `CallExpr`, and the `Expression` discriminated union. (`ExprBase` is the base, not
-   one of the seven.)
+   `NotExpr`, `LogicalExpr`, `CallExpr`, and the `Expression` discriminated union. (`ExprBase` is the
+   base, not one of the eight.)
 
-   The operator fields (`unary_op`, `binary_op`, `compare_op`, `logical_op`) are declared **first**
-   on their respective classes and serve as discriminators via a callable `Discriminator` function.
+   The operator fields (`unary_op`, `binary_op`, `compare_op`, `not_op`, `logical_op`) are declared
+   **first** on their respective classes and serve as discriminators via a callable `Discriminator`
+   function.
 
-3. **No operator field carries a default.** The operator fields are `unary_op`, `binary_op`, `compare_op`, and `logical_op` — all single-valued `Literal`s declared first on their respective classes and always serialized as discriminators. Test that `UnaryExpr.model_dump()` contains `unary_op`.
+3. **No operator field carries a default.** The operator fields are `unary_op`, `binary_op`, `compare_op`, `not_op`, and `logical_op` — all single-valued `Literal`s declared first on their respective classes and always serialized as discriminators. Test that `UnaryExpr.model_dump()` contains `unary_op`.
 
 4. `LiteralExpr.value` is `SymbolValue`, imported from `data_ops.py` where #6 put it and step 1 fixed
    it. `SymbolExpr.symbol` is `SymbolRef` from `reference_types.py`. Do not redefine either.
 
 5. `UnaryExpr.unary_op` is `Literal["-"]` **only**. `abs` is a `CallExpr` function, not a unary op
-   (plan §8 Q3). `LogicalExpr` carries `lhs: Expression | None` and `rhs: Expression`, with
-   `logical_op: Literal["and", "or", "not"]`. `not` has `lhs=None`, `and`/`or` require non-None `lhs`.
+   (plan §8 Q3). `NotExpr` and `LogicalExpr` are split by arity the same way `UnaryExpr`/`BinaryExpr`
+   are: `NotExpr` carries only `not_op: Literal["not"]` and `rhs: Expression`; `LogicalExpr` carries
+   `logical_op: Literal["and", "or"]` and both `lhs: Expression`, `rhs: Expression`. Neither needs an
+   operand-count validator — the arity is fixed by the node type, same as `UnaryExpr`/`BinaryExpr`.
 
-6. Validators — these three and no others:
+6. Validators — these two and no others:
    - `CallExpr`: `min`/`max` take ≥ 2 args, every other function takes exactly 1.
-   - `LogicalExpr`: `not` takes exactly 1 operand, `and`/`or` take ≥ 2.
    - depth: a module constant `MAX_EXPRESSION_DEPTH = 32` and a validator that raises a
      `ValueError` naming the limit. Note what the cap is *for* (plan §2.3): pydantic-core already
      turns a deep validation into a `ValidationError`, so do not write the test as "a
@@ -244,7 +246,7 @@ value union it builds on, and building on it first only means fixing it twice.
    `model_rebuild()` per node class at the bottom of the module. Verify by validating a
    depth-3 tree from a plain dict — if a rebuild is missing, that is where it shows.
 
-9. `__all__`, sorted, exporting the seven node types, `ExprBase`, `Expression`, `ValueRef`,
+9. `__all__`, sorted, exporting the eight node types, `ExprBase`, `Expression`, `ValueRef`,
    `ValueRefLike` and `MAX_EXPRESSION_DEPTH`.
 
 10. **Wire the module into model discovery** (plan §3.4, §7): `"expressions"` into
@@ -256,10 +258,11 @@ value union it builds on, and building on it first only means fixing it twice.
 
 11. Tests in `tests/eq1lab_pulse/models/test_expressions.py` (new):
     - each node type constructs and round-trips through `model_dump` → `model_validate`;
-    - the `Expression` union discriminates each `expr_type` correctly;
+    - the `Expression` union discriminates each operator/payload key correctly;
     - a depth-3 nested tree round-trips from a plain dict;
-    - `CallExpr` and `LogicalExpr` arity validators accept and reject;
-    - `UnaryExpr.model_dump()` contains `op` (step 3);
+    - `CallExpr` arity validator accepts and rejects; `NotExpr`/`LogicalExpr` construct with their
+      fixed arity (no validator to exercise);
+    - `UnaryExpr.model_dump()` contains `unary_op` (step 3);
     - depth 33 raises `ValidationError`;
     - a `SymbolExpr` wrapping an `ExternalRef` round-trips with the `{"ext": ...}` form intact;
     - a `LiteralExpr` holding an `Amplitude` round-trips (step 1's consumer).
@@ -319,8 +322,8 @@ acceptance criteria, with one addition noted below.
    still resolves as it did.
 
 3. `ConditionalBase.var` is typed `ValueRef` like the rest, plus a model validator restricting it to
-   a predicate: a `SymbolRef`, a `CompareExpr`, or a `LogicalExpr`. Arithmetic nodes are rejected
-   with a message naming what was passed. Plan §3 consequence 1 and §8 Q2.
+   a predicate: a `SymbolRef`, a `CompareExpr`, a `NotExpr`, or a `LogicalExpr`. Arithmetic nodes are
+   rejected with a message naming what was passed. Plan §3 consequence 1 and §8 Q2.
 
 4. Run the `model_rebuild()` sweep: every model whose fields now transitively mention `Expression`
    needs rebuilding. That is `pulse_types`, `channel_ops`, `data_ops`, `external_block`,
@@ -331,8 +334,8 @@ acceptance criteria, with one addition noted below.
 5. Tests:
    - `test_channel_ops.py` / `test_pulse_types.py` — one widened field per family accepts an
      `Expression`;
-   - `test_control_flow.py` — `Conditional` accepts `CompareExpr`, `LogicalExpr` and a bare
-     `SymbolRef`; rejects `BinaryExpr` and `LiteralExpr`;
+   - `test_control_flow.py` — `Conditional` accepts `CompareExpr`, `NotExpr`, `LogicalExpr` and a
+     bare `SymbolRef`; rejects `BinaryExpr` and `LiteralExpr`;
    - `test_sequence.py` — a sequence containing expressions round-trips through **JSON** (not just
      `model_dump`).
 
@@ -525,7 +528,7 @@ rather than adding them here.
 1. `utilities/openapi_generator.py` — one edit: an `{"name": "expressions", "description": ...}`
    entry in the tag list.
 
-2. `tests/test_openapi_generator.py` — the seven expression models are present; `ExprBase` is
+2. `tests/test_openapi_generator.py` — the eight expression models are present; `ExprBase` is
    absent.
 
 3. `examples/expression_ramsey.py` — the plan's §5 example, made runnable. It imports `Amplitude`

@@ -16,6 +16,7 @@ from ..models.expressions import (
     ExprBase,
     LiteralExpr,
     LogicalExpr,
+    NotExpr,
     SymbolExpr,
     UnaryExpr,
 )
@@ -181,13 +182,13 @@ class Expr:
         return Expr(LogicalExpr(logical_op="or", lhs=self.unwrap(), rhs=expr(other).unwrap()))
 
     def not_(self) -> Expr:
-        """Build a :class:`~.expressions.LogicalExpr` negating this expression.
+        """Build a :class:`~.expressions.NotExpr` negating this expression.
 
         Not spelled ``not``; Python's ``not`` cannot be overloaded.
 
         :return: An :class:`Expr` wrapping the negation.
         """
-        return Expr(LogicalExpr(logical_op="not", lhs=None, rhs=self.unwrap()))
+        return Expr(NotExpr(not_op="not", rhs=self.unwrap()))
 
 
 def expr(value: _ExprOperand) -> Expr:

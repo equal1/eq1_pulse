@@ -93,24 +93,27 @@ ExprBase(LeanModel)
 │                  lhs: Expression, rhs: Expression
 ├── CompareExpr    compare_op: "<" | "<=" | ">" | ">=" | "==" | "!="
 │                  lhs: Expression, rhs: Expression
-├── LogicalExpr    logical_op: "and" | "or" | "not"
-│                  lhs: Expression | None, rhs: Expression
+├── NotExpr        not_op: "not"                            rhs: Expression
+├── LogicalExpr    logical_op: "and" | "or"
+│                  lhs: Expression, rhs: Expression
 └── CallExpr       function: Literal[...]                   args: list[Expression]
 
-Expression = Annotated[LiteralExpr | SymbolExpr | UnaryExpr | BinaryExpr | CompareExpr | LogicalExpr | CallExpr,
+Expression = Annotated[LiteralExpr | SymbolExpr | UnaryExpr | BinaryExpr | CompareExpr | NotExpr | LogicalExpr | CallExpr,
                        Discriminator(...)]
 ```
 
-`CompareExpr` and `LogicalExpr` are separate from `BinaryExpr` rather than further `op` values
-because their result type is categorically different — both yield booleans, and both are valid as a
-`Conditional.var` where an arithmetic node is not. Keeping the three distinct means "is this a
-predicate?" is answerable from the discriminator alone, without inspecting `op`. Applying that rule
-consistently is what makes it a rule rather than a special case for comparisons.
+`CompareExpr`, `NotExpr` and `LogicalExpr` are separate from `UnaryExpr`/`BinaryExpr` rather than
+further `op` values because their result type is categorically different — all yield booleans, and
+all are valid as a `Conditional.var` where an arithmetic node is not. Keeping them distinct means "is
+this a predicate?" is answerable from the discriminator alone, without inspecting `op`. Applying that
+rule consistently is what makes it a rule rather than a special case for comparisons.
 
-`LogicalExpr` uses `lhs: Expression | None` and `rhs: Expression` to represent logical operations.
-`not` is unary with `lhs=None` and the operand in `rhs`. `and`/`or` are binary with operands in
-`lhs` and `rhs`. For n-ary logical operations, nest the expressions (e.g., ``and(and(a, b), c)``).
-A validator ensures `not` has `lhs=None` and `and`/`or` have a non-None `lhs`.
+`NotExpr` and `LogicalExpr` are themselves split by arity, mirroring `UnaryExpr`/`BinaryExpr`: `not`
+is the only unary boolean connective, so it is its own node with a single `rhs`. `and`/`or` are
+binary, with operands in `lhs` and `rhs`. For n-ary `and`/`or`, nest the expressions (e.g.,
+`and(and(a, b), c)`). Splitting by arity this way needs no validator at all — an optional `lhs` on a
+single shared node would need one to enforce which operator requires which, and would let a `"not"`
+value with a populated `lhs` appear well-typed on the wire when it is not.
 
 `LiteralExpr.value` reuses `SymbolValue` from #6 — the same union that types a declaration's
 `default`. One notion of "a concrete value" across both plans. #10 rewrote that union: it lists **one
@@ -138,9 +141,10 @@ function: Literal["min", "max", "abs", "sqrt", "sin", "cos", "tan", "exp", "log"
 ```
 
 Arity is not encoded in the type. A model validator checks it: `min`/`max` take ≥ 2 args, everything
-else takes exactly 1. Together with `LogicalExpr`'s operand count and the §2.3 depth cap, this is the
-whole of the semantic validation in the plan, and all three earn their keep by being decidable from
-the node alone with no unit knowledge.
+else takes exactly 1. Together with the §2.3 depth cap, this is the whole of the semantic validation
+in the plan, and both earn their keep by being decidable from the node alone with no unit knowledge.
+`NotExpr`/`LogicalExpr`'s arity, by contrast, needs no validator — it is fixed by which node type is
+chosen, the same way `UnaryExpr`/`BinaryExpr`'s is.
 
 `abs` is a `CallExpr` function only — it is not a `UnaryExpr` op. Python's `abs()` maps to the call
 node, and every other named mathematical operation lives in the same place.
@@ -240,10 +244,10 @@ step in task 2 rather than part of the sweep.
 Four consequences to handle explicitly:
 
 1. **`ConditionalBase.var` is special.** Every other read site accepts any `Expression`. A condition
-   accepts a predicate only: a `SymbolRef`, a `CompareExpr`, or a `LogicalExpr`. The field is typed
-   `ValueRef` like the rest and a model validator rejects the arithmetic nodes, with a message naming
-   what was passed. Typing it as the narrow union instead is possible but produces a union that
-   duplicates half of `Expression` and reads worse in the generated schema.
+   accepts a predicate only: a `SymbolRef`, a `CompareExpr`, a `NotExpr`, or a `LogicalExpr`. The
+   field is typed `ValueRef` like the rest and a model validator rejects the arithmetic nodes, with a
+   message naming what was passed. Typing it as the narrow union instead is possible but produces a
+   union that duplicates half of `Expression` and reads worse in the generated schema.
 2. **`model_rebuild()` sweep.** Every model whose fields now transitively mention `Expression` needs
    rebuilding. Practically: `pulse_types`, `channel_ops`, `data_ops`, `external_block`, `control_flow`,
    `sequence`, and `experimental/schedule`. A test that imports the package and validates one model
@@ -310,7 +314,8 @@ puts a second copy of the grammar in the tree. The case belongs in
 | `abs()`                           | `CallExpr(function="abs")`      |
 | `< <= > >=`                       | `CompareExpr`                   |
 | `.eq(other)` / `.ne(other)`       | `CompareExpr(op="==" / "!=")`   |
-| `.and_(other)` / `.or_(other)` / `.not_()` | `LogicalExpr`          |
+| `.and_(other)` / `.or_(other)`    | `LogicalExpr`                   |
+| `.not_()`                         | `NotExpr`                       |
 
 The reflected variants (`__radd__`, `__rmul__`, …) are what make `2 * expr(var("a"))` work, and are
 worth the six extra methods.
@@ -376,16 +381,16 @@ the example deliberately, so the fix has a user-visible consumer rather than onl
 
 | File                                                  | Add                                                                                      |
 | ------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `tests/eq1lab_pulse/models/test_expressions.py` (new) | every node type constructs, round-trips, and discriminates; nesting to depth 3; `CallExpr` and `LogicalExpr` arity validators accept and reject; depth 33 raises `ValidationError`; `UnaryExpr` serializes its `op` |
+| `tests/eq1lab_pulse/models/test_expressions.py` (new) | every node type constructs, round-trips, and discriminates; nesting to depth 3; `CallExpr` arity validator accepts and rejects; `NotExpr`/`LogicalExpr` construct with their fixed arity; depth 33 raises `ValidationError`; `UnaryExpr` serializes its `op` |
 | `tests/eq1lab_pulse/models/test_schema_symmetry.py`   | the expression nodes reach `get_all_pydantic_models()` and satisfy the invariant; one goes in `_canonical_round_trip_instances()` (§3.4) |
 | `tests/eq1lab_pulse/models/test_data_ops.py`          | `SymbolValue` accepts an `Amplitude` and `{"mV": [1, 2]}`; a real `{"mV": 100}` is still a `Voltage` (§2.4) |
 | `tests/eq1lab_pulse/models/test_authoring_forms.py`   | `expr("10us")` and `expr("80mV")` read the same grammar `as_symbol_value` does (§4.1) |
 | `tests/eq1lab_pulse/models/test_pulse_types.py`       | pulse parameters accept an `Expression`; **all existing coercion cases still pass** (§3.3) |
 | `tests/eq1lab_pulse/models/test_channel_ops.py`       | one widened field per family accepts an `Expression`                                       |
 | `tests/eq1lab_pulse/models/test_sequence.py`          | a sequence containing expressions round-trips through JSON                                 |
-| `tests/eq1lab_pulse/models/test_control_flow.py`      | `Conditional` accepts `CompareExpr`/`LogicalExpr`/`SymbolRef`, rejects `BinaryExpr`        |
+| `tests/eq1lab_pulse/models/test_control_flow.py`      | `Conditional` accepts `CompareExpr`/`NotExpr`/`LogicalExpr`/`SymbolRef`, rejects `BinaryExpr` |
 | `tests/eq1lab_pulse/test_builder_expressions.py` (new)| operator coverage incl. reflected forms; `.eq()`/`.ne()`; undeclared leaf raises; `Expr` is unhashable |
-| `tests/test_openapi_generator.py`                     | the seven expression models are present; `ExprBase` is absent                              |
+| `tests/test_openapi_generator.py`                     | the eight expression models are present; `ExprBase` is absent                              |
 
 The round-trip test matters more than usual here: a discriminated recursive union is exactly the
 shape that silently degrades to `dict` when a `model_rebuild()` is missed, and the failure surfaces
@@ -412,12 +417,12 @@ the generator's own test stay here — they are documentation of a module that i
 | #  | Question                                                                | Decision                                                                                                                                     |
 | -- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Q1 | Should `var("a") * 2` work without `expr()`?                            | **No.** Operators live only on the `Expr` wrapper. `VariableRef` is a pydantic model whose `__eq__` already means value comparison and is tested (`var("a") == "a"` is `True`); giving it arithmetic makes one class do two jobs and puts a working `<` next to a `==` that means something else entirely. Rejected: dunders on the reference models; a `var()` that returns a dual-purpose wrapper (every `isinstance(x, VariableRef)` in models and builder would need re-examining). |
-| Q2 | Should `Conditional.var` accept arbitrary expressions?                  | **Predicates only** — `SymbolRef`, `CompareExpr`, `LogicalExpr` — enforced by a validator with a message naming what was passed. Accepting `if_(expr(var("x")) + 1)` and deferring the error to a backend is worse than rejecting it here, and the check needs no unit knowledge. |
+| Q2 | Should `Conditional.var` accept arbitrary expressions?                  | **Predicates only** — `SymbolRef`, `CompareExpr`, `NotExpr`, `LogicalExpr` — enforced by a validator with a message naming what was passed. Accepting `if_(expr(var("x")) + 1)` and deferring the error to a backend is worse than rejecting it here, and the check needs no unit knowledge. |
 | Q3 | `abs` as a unary op or a call?                                          | **`CallExpr(function="abs")`.** `abs` is a named function everywhere else in the set; `"abs"` is dropped from the `UnaryExpr` op literal, leaving it with `"-"` alone. |
 | Q4 | Cap expression depth?                                                   | **Yes, 32,** as a module constant — but not for v1's reason. pydantic-core already turns a deep *validation* into a `ValidationError`; it is the *serializer* that has no recursion guard and degrades to warnings plus wrong output. §2.3. |
 | Q5 | Where does the `ValueRef` alias live?                                   | **`expressions.py`.** Putting it in `reference_types.py` makes that module import `expressions`, which imports `reference_types` — a cycle breakable only with `TYPE_CHECKING`. Dependencies point one way: `reference_types` → `expressions` → operation modules. |
 | Q6 | Comparison operators at all, given `==` cannot be one?                  | **Keep `<`, `<=`, `>`, `>=`.** Losing four working operators to hide one gap is a bad trade. The gap is documented in the `Expr` docstring and the builder guide, with the reason. |
-| Q7 | Are `and`/`or` `BinaryExpr` ops or their own node?                      | **Own node, `LogicalExpr`,** with n-ary `operands`. Mixing `"+"` and `"and"` in one `op` literal means "is this arithmetic?" needs `op` inspection — the same argument that split `CompareExpr` out, applied consistently. Costs a seventh model. |
+| Q7 | Are `and`/`or`/`not` `UnaryExpr`/`BinaryExpr` ops or their own nodes?    | **Own nodes, `NotExpr` (unary) and `LogicalExpr` (binary `and`/`or`).** Mixing `"+"`/`"-"` and `"and"`/`"or"`/`"not"` in one `op` literal means "is this arithmetic?" needs `op` inspection — the same argument that split `CompareExpr` out, applied consistently. Splitting `not` from `and`/`or` by arity, rather than one `LogicalExpr` with an optional `lhs`, removes a validator and a wire shape (`lhs: null`) that would otherwise exist solely to be rejected or ignored — the same reason `UnaryExpr`/`BinaryExpr` are already two node types instead of one. Costs an eighth model. |
 
 Three more were opened by #10 landing after this plan was written, and closed on 2026-08-22:
 

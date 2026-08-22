@@ -5,14 +5,14 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from eq1_pulse.models.expressions import BinaryExpr, CompareExpr, LiteralExpr, LogicalExpr, SymbolExpr
+from eq1_pulse.models.expressions import BinaryExpr, CompareExpr, LiteralExpr, LogicalExpr, NotExpr, SymbolExpr
 from eq1_pulse.models.reference_types import ExternalRef, VariableRef
 from eq1_pulse.models.sequence import Conditional, OpSequence, Repetition
 
 
 def test_repetition_count_accepts_expression():
     """``RepetitionBase.count`` accepts an ``Expression``, like the rest of the widened fields."""
-    count = BinaryExpr(binary_op="+", left=SymbolExpr(symbol=VariableRef("n")), right=LiteralExpr(value=1))
+    count = BinaryExpr(binary_op="+", lhs=SymbolExpr(symbol=VariableRef("n")), rhs=LiteralExpr(value=1))
     rep = Repetition(count=count, body=OpSequence([]))
     assert isinstance(rep.count, BinaryExpr)
 
@@ -28,7 +28,7 @@ def test_conditional_accepts_bare_symbol_ref():
 
 def test_conditional_accepts_compare_expr():
     """``ConditionalBase.var`` accepts a ``CompareExpr``."""
-    predicate = CompareExpr(compare_op=">", left=SymbolExpr(symbol=VariableRef("x")), right=LiteralExpr(value=1))
+    predicate = CompareExpr(compare_op=">", lhs=SymbolExpr(symbol=VariableRef("x")), rhs=LiteralExpr(value=1))
     cond = Conditional(var=predicate, body=OpSequence([]))
     assert isinstance(cond.var, CompareExpr)
 
@@ -37,20 +37,25 @@ def test_conditional_accepts_logical_expr():
     """``ConditionalBase.var`` accepts a ``LogicalExpr``."""
     predicate = LogicalExpr(
         logical_op="and",
-        operands=[
-            CompareExpr(compare_op="<", left=SymbolExpr(symbol=VariableRef("x")), right=LiteralExpr(value=1)),
-            SymbolExpr(symbol=VariableRef("flag")),
-        ],
+        lhs=CompareExpr(compare_op="<", lhs=SymbolExpr(symbol=VariableRef("x")), rhs=LiteralExpr(value=1)),
+        rhs=SymbolExpr(symbol=VariableRef("flag")),
     )
     cond = Conditional(var=predicate, body=OpSequence([]))
     assert isinstance(cond.var, LogicalExpr)
+
+
+def test_conditional_accepts_not_expr():
+    """``ConditionalBase.var`` accepts a ``NotExpr``."""
+    predicate = NotExpr(not_op="not", rhs=SymbolExpr(symbol=VariableRef("flag")))
+    cond = Conditional(var=predicate, body=OpSequence([]))
+    assert isinstance(cond.var, NotExpr)
 
 
 @pytest.mark.parametrize(
     "node",
     [
         pytest.param(
-            BinaryExpr(binary_op="+", left=SymbolExpr(symbol=VariableRef("x")), right=LiteralExpr(value=1)), id="binary"
+            BinaryExpr(binary_op="+", lhs=SymbolExpr(symbol=VariableRef("x")), rhs=LiteralExpr(value=1)), id="binary"
         ),
         pytest.param(LiteralExpr(value=1), id="literal"),
     ],

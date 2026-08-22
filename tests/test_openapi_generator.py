@@ -396,7 +396,7 @@ def test_serialized_opsequence_validates_against_the_generated_schema():
 
 
 def test_expression_models_are_in_the_schema(generated_schemas):
-    """The seven expression node types are published; their base class is not.
+    """The eight expression node types are published; their base class is not.
 
     ``ExprBase`` is excluded the same way ``PulseBase`` and ``OpBase`` are -- it serves only
     as a common base and is never referenced by a discriminated union or output directly.
@@ -407,6 +407,7 @@ def test_expression_models_are_in_the_schema(generated_schemas):
         "UnaryExpr",
         "BinaryExpr",
         "CompareExpr",
+        "NotExpr",
         "LogicalExpr",
         "CallExpr",
     }

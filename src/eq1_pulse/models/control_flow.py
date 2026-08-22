@@ -158,7 +158,7 @@ class ConditionalBase[BodyT](OpBase):
 
     @model_validator(mode="after")
     def _validate_predicate(self) -> Self:
-        if isinstance(self.var, VariableRef | ExternalRef | CompareExpr | LogicalExpr):
+        if isinstance(self.var, VariableRef | ExternalRef | CompareExpr | NotExpr | LogicalExpr):
             return self
         raise ValueError(
             f"if_(): {self.var!r} is not a predicate -- expected a symbol reference, a comparison, "
@@ -168,7 +168,7 @@ class ConditionalBase[BodyT](OpBase):
 
 # Deferred: this module is reachable (via `data_ops` -> `pulse_types`) before `expressions` has
 # finished defining `ValueRef`, so importing it at the top would recurse back through that edge.
-from .expressions import CompareExpr, LogicalExpr, ValueRef  # noqa: E402
+from .expressions import CompareExpr, LogicalExpr, NotExpr, ValueRef  # noqa: E402
 
 RepetitionBase.model_rebuild()
 ConditionalBase.model_rebuild()

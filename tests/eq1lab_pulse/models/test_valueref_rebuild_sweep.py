@@ -21,8 +21,8 @@ from eq1_pulse.models.sequence import DiscriminableOp, OpSequenceItem
 
 _EXPR_DOCUMENT = {
     "binary_op": "+",
-    "left": {"symbol": {"var": "x"}},
-    "right": {"value": 1},
+    "lhs": {"symbol": {"var": "x"}},
+    "rhs": {"value": 1},
 }
 
 
@@ -68,8 +68,8 @@ def test_control_flow_and_sequence_rebuild_sweep():
     """Repetition.count and Conditional.var -- control_flow.py's and sequence.py's model_rebuild sweep."""
     compare_document = {
         "compare_op": ">",
-        "left": {"symbol": {"var": "x"}},
-        "right": {"value": 1},
+        "lhs": {"symbol": {"var": "x"}},
+        "rhs": {"value": 1},
     }
     rep: Any = TypeAdapter(DiscriminableOp).validate_python({"op_type": "repeat", "count": _EXPR_DOCUMENT, "body": []})
     assert isinstance(rep.count, BinaryExpr)

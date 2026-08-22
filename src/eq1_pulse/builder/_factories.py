@@ -16,7 +16,16 @@ from eq1_pulse.models import Phase
 
 from ..models.basic_types import Range
 from ..models.channel_ops import DemodIntegration, FullIntegration
-from ..models.expressions import BinaryExpr, CallExpr, CompareExpr, ExprBase, LogicalExpr, SymbolExpr, UnaryExpr
+from ..models.expressions import (
+    BinaryExpr,
+    CallExpr,
+    CompareExpr,
+    ExprBase,
+    LogicalExpr,
+    NotExpr,
+    SymbolExpr,
+    UnaryExpr,
+)
 from ..models.pulse_types import ArbitrarySampledPulse, ExternalPulse, SinePulse, SquarePulse
 from ..models.reference_types import ChannelRef, ExternalRef, PulseRef, VariableRef
 from ._coerce import as_amplitude, as_duration, as_frequency, as_phase, as_symbol_ref
@@ -131,14 +140,10 @@ def _check_expression_leaves(node: Expression) -> None:
                 _check_variable_declared(symbol.var)
             else:
                 _check_external_declared(symbol.ext)
-        elif isinstance(current, UnaryExpr):
+        elif isinstance(current, UnaryExpr | NotExpr):
             stack.append(current.rhs)
-        elif isinstance(current, BinaryExpr | CompareExpr):
+        elif isinstance(current, BinaryExpr | CompareExpr | LogicalExpr):
             stack.append(current.lhs)
-            stack.append(current.rhs)
-        elif isinstance(current, LogicalExpr):
-            if current.lhs is not None:
-                stack.append(current.lhs)
             stack.append(current.rhs)
         elif isinstance(current, CallExpr):
             stack.extend(current.args)

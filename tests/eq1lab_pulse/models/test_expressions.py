@@ -16,6 +16,7 @@ from eq1_pulse.models.expressions import (
     Expression,
     LiteralExpr,
     LogicalExpr,
+    NotExpr,
     SymbolExpr,
     UnaryExpr,
     ValueRef,
@@ -59,6 +60,7 @@ def nested_negations(levels: int) -> Any:
             ),
             id="logical",
         ),
+        pytest.param(NotExpr(not_op="not", rhs=SymbolExpr(symbol=VariableRef("flag"))), id="not"),
         pytest.param(CallExpr(function="abs", args=[SymbolExpr(symbol=VariableRef("x"))]), id="call"),
     ],
 )
@@ -79,6 +81,7 @@ def test_each_node_round_trips(node: Any):
         ("unary_op", UnaryExpr),
         ("binary_op", BinaryExpr),
         ("compare_op", CompareExpr),
+        ("not_op", NotExpr),
         ("logical_op", LogicalExpr),
         ("function", CallExpr),
     ],
@@ -92,6 +95,7 @@ def test_union_discriminates_on_node_key(key: str, node_type: type):
         "unary_op": {"unary_op": "-", "rhs": operand},
         "binary_op": {"binary_op": "+", "lhs": operand, "rhs": operand},
         "compare_op": {"compare_op": "<", "lhs": operand, "rhs": operand},
+        "not_op": {"not_op": "not", "rhs": operand},
         "logical_op": {"logical_op": "or", "lhs": operand, "rhs": operand},
         "function": {"function": "sqrt", "args": [operand]},
     }
@@ -153,51 +157,33 @@ def test_call_arity_rejected(function: Any, count: int):
         CallExpr(function=function, args=args)
 
 
-def test_logical_not_accepted():
-    """``not`` takes exactly one operand with lhs=None."""
-    expr = LogicalExpr(logical_op="not", lhs=None, rhs=LiteralExpr(value=1))
-    assert expr.logical_op == "not"
-    assert expr.lhs is None
+def test_not_expr_takes_a_single_operand():
+    """``NotExpr`` wraps exactly one operand in ``rhs``, with no ``lhs`` field at all."""
+    node = NotExpr(not_op="not", rhs=LiteralExpr(value=1))
+    assert node.not_op == "not"
+    assert node.rhs == LiteralExpr(value=1)
+    assert not hasattr(node, "lhs")
 
 
-def test_logical_and_accepted():
-    """``and`` takes two operands."""
-    expr = LogicalExpr(
-        logical_op="and",
-        lhs=LiteralExpr(value=1),
-        rhs=LiteralExpr(value=2),
-    )
-    assert expr.logical_op == "and"
-    assert expr.lhs is not None
-    assert expr.rhs is not None
+@pytest.mark.parametrize("logical_op", ["and", "or"])
+def test_logical_expr_takes_two_operands(logical_op: Any):
+    """``and``/``or`` each take exactly ``lhs`` and ``rhs`` -- no arity to validate."""
+    node = LogicalExpr(logical_op=logical_op, lhs=LiteralExpr(value=1), rhs=LiteralExpr(value=2))
+    assert node.logical_op == logical_op
+    assert node.lhs == LiteralExpr(value=1)
+    assert node.rhs == LiteralExpr(value=2)
 
 
-def test_logical_or_accepted():
-    """``or`` takes two operands."""
-    expr = LogicalExpr(
-        logical_op="or",
-        lhs=LiteralExpr(value=1),
-        rhs=LiteralExpr(value=2),
-    )
-    assert expr.logical_op == "or"
+def test_not_op_is_the_only_not_expr_value():
+    """``NotExpr.not_op`` accepts only ``"not"`` -- there is no other unary boolean connective."""
+    with pytest.raises(ValidationError):
+        NotExpr(not_op="and", rhs=LiteralExpr(value=1))  # type: ignore[arg-type]
 
 
-def test_logical_not_rejected_with_lhs():
-    """``not`` rejects a non-None lhs."""
-    with pytest.raises(ValidationError, match="not"):
-        LogicalExpr(logical_op="not", lhs=LiteralExpr(value=1), rhs=LiteralExpr(value=2))
-
-
-def test_logical_and_rejected_without_lhs():
-    """``and`` requires lhs to be set."""
-    with pytest.raises(ValidationError, match="and"):
-        LogicalExpr(logical_op="and", lhs=None, rhs=LiteralExpr(value=1))
-
-
-def test_logical_or_rejected_without_lhs():
-    """``or`` requires lhs to be set."""
-    with pytest.raises(ValidationError, match="or"):
-        LogicalExpr(logical_op="or", lhs=None, rhs=LiteralExpr(value=1))
+def test_logical_op_rejects_not():
+    """``LogicalExpr.logical_op`` no longer accepts ``"not"`` -- that is :class:`NotExpr` now."""
+    with pytest.raises(ValidationError):
+        LogicalExpr(logical_op="not", lhs=LiteralExpr(value=1), rhs=LiteralExpr(value=2))  # type: ignore[arg-type]
 
 
 def test_tree_at_the_depth_limit_builds_and_serializes():
@@ -251,7 +237,7 @@ def test_literal_expr_holds_a_complex_amplitude():
 
 
 def test_exact_serialization_of_mixed_tree_with_warnings_as_errors():
-    """A mixed tree containing all seven node types validates and round-trips exactly.
+    """A mixed tree containing all eight node types validates and round-trips exactly.
 
     Warnings emitted during serialization (a sign of union member mismatch) are treated as errors
     so the test fails if the union picks the wrong member.
@@ -268,7 +254,7 @@ def test_exact_serialization_of_mixed_tree_with_warnings_as_errors():
     tree = LogicalExpr(
         logical_op="and",
         lhs=compare_node,
-        rhs=SymbolExpr(symbol=VariableRef("flag")),
+        rhs=NotExpr(not_op="not", rhs=SymbolExpr(symbol=VariableRef("flag"))),
     )
 
     with warnings.catch_warnings():
@@ -333,9 +319,15 @@ def test_binary_and_compare_expr_do_not_collide():
         ),
         pytest.param(
             "logical_op",
-            {"logical_op": "not", "lhs": None, "rhs": {"value": 1}},
+            {"logical_op": "and", "lhs": {"value": 1}, "rhs": {"value": 2}},
             LogicalExpr,
             id="logical",
+        ),
+        pytest.param(
+            "not_op",
+            {"not_op": "not", "rhs": {"value": 1}},
+            NotExpr,
+            id="not",
         ),
         pytest.param(
             "function",
