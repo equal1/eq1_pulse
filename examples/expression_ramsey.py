@@ -33,12 +33,12 @@ with build_sequence() as seq:
     # Sweep delay time
     with for_("step", range(0, 50)):
         # Pulse amplitude is an expression: parameter times a literal amplitude
-        pi_half = square_pulse(duration="25ns", amplitude=expr(var("scale")) * Amplitude("80mV"))
+        pulse_decl("pi_half", square_pulse(duration="25ns", amplitude=expr(var("scale")) * Amplitude("80mV")))
 
         # Ramsey sequence: pi/2 - delay - pi/2
-        play("q0_drive", pi_half)
+        play("q0_drive", pulse_ref("pi_half"))
         wait("q0_drive", duration=expr(var("step")) * expr(var("tau_step")))
-        play("q0_drive", pi_half)
+        play("q0_drive", pulse_ref("pi_half"))
 
         # Measure
         measure(
