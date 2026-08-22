@@ -5,8 +5,17 @@ tasks, each sized for a single clean session.
 
 **Requires #6 to have landed** — it has. Its plan is not in the tree; the decisions behind the
 `SymbolRef` alias and the notes on what the implementation added to the design are on the issue:
-[design record](https://github.com/equal1/eq1_pulse/issues/6#issuecomment-5371855226). Task 2 below is a one-line alias change *because* #6 already routed every
-read site through `SymbolRef`. Run before that and every widening has to be done twice.
+[design record](https://github.com/equal1/eq1_pulse/issues/6#issuecomment-5371855226). Task 2's sweep is a one-line alias change at the aliased read sites
+*because* #6 already routed them through `SymbolRef`. Run before that and every widening has to be
+done twice.
+
+**[#10 — one wire form per type](https://github.com/equal1/eq1_pulse/issues/10) has also landed,
+after this breakdown was first written**, and it moved ground several tasks stand on. The plan's
+"Revision" section at the top lists what changed and where; the table below the preamble carries the
+same material as traps. The short version: `"10us"` and bare identifiers are no longer wire forms,
+`SymbolValue` was rewritten and lost the complex-voltage dimension, `builder/_coerce.py` is now the
+only place authoring grammars are read, and `test_schema_symmetry.py` holds a tree-wide invariant the
+new models must satisfy. Task 1 grew as a result; task 5 shrank.
 
 **Run them in numeric order.** Each task assumes every lower-numbered task is complete and
 committed. Each leaves the tree green.
@@ -28,7 +37,8 @@ committed. Each leaves the tree green.
 > **Verify.** `./qa/run_all_qa.sh` (pyright + mypy + pytest with coverage). It must pass before you
 > report done. If it passed before your change and fails after, you are not done.
 >
-> **Context.** Read `docs/plans/expressions-plan.md` — the sections named in your task — before
+> **Context.** Read `docs/plans/expressions-plan.md` — its "Revision — what #10 changed here"
+> section in every case, and the sections named in your task — before
 > starting. For what #6 left you, read the code rather than a plan: `SymbolRef` and `ExternalRef` in
 > `models/reference_types.py` (whose docstrings carry the wire-format rule and why it is the one
 > asymmetry in the hierarchy), and `git grep -l SymbolRef src/` for the fields already widened. The
@@ -59,6 +69,22 @@ None of these are decisions to re-open; they are traps with known locations.
 
 ---
 
+## What #10 changed under this plan
+
+Same purpose as the table above, one predecessor newer. These are measured against the landed tree,
+not inferred; each has a plan section that argues it.
+
+| Trap                                                                                                              | Where it bites                                    | Plan |
+| ------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- | ------ |
+| **`SymbolValue` cannot hold an `Amplitude`.** `Amplitude` derives from `ComplexVoltage`, which is not a `Voltage` subclass and is in no dimension registry, so both `SymbolValue` and `ExternalParamValue` reject it *and* its own `model_dump` output `{"mV": (1.0, 2.0)}`. `LiteralExpr.value` inherits the hole. Fixing it has its own trap: `ComplexVoltage` must not go into `_DIMENSION_TAGS`, which also builds the unit-key map, where `V`/`mV` would then collide. | Task 1                                            | §2.4 |
+| **`"10us"` and bare identifiers are rejected by the models.** They are builder authoring sugar now, read only through `builder/_coerce.py`. Any acceptance criterion or test that expects `SquarePulse.model_validate({"duration": "10us"})` to work is describing the pre-#10 tree. | Task 2 → task 3                                  | §3.3 |
+| **`builder/_coerce.py` is the one place the string/dict/zero grammars are read.** `expr("10us")` works only if `expr()` routes strings through `as_symbol_value`. Re-reading the grammar inside `_expressions.py` puts a second copy of it in the tree. | Task 3                                            | §4.1 |
+| **`test_schema_symmetry.py` asserts validation-schema == serialization-schema for every model `get_all_pydantic_models()` finds** — and that reads `openapi_generator.model_modules`. Listing `"expressions"` there is what turns the invariant on for the new nodes, so it belongs with the module, not with the schema task. | Task 1 (moved from task 5)                        | §3.4, §7 |
+| **`UnaryExpr.op` is a single-valued `Literal`, so a default elides it from the wire.** Measured: `op: Literal["-"] = "-"` serializes without `op` at all. Not the discriminator rule — plain `LeanModel` default elision. No `op` or `function` field carries a default. | Task 1                                            | §2.1 |
+| **`ExternalParamValue` is a hand-tagged union, not an alias.** Admitting `Expression` there is a `Tag` entry plus a branch in `_external_param_value_tag`, and it is deliberately *not* part of the mechanical sweep. | Task 2                                            | §3, §8 Q10 |
+
+---
+
 ## Dependency graph
 
 ```text
@@ -72,11 +98,11 @@ other task depends on.
 
 | #  | Task                                                  | Size | Model     | Reasoning | Context     | Touches                                    |
 | -- | ------------------------------------------------------- | ---- | --------- | --------- | ----------- | -------------------------------------------- |
-| 1  | `models/expressions.py` — the node set                | L    | Opus 5    | high      | 200k / ~60k | `models/expressions.py`, `tests/`            |
+| 1  | `models/expressions.py` — the node set, plus the `SymbolValue` fix | L    | Opus 5    | high      | 200k / ~75k | `models/expressions.py`, `models/basic_types.py`, `models/data_ops.py`, `models/pulse_types.py`, `utilities/openapi_generator.py`, `tests/` |
 | 2  | Widen operations to `ValueRef`; rebuild sweep         | M    | Sonnet 5  | high      | 200k / ~60k | `models/`, `tests/`                          |
 | 3  | Builder: `Expr` and its operators                     | M    | Sonnet 5  | high      | 200k / ~45k | `builder/_expressions.py`, `tests/`          |
 | 4  | Builder: leaf checking, acceptance, exports           | M    | Sonnet 5  | medium    | 200k / ~50k | `builder/`, `tests/`                         |
-| 5  | Schema, docs, example                                 | S    | Haiku 4.5 | medium    | 200k / ~30k | `utilities/`, `docs/`, `examples/`, `tests/` |
+| 5  | Schema tag, docs, example                             | S    | Haiku 4.5 | medium    | 200k / ~30k | `utilities/`, `docs/`, `examples/`, `tests/` |
 
 ### Legend
 
@@ -100,74 +126,135 @@ tasks can reasonably be merged and an `L` one should not be.
 
 **Why these assignments.** Task 1 is a mutually recursive discriminated union with forward references
 and `model_rebuild()` ordering — the failure mode is a union silently degrading to `dict`, surfacing
-far from its cause, and nothing in the tree does this yet. That is the Opus case exactly. Task 2 is
-`high` for the same reason one level down: it turns a four-way smart union into a six-way one at
-every pulse parameter, and the regression is a coercion that quietly picks the wrong member. Task 5
-is checklist work. Task 2's working set is large because it spans six model modules at once, not
-because any one file is big.
+far from its cause, and nothing in the tree does this yet. That is the Opus case exactly, and #10
+added a second Opus-shaped piece to it: the `SymbolValue` fix edits a union that seventeen fields
+resolve through, where the wrong tag rule silently reclassifies existing data rather than failing.
+Task 2 is `high` for the same reason one level down: it adds a third branch at every pulse parameter
+and a tag to a hand-written discriminator, and the regression is a value that quietly picks the wrong
+member. Task 5 is checklist work — more so now that the `model_modules` entry moved to task 1. Task
+2's working set is large because it spans six model modules at once, not because any one file is
+big.
 
 ---
 
-## Task 1 — `models/expressions.py`
+## Task 1 — `models/expressions.py`, and the value union it needs
 
-**Read:** plan §2 in full, and §8 Q3/Q4/Q7.
-**Goal:** the expression tree exists, validates, and round-trips. Nothing uses it yet.
+**Read:** plan §2 in full (including §2.4), §3.4, §7, and §8 Q3/Q4/Q7/Q8.
+**Goal:** the expression tree exists, validates, round-trips, and is covered by the tree-wide schema
+invariant. Nothing uses it yet.
+
+Two pieces, in this order. The second is the one the plan is about; the first is a defect in the
+value union it builds on, and building on it first only means fixing it twice.
 
 ### Steps
 
-1. Create `src/eq1_pulse/models/expressions.py` with the seven node types from plan §2.1:
+1. **Make `SymbolValue` able to carry a complex voltage** (plan §2.4). As the tree stands,
+   `SymbolValue` and `ExternalParamValue` both reject an `Amplitude` *and* its own `model_dump`
+   output `{"mV": (1.0, 2.0)}`, because `Amplitude` derives from `ComplexVoltage`, which is not a
+   `Voltage` subclass and appears in no dimension registry.
+
+   - The rule: within a voltage unit key, a real number is a `Voltage` and a `(real, imag)` pair is a
+     `ComplexVoltage`. Two distinct wire shapes, so #10's invariant holds.
+   - The shape test goes in `basic_types.py`, beside `dimension_tag_of` and
+     `dimension_unit_tag_map()` — the two helpers `_symbol_value_tag` (`data_ops.py`) and
+     `_external_param_value_tag` (`pulse_types.py`) share. One edit, both unions.
+   - Add a `complex_voltage`-tagged `ComplexVoltage` member to each union, and widen
+     `SymbolValueLike` / `ExternalParamValueLike` to match.
+   - **Do not add `ComplexVoltage` to `_DIMENSION_TAGS`.** That dict also builds the unit-key →
+     dimension map, and `ComplexVolts`/`ComplexMillivolts` carry the same `V`/`mV` keys as
+     `Volts`/`Millivolts`; adding it there makes every voltage key resolve to whichever was iterated
+     last. The unit-key map stays keyed on the real dimensions.
+   - Correct the docstrings on both unions, which currently name `Amplitude` among the refinements
+     said to be covered by their base dimension.
+
+   Tests, in `tests/eq1lab_pulse/models/test_data_ops.py` and `test_pulse_types.py`: an `Amplitude`
+   instance survives as an `Amplitude`; `{"mV": [1, 2]}` validates to a `ComplexVoltage` and dumps
+   back to the same document; a real `{"mV": 100}` is still a `Voltage`; `{"usec": 3}` still produces
+   exactly one `union_tag_invalid`. The accepted consequence — a real-valued `Amplitude(mV=100)`
+   dumps `{"mV": 100}` and revalidates as `Voltage`, the same narrowing `Duration` → `Time` already
+   gets — is worth its own test so it reads as intended rather than as a bug.
+
+2. Create `src/eq1_pulse/models/expressions.py` with the seven node types from plan §2.1:
    `ExprBase(LeanModel)`, `LiteralExpr`, `SymbolExpr`, `UnaryExpr`, `BinaryExpr`, `CompareExpr`,
-   `LogicalExpr`, `CallExpr`, and the `Expression` discriminated union on `expr_type`.
+   `LogicalExpr`, `CallExpr`, and the `Expression` discriminated union on `expr_type`. (`ExprBase` is
+   the base, not one of the seven.)
 
    `expr_type` is declared **first** in every class — `LeanModel` treats the first single-valued
-   `Literal` field as the discriminator and always serializes it. `op` is multi-valued and is
-   therefore an ordinary field, which is what is wanted.
+   `Literal` field as the discriminator and always serializes it.
 
-2. `LiteralExpr.value` is `SymbolValue`, imported from `data_ops.py` where #6 put it.
-   `SymbolExpr.symbol` is `SymbolRef` from `reference_types.py`. Do not redefine either.
+3. **No `op` or `function` field carries a default.** `op` is multi-valued on four of the five nodes
+   and so is an ordinary field, which is what is wanted — but `UnaryExpr.op` is `Literal["-"]`,
+   single-valued, and `LeanModel`'s ordinary default elision then drops it from the wire entirely:
+   measured, `op: Literal["-"] = "-"` serializes as `{"expr_type": "unary", "operand": …}`. Declare
+   it without a default and test that `model_dump()` contains `op`.
 
-3. `UnaryExpr.op` is `Literal["-"]` **only**. `abs` is a `CallExpr` function, not a unary op
+4. `LiteralExpr.value` is `SymbolValue`, imported from `data_ops.py` where #6 put it and step 1 fixed
+   it. `SymbolExpr.symbol` is `SymbolRef` from `reference_types.py`. Do not redefine either.
+
+5. `UnaryExpr.op` is `Literal["-"]` **only**. `abs` is a `CallExpr` function, not a unary op
    (plan §8 Q3). `LogicalExpr` carries `operands: list[Expression]` and `op: Literal["and", "or", "not"]`.
 
-4. Validators — these three and no others:
+6. Validators — these three and no others:
    - `CallExpr`: `min`/`max` take ≥ 2 args, every other function takes exactly 1.
    - `LogicalExpr`: `not` takes exactly 1 operand, `and`/`or` take ≥ 2.
    - depth: a module constant `MAX_EXPRESSION_DEPTH = 32` and a validator that raises a
-     `ValueError` naming the limit. It must turn what would be a `RecursionError` into a
-     `ValidationError` — test that, do not just assert the constant exists.
+     `ValueError` naming the limit. Note what the cap is *for* (plan §2.3): pydantic-core already
+     turns a deep validation into a `ValidationError`, so do not write the test as "a
+     `RecursionError` became a `ValidationError`" — it was already one. The cap exists because the
+     serializer has no such guard. Test that depth 33 raises `ValidationError`, and that no tree
+     which serializes can exceed the cap.
 
    **No type inference, no unit checking, no simplification.** Plan §0 and §1 say why; a reviewer
    will look for these having crept in.
 
-5. Add `type ValueRef = SymbolRef | Expression` **in this module** (plan §8 Q5 — putting it in
-   `reference_types.py` creates an import cycle) and a `ValueRefLike` beside it.
+7. Add `type ValueRef = SymbolRef | Expression` **in this module** (plan §8 Q5 — putting it in
+   `reference_types.py` creates an import cycle) and a `ValueRefLike` beside it. A plain `|` union,
+   not a callable-discriminator one; §8 Q9 closed that.
 
-6. Handle the recursion: `from __future__ import annotations`, forward references, and an explicit
+8. Handle the recursion: `from __future__ import annotations`, forward references, and an explicit
    `model_rebuild()` per node class at the bottom of the module. Verify by validating a
    depth-3 tree from a plain dict — if a rebuild is missing, that is where it shows.
 
-7. `__all__`, sorted, exporting the seven node types, `Expression`, `ValueRef`, `ValueRefLike` and
-   `MAX_EXPRESSION_DEPTH`.
+9. `__all__`, sorted, exporting the seven node types, `ExprBase`, `Expression`, `ValueRef`,
+   `ValueRefLike` and `MAX_EXPRESSION_DEPTH`.
 
-8. Tests in `tests/eq1lab_pulse/models/test_expressions.py` (new):
-   - each node type constructs and round-trips through `model_dump` → `model_validate`;
-   - the `Expression` union discriminates each `expr_type` correctly;
-   - a depth-3 nested tree round-trips from a plain dict;
-   - `CallExpr` and `LogicalExpr` arity validators accept and reject;
-   - depth 33 raises `ValidationError`, **not** `RecursionError`;
-   - a `SymbolExpr` wrapping an `ExternalRef` round-trips with the `{"ext": ...}` form intact.
+10. **Wire the module into model discovery** (plan §3.4, §7): `"expressions"` into
+    `openapi_generator.model_modules` and `"ExprBase"` into `excluded_base_classes`, in this task
+    rather than task 5. `model_modules` is what `get_all_pydantic_models()` reads, so it is what
+    decides whether `test_schema_symmetry.py` sees these models at all; and without the exclusion a
+    field-less base class appears in the schema the moment the module is listed. The tag-list entry
+    and the generator's own test stay in task 5.
+
+11. Tests in `tests/eq1lab_pulse/models/test_expressions.py` (new):
+    - each node type constructs and round-trips through `model_dump` → `model_validate`;
+    - the `Expression` union discriminates each `expr_type` correctly;
+    - a depth-3 nested tree round-trips from a plain dict;
+    - `CallExpr` and `LogicalExpr` arity validators accept and reject;
+    - `UnaryExpr.model_dump()` contains `op` (step 3);
+    - depth 33 raises `ValidationError`;
+    - a `SymbolExpr` wrapping an `ExternalRef` round-trips with the `{"ext": ...}` form intact;
+    - a `LiteralExpr` holding an `Amplitude` round-trips (step 1's consumer).
+
+    And in `tests/eq1lab_pulse/models/test_schema_symmetry.py`: add one expression node to
+    `_canonical_round_trip_instances()`. The two module-wide tests there pick the rest up on their
+    own once step 10 lands.
 
 ### Acceptance
 
 - `./qa/run_all_qa.sh` passes.
-- No existing test changed.
+- `test_schema_symmetry.py` passes **with the new models in scope** — confirm they are, by checking
+  they appear in `get_all_pydantic_models()`, not by trusting the test to be covering them.
+- No existing test changed, **except** the `SymbolValue` / `ExternalParamValue` tests step 1 extends.
+  If an existing one has to change rather than gain a case, say so in your final message: it means
+  the fix altered a resolution that was previously relied on.
 - `models/expressions.py` imports nothing from `channel_ops`, `pulse_types`, `sequence` or
   `control_flow` — dependencies point one way.
 
 ### Out of scope
 
-Using `Expression` in any operation model. Any builder change. Adding the module to
-`openapi_generator` (task 5).
+Using `Expression` in any operation model, including `ExternalParamValue` — step 1 fixes that union's
+*value* members only; task 2 adds its expression member. Any builder change. The `openapi_generator`
+tag-list entry and its test (task 5).
 
 ---
 
@@ -182,17 +269,23 @@ Using `Expression` in any operation model. Any builder change. Adding the module
    listed in the #6 plan's §2 tables — **both** tables, including the concrete-only fields task 4
    of #6 widened. Same list, same files, no new judgement about what counts as a read site.
 
-2. `ConditionalBase.var` is typed `ValueRef` like the rest, plus a model validator restricting it to
+2. **`ExternalParamValue` is not one of those sites and needs its own edit** (plan §3, §8 Q10). #10
+   spelled its members out with explicit `Tag`s over a hand-written `_external_param_value_tag`, so
+   admitting an `Expression` is a `Tag` entry plus a branch in the tag function — routing a mapping
+   that carries `expr_type`. Test that an expression survives there and that every existing member
+   still resolves as it did.
+
+3. `ConditionalBase.var` is typed `ValueRef` like the rest, plus a model validator restricting it to
    a predicate: a `SymbolRef`, a `CompareExpr`, or a `LogicalExpr`. Arithmetic nodes are rejected
    with a message naming what was passed. Plan §3 consequence 1 and §8 Q2.
 
-3. Run the `model_rebuild()` sweep: every model whose fields now transitively mention `Expression`
+4. Run the `model_rebuild()` sweep: every model whose fields now transitively mention `Expression`
    needs rebuilding. That is `pulse_types`, `channel_ops`, `data_ops`, `external_block`,
    `control_flow`, `sequence`, and `experimental/schedule`. Add a test that imports the package
    fresh and validates one model of each family from a plain dict containing an expression — a
    missed rebuild degrades the union to `dict` silently and this is what catches it.
 
-4. Tests:
+5. Tests:
    - `test_channel_ops.py` / `test_pulse_types.py` — one widened field per family accepts an
      `Expression`;
    - `test_control_flow.py` — `Conditional` accepts `CompareExpr`, `LogicalExpr` and a bare
@@ -203,12 +296,22 @@ Using `Expression` in any operation model. Any builder change. Adding the module
 ### Acceptance
 
 - `./qa/run_all_qa.sh` passes.
-- **The existing coercion tests in `test_pulse_types.py` pass unchanged.** At ordinary typed read
-   sites, `"10us"` is still a `Duration`, `{"ns": 100}` is still a `Duration`, a bare identifier is
-   still a `VariableRef`, and `{"ext": ...}` is still an `ExternalRef`. In `ExternalParamValue`,
-   unit-suffixed strings are pre-coerced, arbitrary strings stay `str`, and references retain their
-   tagged/wrapped JSON forms. The widened unions are the highest regression risk in this plan and
-   these tests are the guard.
+- **The existing coercion tests in `test_pulse_types.py` and `test_authoring_forms.py` pass
+  unchanged.** Adding a third branch at every typed read site is the highest regression risk in this
+  plan, and those files are the guard. What they assert, on the landed tree — do not "fix" any of it:
+
+  | input at a typed read site | resolves to                                                        |
+  | ---------------------------- | -------------------------------------------------------------------- |
+  | `{"ns": 100}`              | `Duration`                                                         |
+  | `{"var": "d"}`             | `VariableRef`                                                      |
+  | `{"ext": "q0.t"}`          | `ExternalRef`                                                      |
+  | `"10us"`                   | **rejected** — a unit-suffixed string left the wire in #10          |
+  | `"my_dur"`                 | **rejected** — a bare identifier is a string, never a reference     |
+
+  In `ExternalParamValue`, arbitrary strings still stay `str`, and every reference retains its
+  tagged JSON form.
+- `test_schema_symmetry.py` still passes: the widened fields must not give any model an input-only
+  wire form.
 
 ### Out of scope
 
@@ -218,7 +321,7 @@ Any builder change. Simplification, evaluation, or type checking of expressions.
 
 ## Task 3 — Builder: `Expr` and its operators
 
-**Read:** plan §4.1, §4.2, and §8 Q1/Q6.
+**Read:** plan §4.1 (including the `_coerce` paragraph), §4.2, and §8 Q1/Q6.
 **Goal:** Python operators build an `Expression` tree. Nothing consumes it yet.
 
 ### Steps
@@ -226,6 +329,13 @@ Any builder change. Simplification, evaluation, or type checking of expressions.
 1. Create `src/eq1_pulse/builder/_expressions.py` with the `Expr` wrapper class and the `expr()`
    entry point. `expr(x)` accepts an `Expr` (identity), a `SymbolRef`, a raw `SymbolValue`, or a
    bare `Expression`, normalizing to `SymbolExpr` / `LiteralExpr` as appropriate.
+
+   **The raw-value branch calls `as_symbol_value` from `builder/_coerce.py`** — a module added by
+   #10, after this breakdown was written, and now the single place the string / dict / zero
+   authoring grammars are read. `"10us"` and `"80mV"` are not wire forms any more; they reach a
+   model only through a constructor or through `_coerce`. So `expr("10us")` works if and only if
+   `expr()` delegates there, and reading the grammar again inside `_expressions.py` puts a second
+   copy of it in the tree.
 
 2. Operators per plan §4.2: `+ - * / %` with their reflected `r`-variants, unary `-`, `abs()`,
    `< <= > >=`, and the methods `.eq()`, `.ne()`, `.and_()`, `.or_()`, `.not_()`, plus `.unwrap()`.
@@ -244,6 +354,11 @@ Any builder change. Simplification, evaluation, or type checking of expressions.
 
 6. Tests in `tests/eq1lab_pulse/test_builder_expressions.py` (new):
    - each operator produces the right node with the right `op`;
+   - `expr("10us")` and `expr("80mV")` produce the `LiteralExpr` the same string produces through
+     `as_symbol_value` — and the authoring-form case goes in
+     `tests/eq1lab_pulse/models/test_authoring_forms.py`, the ledger #10 added for exactly this;
+   - `expr(Amplitude("80mV"))` produces a `LiteralExpr`, which task 1's `SymbolValue` fix is what
+     makes possible;
    - reflected forms: `2 * expr(var("a"))` and `expr(var("a")) * 2` differ only in operand order;
    - `.eq()` / `.ne()` / `.and_()` / `.or_()` / `.not_()`;
    - `expr(expr(x))` is `expr(x)`;
@@ -278,6 +393,20 @@ Wiring `Expr` into the operation builders (task 4). Exporting `expr` (task 4).
    `Expr` (unwrap, walk the leaves, return the `Expression`) and a bare `Expression` model (walk,
    return unchanged). A user deserializing a fragment should not have to re-wrap it.
 
+   Both return `T | SymbolRef` today; they now return `T | ValueRef`. That is the ripple the trap
+   table warns about — #6 had to widen eleven call-site signatures in `_factories.py` and `core.py`
+   before pyright accepted the value being assigned back, and this is the same edit one alias
+   wider.
+
+   **`_coerce_or_ref` is a third function in that chain and the easy one to miss.** Every pulse
+   factory reaches `_validate_or_pass_through` through it, and it decides what to do with the result
+   by `isinstance(resolved, VariableRef | ExternalRef)` — anything else is handed to an `as_*`
+   coercion. An `Expression` falling through there reaches `as_amplitude()`, which is not a type
+   error and not a test failure until someone writes the call. Add `Expression` to that check and
+   widen its return to `T | ValueRef | None`. `square_pulse(amplitude=expr(var("s")) * Amplitude("80mV"))`
+   — the plan's §5 example — is the case that exercises it, so make sure a test covers a pulse
+   factory and not only the operation builders.
+
 3. Export `expr` from `builder/core.py` and from `builder/__init__.py`'s import list and `__all__`,
    both kept sorted.
 
@@ -305,26 +434,37 @@ Docs and the example file (task 5). Adding `expr` to `builder/experimental/`.
 
 ---
 
-## Task 5 — Schema, docs, example
+## Task 5 — Schema tag, docs, example
 
 **Read:** plan §6, §7.
 **Goal:** expressions are visible in the generated schema and documented.
 
+**Two of this task's original three generator edits moved to task 1.** `"expressions"` in
+`model_modules` and `"ExprBase"` in `excluded_base_classes` are what put the new models under
+`test_schema_symmetry.py`, so they belong with the module rather than with its documentation
+(plan §3.4, §7). Expect to find them already there; if they are not, task 1 is incomplete — say so
+rather than adding them here.
+
 ### Steps
 
-1. `utilities/openapi_generator.py` — three explicit edits: `"expressions"` into `model_modules`,
-   `"ExprBase"` into `excluded_base_classes`, and an `{"name": "expressions", "description": ...}`
+1. `utilities/openapi_generator.py` — one edit: an `{"name": "expressions", "description": ...}`
    entry in the tag list.
 
 2. `tests/test_openapi_generator.py` — the seven expression models are present; `ExprBase` is
    absent.
 
-3. `examples/expression_ramsey.py` — the plan's §5 example, made runnable. Check how
-   `tests/test_examples.py` discovers examples before assuming it picks the file up.
+3. `examples/expression_ramsey.py` — the plan's §5 example, made runnable. It imports `Amplitude`
+   from `eq1_pulse.models` (the builder does not export it) and uses it in the `amplitude=`
+   expression, which is the example's point: that literal is what task 1's `SymbolValue` fix
+   unblocked. Check how `tests/test_examples.py` discovers examples before assuming it picks the
+   file up.
 
 4. `docs/source/user_guide/builder_guide.rst` — an "Expressions" section: `expr()` is required (bare
    `var("a") * 2` does not work, and why); `<`/`>` work but `==` does not, use `.eq()`; expressions
-   are recorded, never evaluated or dimension-checked by eq1_pulse.
+   are recorded, never evaluated or dimension-checked by eq1_pulse. Mention that `expr()` reads the
+   same authoring forms the rest of the builder does — `expr("10us")` works, though `"10us"` is not
+   a wire form — and keep that consistent with what #10 already wrote in this guide about strings
+   and quantities.
 
 5. Build the docs (`cd docs && ./generate_html.sh`) and confirm no new Sphinx warnings.
 
