@@ -11,8 +11,10 @@ import pytest
 from pydantic import ValidationError
 
 from eq1_pulse.builder import square_pulse
+from eq1_pulse.builder._expressions import expr
 from eq1_pulse.models import Amplitude, Angle, Duration, Frequency, Phase, Time, Voltage
 from eq1_pulse.models.channel_ops import Wait
+from eq1_pulse.models.expressions import LiteralExpr
 from eq1_pulse.models.pulse_types import SquarePulse
 
 QUANTITIES = (Time, Duration, Angle, Phase, Voltage, Amplitude, Frequency)
@@ -82,3 +84,16 @@ def test_the_authoring_paths_that_remain():
     assert SquarePulse(duration=Duration("10us"), amplitude=Amplitude("100mV")).duration == Duration(us=10)
     with pytest.raises(ValidationError):
         SquarePulse(duration="10us", amplitude="100mV")  # type: ignore[arg-type]
+
+
+def test_expr_reads_the_same_grammar_as_symbol_value_does():
+    """``expr()``'s raw-value branch delegates to ``as_symbol_value`` rather than re-reading the grammar."""
+    duration_literal = expr("10us").unwrap()
+    assert isinstance(duration_literal, LiteralExpr)
+    assert isinstance(duration_literal.value, Time)
+    assert duration_literal.value == Time("10us")
+
+    voltage_literal = expr("80mV").unwrap()
+    assert isinstance(voltage_literal, LiteralExpr)
+    assert isinstance(voltage_literal.value, Voltage)
+    assert voltage_literal.value == Voltage("80mV")

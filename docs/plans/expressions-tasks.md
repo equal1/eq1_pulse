@@ -100,7 +100,7 @@ other task depends on.
 | -- | ------------------------------------------------------- | ---- | --------- | --------- | ----------- | -------------------------------------------- |
 | 1 ✅ | `models/expressions.py` — the node set, plus the `SymbolValue` fix | L    | Opus 5    | high      | 200k / ~75k | `models/expressions.py`, `models/basic_types.py`, `models/data_ops.py`, `models/pulse_types.py`, `utilities/openapi_generator.py`, `tests/` |
 | 2 ✅ | Widen operations to `ValueRef`; rebuild sweep         | M    | Sonnet 5  | high      | 200k / ~60k | `models/`, `tests/`                          |
-| 3  | Builder: `Expr` and its operators                     | M    | Sonnet 5  | high      | 200k / ~45k | `builder/_expressions.py`, `tests/`          |
+| 3 ✅ | Builder: `Expr` and its operators                     | M    | Sonnet 5  | high      | 200k / ~45k | `builder/_expressions.py`, `tests/`          |
 | 4  | Builder: leaf checking, acceptance, exports           | M    | Sonnet 5  | medium    | 200k / ~50k | `builder/`, `tests/`                         |
 | 5  | Schema tag, docs, example                             | S    | Haiku 4.5 | medium    | 200k / ~30k | `utilities/`, `docs/`, `examples/`, `tests/` |
 
@@ -363,7 +363,10 @@ Any builder change. Simplification, evaluation, or type checking of expressions.
 
 ---
 
-## Task 3 — Builder: `Expr` and its operators
+## Task 3 — Builder: `Expr` and its operators — **done**
+
+**Status:** done, 2026-08-22. QA green (pyright 0, mypy clean, 987 tests). As built, matching the
+acceptance criteria.
 
 **Read:** plan §4.1 (including the `_coerce` paragraph), §4.2, and §8 Q1/Q6.
 **Goal:** Python operators build an `Expression` tree. Nothing consumes it yet.
