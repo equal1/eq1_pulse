@@ -147,20 +147,68 @@ call this, once, in their existing `handler.mode == "serialization"` branch, to 
 needs no schema override of its own — every wrapped-value and reference model gets a real output
 schema from two call sites total, zero per-subclass declarations.
 
-**Step 2 — publish both modes.** `generate_openapi_schema()` takes a new
-`separate_input_output_schemas` parameter (default `True`, matching FastAPI's option of the same
-name) that requests both `"validation"` and `"serialization"` for every model instead of only
-`"validation"`. `models_json_schema()` collapses a model to one definition when the two modes agree
-and splits it into `<Model>-Input` / `<Model>-Output` only where they actually differ — this is
-pydantic's own behaviour, not something this codebase implements.
+**Step 2 — publish both modes.** `generate_openapi_schema()` grew a `separate_input_output_schemas`
+parameter (default `True`, matching FastAPI's option of the same name) that requested both
+`"validation"` and `"serialization"` for every model instead of only `"validation"`.
+`models_json_schema()` collapses a model to one definition when the two modes agree and splits it
+into `<Model>-Input` / `<Model>-Output` only where they actually differ — this is pydantic's own
+behaviour, not something this codebase implements.
 
 That splitting cascades: any model that *contains* a model whose modes differ anywhere in its field
-tree differs too, once nested. Measured on the full model set, **82 of ~100 top-level models** end
-up split and `components.schemas` grows from 91 to 182 entries. This is real and correctly
-describes eq1_pulse's actual accepted-input/emitted-output asymmetry, not an artifact — but it is a
-substantial, visible change to the published document's shape and component names, which is why
-it is a CLI flag (`--separate-input-output-schemas` / `--no-separate-input-output-schemas` on
-`python -m eq1_pulse.utilities.openapi_generator`) rather than an unconditional change.
+tree differs too, once nested. Measured on the full model set at the time, **82 of ~100 top-level
+models** ended up split and `components.schemas` grew from 91 to 182 entries. This looked like a
+real, substantial asymmetry between what eq1_pulse accepts and what it emits — enough to gate behind
+a CLI flag (`--separate-input-output-schemas` / `--no-separate-input-output-schemas`) rather than
+publish unconditionally.
+
+It was not: every one of those 82 splits traced back to two remaining defects, not to genuine
+input/output asymmetry.
+
+**Defect A — `LeanModel`'s serialization-mode rebuild was incomplete.** The hook restored
+`type`/`properties`/`required` by hand but not `title`, `description`, `additionalProperties`, or
+per-field `title`s, so *every* `LeanModel` subclass (the great majority of `models/`) differed from
+its own validation-mode schema on those keys alone, with no actual difference in accepted vs.
+emitted shape behind it. The fix does not hand-rebuild anything: the `handler: GetJsonSchemaHandler`
+passed into `__get_pydantic_json_schema__` carries an undocumented but stable
+`generate_json_schema` attribute — the live `GenerateJsonSchema` instance running the whole
+document's generation pass — and calling its `model_schema()` method directly on the model's own
+`"model"` core-schema node reproduces pydantic's complete default object schema (every key an
+override-free model would have had), bypassing the hook-dispatch that would otherwise recurse back
+into this very method:
+
+```python
+@classmethod
+def __get_pydantic_json_schema__(cls, core_schema: CoreSchema, handler: GetJsonSchemaHandler) -> JsonSchemaValue:
+    if handler.mode != "serialization":
+        return handler(core_schema)
+    generator = handler.generate_json_schema
+    return generator.model_schema(_find_model_schema(core_schema))
+```
+
+`_find_model_schema()` walks `core_schema` down through the wrapper layers each
+`@model_validator`/`@model_serializer` and generic parameterization adds, to the one actual
+`"model"` node `model_schema()` expects.
+
+**Defect B — a handful of `StrEnum` fields carried a stray `PlainSerializer(str)`.**
+(`Discriminate.compare`/`.project`, `Store.mode`, `ScheduledOperation.ref_pt`/`.ref_pt_new`.) A
+`PlainSerializer(callable)` with no declared `return_type` collapses its field's serialization-mode
+schema to a bare type-inferred fallback (`{"type": "string"}`) instead of the enum's own `$ref` —
+the same "no declared return type discards schema information" failure mode as Defect A's cause and
+§5's `@model_serializer` rule, occurring at the field level via `PlainSerializer` instead of the
+model level via `@model_serializer`. The serializers were also unnecessary on their own terms: a
+`StrEnum` field serializes to its plain string value in JSON mode with no serializer at all: only
+`.model_dump()` (Python mode) is affected, returning the enum member instead of a `str`, which
+nothing in the codebase depends on. Removing the five `PlainSerializer(str)` wrappers fixed the
+schema and simplified the field declarations.
+
+With both fixed, **the `-Input`/`-Output` split no longer occurs for any model** — every model's
+validation and serialization schemas are identical (`ASYMMETRIC_MODELS` in
+`test_schema_symmetry.py` is asserted empty; see the round-trip test alongside it). The
+`separate_input_output_schemas` parameter and its CLI flag were therefore removed:
+`generate_openapi_schema()` now always requests `"validation"` mode only, which is the same
+document either mode would have produced, and `components.schemas` has exactly one definition per
+model, under its plain name.
+
 
 ## 5. Rules of thumb for this codebase
 
@@ -180,3 +228,18 @@ it is a CLI flag (`--separate-input-output-schemas` / `--no-separate-input-outpu
   `__get_pydantic_json_schema__`. Reuse the handler passed into the hook rather than a fresh
   `TypeAdapter(...).json_schema()` call: the handler shares the batch's `$defs` collection, so refs
   to already-registered types are reused instead of duplicated under a second name.
+- The same "no declared return type loses schema information" failure applies to
+  `PlainSerializer(callable)` on an individual field, not just to `@model_serializer` on a whole
+  model: without `return_type`, the field's serialization-mode schema falls back to a bare
+  type-inferred schema instead of describing what the field actually is (e.g. an enum's `$ref`).
+  Prefer not adding the serializer at all when the annotated type already serializes correctly on
+  its own — a `StrEnum` field, for instance, needs no `PlainSerializer` to emit a plain JSON string.
+- `handler.generate_json_schema` (on the `GetJsonSchemaHandler` passed into
+  `__get_pydantic_json_schema__`) is the live `GenerateJsonSchema` instance running the whole
+  document's generation pass — undocumented but stable through pydantic 2.13. Calling one of its
+  type-specific methods directly (e.g. `.model_schema(model_core_schema_node)`) reproduces
+  pydantic's exact default schema for that node, bypassing the hook-dispatch that would otherwise
+  recurse back into the very hook calling it. This is the general escape hatch for "rebuild the
+  default schema pydantic would have generated with no custom hook present," rather than
+  hand-restoring individual keys (`title`, `description`, `additionalProperties`, ...) one at a
+  time.

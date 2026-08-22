@@ -16,7 +16,7 @@ from collections.abc import Iterable
 from enum import StrEnum
 from typing import TYPE_CHECKING, Annotated, ClassVar, Literal, TypedDict, Unpack, overload
 
-from pydantic import ConfigDict, Discriminator, PlainSerializer
+from pydantic import Discriminator
 
 from ..base_models import FrozenModel, LeanModel
 from ..basic_types import Time
@@ -48,7 +48,7 @@ class RelTime(Time):
     if TYPE_CHECKING:
 
         @overload
-        def __init__(self, _: Literal[0], /): ...
+        def __init__(self, _: Literal[0] | str, /): ...
 
         @overload
         def __init__(self, /, *, s: float): ...
@@ -105,9 +105,9 @@ class ScheduledOperation(LeanModel, FrozenModel):
     """Relative time from the reference point."""
     ref_op: str | None = None
     """Name of the reference operation."""
-    ref_pt: Annotated[RefPt, PlainSerializer(str)] | None = None
+    ref_pt: RefPt | None = None
     """Reference point on the reference operation."""
-    ref_pt_new: Annotated[RefPt, PlainSerializer(str)] | None = None
+    ref_pt_new: RefPt | None = None
     """Reference point on the new operation."""
 
     op: Schedulable
@@ -123,8 +123,10 @@ class Schedule(SequenceBase[ScheduledOperation]):
     # Lets eq1_pulse.builder._state detect context kind without importing this class.
     _context_kind: ClassVar[Literal["schedule"]] = "schedule"
 
-    def __init__(self, items: Iterable[ScheduledOperation] = (), **data):  # noqa: D107
-        super().__init__(items=items, **data)
+    if TYPE_CHECKING:  # mypy food: see the same restatement on OpSequence
+        root: list[ScheduledOperation]
+
+        def __init__(self, items: Iterable[ScheduledOperation] = (), /, **data): ...  # noqa: D107
 
     def add_op(self, op: Schedulable, **data: Unpack[OpScheduleDict]) -> ScheduledOperation:
         """Add a scheduled operation to the schedule.
@@ -160,8 +162,6 @@ class Schedule(SequenceBase[ScheduledOperation]):
         :type ref_pt_new: RefPt | None
         """
         return ScheduledOperation(op=op, **data)
-
-    model_config = ConfigDict(extra="forbid")
 
 
 if TYPE_CHECKING:

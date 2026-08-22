@@ -8,6 +8,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Final, TypedDict
 
+from ...models.experimental.schedule import RelTime
+from .._coerce import as_quantity
+
 if TYPE_CHECKING:
     from ...models.experimental.schedule import RefPtLike, RelTimeLike, ScheduledOperation
 
@@ -99,8 +102,12 @@ def resolve_schedule_params(params: ScheduleParams) -> dict[str, Any]:
     if "ref_op" in resolved and isinstance(resolved["ref_op"], OperationToken):
         resolved["ref_op"] = resolved["ref_op"].name
 
-    # Remove rel_time if it's 0 (will use default None)
-    if "rel_time" in resolved and resolved["rel_time"] == 0:
-        del resolved["rel_time"]
+    # Remove rel_time if it's 0 (will use default None), and read the authoring forms of the rest
+    # here rather than at the model: ScheduledOperation.rel_time takes the canonical object only.
+    if "rel_time" in resolved:
+        if resolved["rel_time"] == 0 or resolved["rel_time"] is None:
+            resolved.pop("rel_time")
+        else:
+            resolved["rel_time"] = as_quantity(RelTime, resolved["rel_time"])
 
     return resolved

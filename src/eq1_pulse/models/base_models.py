@@ -8,16 +8,17 @@ Inheriting from these models ensures consistent behavior across the codebase.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Mapping
 from functools import cache
-from typing import TYPE_CHECKING, Any, Final, Literal, get_args, override
+from typing import TYPE_CHECKING, Any, Literal, Self, get_args
 
-from pydantic import BaseModel, ConfigDict, GetJsonSchemaHandler, TypeAdapter, model_serializer, model_validator
+from pydantic import BaseModel, ConfigDict, GetJsonSchemaHandler, RootModel, TypeAdapter, model_serializer
 from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import CoreSchema, PydanticUndefinedType
 
+from .arithmetic import get_unit_value_field_name_and_type, parse_unit_suffixed_value
+
 if TYPE_CHECKING:
-    from pydantic.config import ExtraValues
     from pydantic.fields import FieldInfo
 
 
@@ -28,7 +29,6 @@ __all__ = (
     "LeanModel",
     "NoExtrasModel",
     "WrappedValueModel",
-    "WrappedValueOrZeroModel",
 )
 
 
@@ -61,8 +61,8 @@ def field_json_schemas(cls: type[BaseModel], handler: GetJsonSchemaHandler) -> d
     declared ``return_type`` gives pydantic nothing to derive a serialization-mode schema from, so
     ``handler(core_schema)`` collapses to ``{}`` in that mode regardless of what the fields actually
     contain. Schema hooks that describe the serializer's output in terms of the underlying fields
-    (unwrapping, as :class:`WrappedValueModel` and :class:`~.reference_types.Reference` do) build it
-    from the field annotations directly instead, through this function.
+    (unwrapping, as :class:`~.reference_types.Reference` does) build it from the field annotations
+    directly instead, through this function.
 
     Reusing *handler* rather than a fresh :class:`~pydantic.TypeAdapter` schema generation keeps the
     result registered in the same ``$defs``/``components.schemas`` collection as the rest of the
@@ -76,19 +76,40 @@ def field_json_schemas(cls: type[BaseModel], handler: GetJsonSchemaHandler) -> d
     return {name: handler(TypeAdapter(field.annotation).core_schema) for name, field in cls.model_fields.items()}
 
 
-class WrappedValueModel(NoExtrasModel):
-    """A :class:`NoExtrasModel` that wraps a single value in a field named 'value'."""
+def _find_model_schema(core_schema: CoreSchema) -> dict[str, Any]:
+    """Find the ``model`` core schema nested inside *core_schema*.
 
-    value: Any
+    A model's core schema is wrapped in one "model" layer per ``@model_validator``/``@model_serializer``
+    decorator and per generic parameterization, each nesting the next schema one level deeper under
+    its own ``schema`` key. This walks down through them to the one actual ``model`` schema.
 
-    @model_validator(mode="before")
-    @classmethod
-    def _wrap_validator(cls, data: Any) -> Any:
-        return {"value": data}
+    :param core_schema: a model's core schema, however many wrapper layers deep.
+    :return: the ``model`` core schema.
+    :raises KeyError: if no ``model`` schema is found.
+    """
+    schema: Any = core_schema
+    while isinstance(schema, dict):
+        if schema.get("type") == "model":
+            return schema
+        schema = schema.get("schema")
 
-    @model_serializer
-    def _wrap_serializer(self) -> Any:
-        return self.value
+    raise KeyError("no model schema found")
+
+
+class WrappedValueModel(RootModel[Any]):
+    """A :class:`~pydantic.RootModel` wrapping a single value, typically a quantity's unit model.
+
+    The wrapped value *is* the wire form, in both directions and in both schema modes: there is no
+    ``{"value": ...}`` object to unwrap and nothing to describe by hand. Subclasses narrow
+    :attr:`root` to the union of units they accept.
+
+    Unlike the rest of the hierarchy here this does not descend from :class:`NoExtrasModel`:
+    pydantic rejects ``extra`` on a root model, which has no field namespace for an extra key to
+    land in. The unit models it wraps are ordinary :class:`FrozenModel` subclasses, and it is
+    their ``extra="forbid"`` that makes each one's single key exclusive.
+    """
+
+    root: Any
 
     def __repr__(self):  # noqa: D105
         return f"{self.__class__.__name__}({', '.join(k + '=' + repr(v) for k, v in self.model_dump().items())})"
@@ -96,76 +117,95 @@ class WrappedValueModel(NoExtrasModel):
     def __init__(self, *args, **kwargs):
         """Initialize the WrappedValueModel.
 
-        Accepts either keyword arguments corresponding to the model fields, or the
-        literal ``0`` as a single positional argument (e.g. ``Duration(0)``).
+        Accepts either keyword arguments naming a unit (``Duration(us=10)``), or a single
+        positional argument in one of the authoring forms: the literal ``0``, a
+        ``"<number><unit>"`` string (``Duration("10us")``), or an already-built unit model.
 
-        A single positional argument is deliberately *not* accepted for any other
-        value: with no unit attached, ``Duration(5)`` reads as "5" but silently means
-        5 seconds, and ``Amplitude(1)`` silently means 1 Volt. 0 is exempt because it
-        is the one value that means the same thing in every unit.
+        A positional *number* other than ``0`` is deliberately not accepted: with no unit
+        attached, ``Duration(5)`` reads as "5" but silently means 5 seconds, and ``Amplitude(1)``
+        silently means 1 Volt. 0 is exempt because it is the one value that means the same thing
+        in every unit.
+
+        These are authoring conveniences, not wire forms, and they stay that way because pydantic
+        routes only a *mapping* input through a custom ``__init__``. A bare ``0``, a string or a
+        unit model reaches root validation directly, never here -- and root validation takes the
+        ``{unit: number}`` object and nothing else. What you can write is therefore wider than
+        what the wire carries, and the schema remains the truth about the latter.
 
         :raises TypeError: If more than one positional argument is given, or a
             positional argument is combined with keyword arguments
-        :raises ValueError: If the single positional argument is not the literal ``0``
+        :raises ValueError: If the single positional argument is not one of the authoring forms
         """
         if args:
             if len(args) != 1:
                 raise TypeError(f"expected at most 1 positional argument, got {len(args)}")
             if kwargs:
                 raise TypeError("cannot combine a positional argument with keyword arguments")
-            if args[0] != 0:
-                raise ValueError(
-                    f"{args[0]!r} is not a valid positional argument for {self.__class__.__name__}(); "
-                    f"only the literal 0 is accepted positionally. Use a keyword argument instead, "
-                    f"e.g. {self.__class__.__name__}({get_unit_of_zero(self.__class__)}={args[0]!r})."
-                )
-            super().__init__(**{get_unit_of_zero(self.__class__): args[0]})
+            super().__init__(self._authoring_form(args[0]))
             return
 
         super().__init__(**kwargs)
 
     @classmethod
-    def __get_pydantic_json_schema__(cls, core_schema: CoreSchema, handler: GetJsonSchemaHandler) -> JsonSchemaValue:
-        """Describe the model by its wrapped value rather than by the ``{"value": ...}`` object.
+    def _authoring_form(cls, value: Any) -> Any:
+        """Map a single positional constructor argument to the canonical wire form.
 
-        The object shape is an internal representation that is never valid on the wire in either
-        direction: :meth:`_wrap_validator` wraps whatever it is given, so an explicit
-        ``{"value": ...}`` would be wrapped a second time and rejected, and :meth:`_wrap_serializer`
-        unwraps it again on the way out.
-
-        :param core_schema: the core schema the JSON schema is generated from.
-        :param handler: the handler producing the default JSON schema.
-        :return: the JSON schema, with the definition replaced by the wrapped value's schema.
+        :param value: The positional argument as given.
+        :return: ``value`` itself if it is already canonical, or the ``{unit: number}`` object it
+            denotes.
+        :raises ValueError: If *value* is a number other than ``0``, or a string that does not
+            name one of :meth:`_unit_classes`' units.
         """
-        json_schema = handler(core_schema)
-        target = handler.resolve_ref_schema(json_schema)
+        if isinstance(value, str):
+            return parse_unit_suffixed_value(value, cls._unit_classes())
+        if value == 0:
+            return {cls._zero_unit(): 0}
+        if isinstance(value, BaseModel | Mapping):
+            return value
 
-        if handler.mode == "serialization":
-            # _wrap_serializer has no declared return_type, so handler(core_schema) has already
-            # collapsed target to {} here; rebuild it from the value field's own annotation instead.
-            if "value" not in cls.model_fields:
-                return json_schema
-            replacement = dict(field_json_schemas(cls, handler)["value"])
-            if (title := target.get("title")) is not None:
-                replacement["title"] = title
-            target.clear()
-            target.update(replacement)
-            return json_schema
+        raise ValueError(
+            f"{value!r} is not a valid positional argument for {cls.__name__}(); "
+            f"only the literal 0 is accepted positionally. Use a keyword argument instead, "
+            f"e.g. {cls.__name__}({cls._zero_unit()}={value!r})."
+        )
 
-        if (
-            (properties := target.get("properties")) is None
-            or len(properties) != 1
-            or not isinstance(value_schema := properties.get("value"), dict)
-        ):
-            return json_schema
+    @classmethod
+    def parse(cls, text: str) -> Self:
+        """Read a ``"<number><unit>"`` string as this quantity, e.g. ``Duration.parse("10us")``.
 
-        replacement = dict(value_schema)
-        if (title := target.get("title")) is not None:
-            replacement["title"] = title
+        **This is not a wire form.** ``model_validate`` takes the ``{unit: number}`` object and
+        nothing else, in either direction; the suffixed string is an authoring convenience, and
+        this method is where it is written down. The units it accepts are the ones :attr:`root`
+        declares, read from the same registry :class:`~.units.UnitDiscriminator` reads.
 
-        target.clear()
-        target.update(replacement)
-        return json_schema
+        :param text: The string to read, e.g. ``"10us"`` or ``"5 GHz"``.
+        :return: The quantity *text* denotes.
+        :raises ValueError: If *text* is not a number followed by one of this quantity's units,
+            or the result fails this quantity's own validation.
+        """
+        return cls.model_validate(parse_unit_suffixed_value(text, cls._unit_classes()))
+
+    @classmethod
+    @cache
+    def _unit_classes(cls) -> tuple[type, ...]:
+        """The unit models :attr:`root` accepts, in the order the subclass declares them.
+
+        :return: The members of the narrowed ``root`` union, empty for an unnarrowed base.
+        """
+        return get_args(cls.model_fields["root"].annotation)
+
+    @classmethod
+    def _zero_unit(cls) -> str:
+        """The unit a bare ``0`` is stored in: the first one :attr:`root` declares.
+
+        Zero means the same thing in every unit, so which one it is stored in is a presentation
+        choice, and the first declared unit is each quantity's base unit -- seconds, degrees,
+        volts, hertz. Deriving it means a quantity declares its units once and nowhere else.
+
+        :return: The name of the first declared unit's value field.
+        :raises IndexError: If called on a base that has not narrowed ``root`` to a unit union.
+        """
+        return get_unit_value_field_name_and_type(cls._unit_classes()[0])[0]
 
 
 class LeanModel(NoExtrasModel):
@@ -192,6 +232,36 @@ class LeanModel(NoExtrasModel):
         return {k: v for k, v in wrapped(self).items() if not is_eq(getattr(self, k), self._default_value_of(k))}
 
     @classmethod
+    def __get_pydantic_json_schema__(cls, core_schema: CoreSchema, handler: GetJsonSchemaHandler) -> JsonSchemaValue:
+        """Rebuild the serialization-mode schema as if there were no custom serializer at all.
+
+        :meth:`_wrap_serializer` is a plain ``@model_serializer(mode="wrap")`` with no declared
+        ``return_type``, so ``handler(core_schema)`` has nothing to derive an output schema from
+        and collapses to ``{}`` in serialization mode. Validation mode is untouched.
+
+        Eliding a field that equals its default does not change what the schema says -- a
+        defaulted field is already optional in both modes -- so the rebuilt schema is the
+        ordinary object schema pydantic would have generated with no ``model_serializer`` present,
+        not an attempt to encode the elision. That means the same ``title``, ``description``,
+        ``additionalProperties`` and per-field ``title`` entries validation mode carries, built by
+        the same code that builds them there: ``handler`` wraps the very
+        :class:`~pydantic.json_schema.GenerateJsonSchema` instance running this document's whole
+        generation pass, reachable via its (undocumented but stable) ``generate_json_schema``
+        attribute, and its ``model_schema`` method is what every plain model's object schema
+        already goes through -- called here directly, bypassing the hook dispatch that would
+        otherwise recurse back into this very method.
+
+        :param core_schema: the core schema the JSON schema is generated from.
+        :param handler: the handler producing the default JSON schema.
+        :return: the JSON schema, rebuilt from the field annotations in serialization mode.
+        """
+        if handler.mode != "serialization":
+            return handler(core_schema)
+
+        generator = handler.generate_json_schema  # type: ignore[attr-defined]
+        return generator.model_schema(_find_model_schema(core_schema))  # type: ignore[no-any-return]
+
+    @classmethod
     @cache
     def _non_discriminator_fields(cls) -> dict[str, FieldInfo]:
         fields = cls.model_fields
@@ -210,139 +280,17 @@ class LeanModel(NoExtrasModel):
         return fields[field_name].get_default(call_default_factory=True) if field_name in fields else None
 
 
-class FrozenWrappedValueModel(WrappedValueModel, FrozenModel):
-    """A :class:`WrappedValueModel` that is also frozen."""
+class FrozenWrappedValueModel(WrappedValueModel):
+    """A :class:`WrappedValueModel` that is also frozen.
 
-    pass
+    Frozen by configuration rather than by inheriting :class:`FrozenModel`: the latter carries
+    ``extra="forbid"``, which pydantic rejects on a root model.
+    """
+
+    model_config = ConfigDict(frozen=True)
 
 
 class FrozenLeanModel(LeanModel, FrozenModel):
     """A frozen model that is also a lean model."""
 
     pass
-
-
-_LiteralZeroTypeAdapter: Final[TypeAdapter[Literal[0]]] = TypeAdapter(Literal[0])
-
-_unit_of_zero: dict[type, str] = {}
-
-
-def register_unit_of_zero[T: type](unit: str) -> Callable[[T], T]:
-    """Register a unit string for the zero value of a specific type.
-
-    This decorator is used to provide appropriate handling of the value 0.
-
-    :param unit: The unit string associated with the zero value of the type.
-
-    :return: A decorator function that registers the unit for the decorated class.
-
-    Example:
-
-    .. code-block:: python
-
-        @register_unit_of_zero("m")
-        class Distance(WrappedValueOrZeroModel):
-            value: Meters | Kilometers | Millimeters
-    """
-
-    def decorator(cls: T) -> T:
-        _unit_of_zero[cls] = unit
-        return cls
-
-    return decorator
-
-
-def get_unit_of_zero(type_: type) -> str:
-    """Get the registered unit string for the zero value of a specific type.
-
-    :param type_: The type for which to get the registered unit.
-    :return: The unit string if registered
-    :raise KeyError: If no unit is registered for the type.
-
-    If the class is not registered but a base class is, the base class's unit  will be returned,
-    and the class will be registered with the same unit.
-    (Base classes will be traversed in MRO order and the first match will be used.)
-    """
-    if type_ in _unit_of_zero:
-        return _unit_of_zero[type_]
-    for base_type in type_.__mro__:
-        if unit := _unit_of_zero.get(base_type):
-            _unit_of_zero[type_] = unit
-            return unit
-    raise KeyError(f"No unit registered for type {type_}")
-
-
-class WrappedValueOrZeroModel(WrappedValueModel):
-    """A WrappedValueModel that also accepts the literal integer 0 as valid input.
-
-    This is a mixin class and will not treat 0 in the ``__init__`` method specially.
-    It is the responsibility of the derived class to handle that.
-    """
-
-    @classmethod
-    def __get_pydantic_json_schema__(cls, core_schema: CoreSchema, handler: GetJsonSchemaHandler) -> JsonSchemaValue:
-        """Add the literal ``0`` to the accepted input forms.
-
-        Zero is accepted in place of a value in any unit, but it is never produced: it is stored in
-        the unit registered by :func:`register_unit_of_zero` and serialized in that unit. It
-        therefore belongs to the validation schema only.
-
-        :param core_schema: the core schema the JSON schema is generated from.
-        :param handler: the handler producing the default JSON schema.
-        :return: the JSON schema, with the literal ``0`` added when describing accepted input.
-        :see: :meth:`WrappedValueModel.__get_pydantic_json_schema__` for the unwrapping this
-            builds on.
-        """
-        json_schema = super().__get_pydantic_json_schema__(core_schema, handler)
-        if handler.mode == "serialization":
-            return json_schema
-
-        target = handler.resolve_ref_schema(json_schema)
-        if not target:
-            return json_schema
-
-        zero_schema = _LiteralZeroTypeAdapter.json_schema()
-        if isinstance(any_of := target.get("anyOf"), list):
-            any_of.insert(0, zero_schema)
-            return json_schema
-
-        title = target.pop("title", None)
-        value_schema = dict(target)
-        target.clear()
-        target["anyOf"] = [zero_schema, value_schema]
-        if title is not None:
-            target["title"] = title
-
-        return json_schema
-
-    @model_validator(mode="before")
-    @classmethod
-    def _model_validate(cls, value: Any) -> Any:
-        if value == 0:
-            return {get_unit_of_zero(cls): 0}
-
-        return value
-
-    @classmethod
-    @override
-    def model_validate_strings(
-        cls,
-        obj: Any,
-        *,
-        strict: bool | None = None,
-        extra: ExtraValues | None = None,
-        context: Any | None = None,
-        by_alias: bool | None = None,
-        by_name: bool | None = None,
-    ) -> Any:
-        if isinstance(obj, str) and obj.strip() == "0":
-            obj = {get_unit_of_zero(cls): 0}
-
-        return super().model_validate_strings(
-            obj,
-            strict=strict,
-            extra=extra,
-            context=context,
-            by_alias=by_alias,
-            by_name=by_name,
-        )

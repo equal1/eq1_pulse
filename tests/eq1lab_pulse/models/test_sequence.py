@@ -74,7 +74,7 @@ def test_iteration():
     play = Play(channel="ch1", pulse=pulse)
     body = OpSequence([play])
     range_obj = Range(start=0, stop=5, step=1)
-    it = Iteration(var="i", items=range_obj, body=body)
+    it = Iteration(var=VariableRef("i"), items=range_obj, body=body)
     assert it.var == "i"
     assert it.items == range_obj
     assert it.body == body
@@ -85,7 +85,7 @@ def test_conditional():
     pulse = SquarePulse(duration={"ns": 100}, amplitude={"V": 1.0})
     play = Play(channel="ch1", pulse=pulse)
     body = OpSequence([play])
-    cond = Conditional(var="flag", body=body)
+    cond = Conditional(var=VariableRef("flag"), body=body)
     assert cond.var == "flag"
     assert cond.body == body
 
@@ -136,9 +136,11 @@ def test_nested_sequences():
 
 
 def test_sequence_validation():
-    """Test sequence validation."""
+    """A sequence's wire form is the array itself -- the old ``{"items": [...]}`` object is not one."""
     with pytest.raises(ValidationError):
-        OpSequence(items=None)
+        OpSequence.model_validate(None)
+    with pytest.raises(ValidationError):
+        OpSequence.model_validate({"items": []})
 
 
 def test_repetition_validation():
@@ -148,27 +150,31 @@ def test_repetition_validation():
 
 def test_iteration_multiple_variables_validation_errors():
     with pytest.raises(ValidationError):
-        Iteration(var="i", items=[Range(start=0, stop=5, step=1)], body=OpSequence([]))
+        Iteration(var=VariableRef("i"), items=[Range(start=0, stop=5, step=1)], body=OpSequence([]))
 
     with pytest.raises(ValidationError):
-        Iteration(var=["i"], items=Range(start=0, stop=5, step=1), body=OpSequence([]))
+        Iteration(var=[VariableRef("i")], items=Range(start=0, stop=5, step=1), body=OpSequence([]))
 
     with pytest.raises(ValidationError):
-        Iteration(var=["s"], items=["str"], body=OpSequence([]))
+        Iteration(var=[VariableRef("s")], items=["str"], body=OpSequence([]))
 
     with pytest.raises(ValidationError):
-        Iteration(var="s", items=[["str"]], body=OpSequence([]))
+        Iteration(var=VariableRef("s"), items=[["str"]], body=OpSequence([]))
 
     with pytest.raises(ValidationError):
-        Iteration(var=["i", "j"], items=[Range(start=0, stop=5, step=1)], body=OpSequence([]))
+        Iteration(var=[VariableRef("i"), VariableRef("j")], items=[Range(start=0, stop=5, step=1)], body=OpSequence([]))
 
     with pytest.raises(ValidationError):
-        Iteration(var=["i", "j"], items=[Range(start=0, stop=5, step=1), [1, 2]], body=OpSequence([]))
+        Iteration(
+            var=[VariableRef("i"), VariableRef("j")],
+            items=[Range(start=0, stop=5, step=1), [1, 2]],
+            body=OpSequence([]),
+        )
 
 
 def test_iteration_multiple_variables_construction():
     iter_obj = Iteration(
-        var=["i", "j", "k", "s"],
+        var=[VariableRef("i"), VariableRef("j"), VariableRef("k"), VariableRef("s")],
         items=[[0, 1, 2], Range(start=3, stop=5, step=1), LinSpace(start=10, stop=20, num=3), ["a", "b", "c"]],
         body=OpSequence([]),
     )
@@ -186,7 +192,7 @@ def test_iteration_multiple_variables_validation():
     iter_obj: OpSequenceItem = TypeAdapter(OpSequenceItem).validate_python(
         {
             "op_type": "for",
-            "var": ["i", "j", "k", "s"],
+            "var": [{"var": "i"}, {"var": "j"}, {"var": "k"}, {"var": "s"}],
             "items": [
                 [0, 1, 2],
                 {"start": 3, "stop": 5, "step": 1},
@@ -210,7 +216,7 @@ def test_iteration_multiple_variables_validate_json():
     iter_obj: OpSequenceItem = TypeAdapter(OpSequenceItem).validate_json(
         r"""{
             "op_type": "for",
-            "var": ["i", "j", "k", "s"],
+            "var": [{"var": "i"}, {"var": "j"}, {"var": "k"}, {"var": "s"}],
             "items": [
                 [0, 1, 2],
                 {"start": 3, "stop": 5, "step": 1},
@@ -233,14 +239,14 @@ def test_iteration_multiple_variables_validate_json():
 
 def test_iteration_multiple_variables_serialize_json():
     iter_obj = Iteration(
-        var=["i", "j", "k", "s"],
+        var=[VariableRef("i"), VariableRef("j"), VariableRef("k"), VariableRef("s")],
         items=[[0, 1, 2], Range(start=3, stop=5, step=1), LinSpace(start=10, stop=20, num=3), ["a", "b", "c"]],
         body=OpSequence([]),
     )
     serialized = iter_obj.model_dump_json()
     assert serialized == (
         '{"op_type":"for",'
-        + '"var":["i","j","k","s"],'
+        + '"var":[{"var":"i"},{"var":"j"},{"var":"k"},{"var":"s"}],'
         + '"items":['
         + '[0,1,2],{"start":3,"stop":5,"step":1},'
         + '{"start":10,"stop":20,"num":3},'

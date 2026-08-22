@@ -1,27 +1,32 @@
 # ruff: noqa: D100, D107
 from __future__ import annotations
 
+from collections.abc import Mapping
 from enum import StrEnum
 from typing import TYPE_CHECKING, Annotated, Any, Final, Literal
 
-from pydantic import BeforeValidator, Discriminator, PlainSerializer, TypeAdapter, ValidationError
+import numpy as np
+from pydantic import Discriminator, Tag
 
 from .base_models import LeanModel
-from .basic_types import Amplitude, Duration, Frequency, Magnitude, OpBase, Phase, Threshold, Voltage
+from .basic_types import (
+    Angle,
+    Frequency,
+    OpBase,
+    Phase,
+    Threshold,
+    Time,
+    Voltage,
+    dimension_tag_of,
+    dimension_unit_tag_map,
+)
+from .complex import complex_from_tuple
 from .identifier_str import ExternalSymbolStr, IdentifierStr
 from .pulse_types import PulseType
 from .reference_types import SymbolRef, VariableRef
 
 if TYPE_CHECKING:
-    from .basic_types import (
-        AmplitudeLike,
-        DurationLike,
-        FrequencyLike,
-        MagnitudeLike,
-        PhaseLike,
-        ThresholdLike,
-        VoltageLike,
-    )
+    from .basic_types import AngleLike, FrequencyLike, PhaseLike, ThresholdLike, TimeLike, VoltageLike
     from .reference_types import SymbolRefLike, VariableRefLike
 
 __all__ = (
@@ -53,59 +58,56 @@ class DataOpBase(OpBase):
 type VariableDTypeType = Literal["bool", "int", "float", "complex"]
 
 
-_SYMBOL_VALUE_DIMENSIONAL_TYPES: Final = (Amplitude, Duration, Frequency, Phase, Magnitude, Voltage, Threshold)
-_SYMBOL_VALUE_DIMENSIONAL_TYPE_ADAPTERS: Final = tuple(TypeAdapter(t) for t in _SYMBOL_VALUE_DIMENSIONAL_TYPES)
+_SYMBOL_VALUE_UNIT_TAGS: Final = dimension_unit_tag_map()
+"""Unit key -> dimension tag (``"time"``, ``"voltage"``, ``"frequency"`` or ``"angle"``), read from
+the shared unit registry."""
 
 
-def _coerce_symbol_value_string(value: Any) -> Any:
-    """Coerce a unit-suffixed string to its typed dimensional quantity, if it matches one.
-
-    :data:`SymbolValue` has no plain :obj:`str` member, unlike
-    :data:`~.pulse_types.ExternalParamValue`, so an unmatched string is left as-is here and fails
-    validation against the rest of the union, rather than being kept as :obj:`str`.
+def _symbol_value_tag(value: Any) -> str | None:
+    """Return the tag *value* is spelled with, or :obj:`None` to report an unknown tag.
 
     :param value: Raw input for a :data:`SymbolValue`
-
-    :return: The parsed dimensional quantity if *value* is a matching unit-suffixed string,
-        otherwise *value* unchanged
     """
-    if not isinstance(value, str):
-        return value
-    for adapter in _SYMBOL_VALUE_DIMENSIONAL_TYPE_ADAPTERS:
-        try:
-            return adapter.validate_python(value)
-        except ValidationError:
-            continue
-    return value
+    if isinstance(value, Mapping):
+        key: str = next(iter(value)) if len(value) == 1 else ""
+        return _SYMBOL_VALUE_UNIT_TAGS.get(key)
+    if isinstance(value, bool):
+        return "bool"
+    if isinstance(value, int):
+        return "int"
+    if isinstance(value, float):
+        return "float"
+    if isinstance(value, complex | list | tuple | np.complexfloating):
+        return "complex"
+    if isinstance(value, np.ndarray) and value.shape == (2,) and issubclass(value.dtype.type, np.integer | np.floating):
+        return "complex"
+    return dimension_tag_of(value)
 
 
 type SymbolValue = Annotated[
-    Amplitude | Duration | Frequency | Phase | Magnitude | Voltage | Threshold | bool | int | float | complex,
-    BeforeValidator(_coerce_symbol_value_string),
+    Annotated[Time, Tag("time")]
+    | Annotated[Voltage, Tag("voltage")]
+    | Annotated[Frequency, Tag("frequency")]
+    | Annotated[Angle, Tag("angle")]
+    | Annotated[bool, Tag("bool")]
+    | Annotated[int, Tag("int")]
+    | Annotated[float, Tag("float")]
+    | Annotated[complex_from_tuple, Tag("complex")],
+    Discriminator(_symbol_value_tag),
 ]
 """The value of a declared symbol (a parameter default or external constant): dimensional, boolean,
 or plain numeric.
 
-Unit-suffixed strings are coerced to their typed dimensional quantity the same way as in
-:data:`~.pulse_types.ExternalParamValue`: ``"10us"`` becomes a :class:`~.basic_types.Duration`,
-``"100mV"`` an :class:`~.basic_types.Amplitude` (tried before :class:`~.basic_types.Voltage`,
-:class:`~.basic_types.Threshold` and :class:`~.basic_types.Magnitude`, since all four accept the
-same ``V``/``mV`` suffixes), and so on.
+Lists one type per dimension -- :class:`~.basic_types.Time`, :class:`~.basic_types.Voltage`,
+:class:`~.basic_types.Frequency`, :class:`~.basic_types.Angle` -- rather than per refinement:
+:class:`~.basic_types.Duration`, :class:`~.basic_types.Amplitude`, :class:`~.basic_types.Threshold`,
+:class:`~.basic_types.Magnitude` and :class:`~.basic_types.Phase` are indistinguishable on the wire
+from their base dimension, so listing them here would make resolution depend on declaration order.
+Unlike :data:`~.pulse_types.ExternalParamValue`, there is no plain :obj:`str` member: a unit-suffixed
+string is not a wire form for either union any more, so it is rejected here rather than kept as-is.
 """
 
-type SymbolValueLike = (
-    AmplitudeLike
-    | DurationLike
-    | FrequencyLike
-    | PhaseLike
-    | MagnitudeLike
-    | VoltageLike
-    | ThresholdLike
-    | bool
-    | int
-    | float
-    | complex
-)
+type SymbolValueLike = TimeLike | VoltageLike | FrequencyLike | AngleLike | bool | int | float | complex
 """Acceptable input types for :data:`SymbolValue`."""
 
 
@@ -300,9 +302,9 @@ class Discriminate(DataOpBase):
     """The threshold value for discrimination."""
     rotation: Phase | SymbolRef = Phase(0)
     """Phase rotation to apply before discrimination."""
-    compare: Annotated[ComparisonMode, PlainSerializer(str)] = ComparisonMode.GreaterEqual
+    compare: ComparisonMode = ComparisonMode.GreaterEqual
     """The comparison mode to use."""
-    project: Annotated[ComplexToRealProjectionMode, PlainSerializer(str)] = ComplexToRealProjectionMode.RealPart
+    project: ComplexToRealProjectionMode = ComplexToRealProjectionMode.RealPart
     """The projection mode for complex to real conversion."""
 
     if TYPE_CHECKING:
@@ -343,7 +345,7 @@ class Store(DataOpBase):
     """The key to identify the stored data."""
     source: VariableRef
     """The source variable to store."""
-    mode: Annotated[StoreMode, PlainSerializer(str)]
+    mode: StoreMode
     """The storage mode to use."""
 
     if TYPE_CHECKING:
