@@ -20,6 +20,7 @@ from eq1_pulse.models.data_ops import (
     ValueLimits,
     VariableDecl,
 )
+from eq1_pulse.models.expressions import BinaryExpr, LiteralExpr, SymbolExpr
 from eq1_pulse.models.pulse_types import SquarePulse
 from eq1_pulse.models.reference_types import ExternalRef, VariableRef
 
@@ -120,6 +121,18 @@ def test_discriminate_threshold_and_rotation_accept_variable_and_external_ref():
     assert isinstance(disc.rotation, Phase)
     assert disc.threshold.V == 0.5
     assert disc.rotation.rad == 0.0
+
+
+def test_discriminate_threshold_accepts_expression():
+    """``Discriminate.threshold`` accepts an ``Expression``, not just a bare ``SymbolRef``."""
+    threshold = BinaryExpr(op="+", left=SymbolExpr(symbol=VariableRef("t")), right=LiteralExpr(value={"V": 0.1}))
+    disc = Discriminate(target=VariableRef("result"), source=VariableRef("data"), threshold=threshold)
+    assert isinstance(disc.threshold, BinaryExpr)
+
+    document = disc.model_dump()
+    reloaded: Any = TypeAdapter(DataOp).validate_python(document)
+    assert isinstance(reloaded, Discriminate)
+    assert isinstance(reloaded.threshold, BinaryExpr)
 
 
 def test_store_creation(store: Store):

@@ -99,7 +99,7 @@ other task depends on.
 | #  | Task                                                  | Size | Model     | Reasoning | Context     | Touches                                    |
 | -- | ------------------------------------------------------- | ---- | --------- | --------- | ----------- | -------------------------------------------- |
 | 1 ✅ | `models/expressions.py` — the node set, plus the `SymbolValue` fix | L    | Opus 5    | high      | 200k / ~75k | `models/expressions.py`, `models/basic_types.py`, `models/data_ops.py`, `models/pulse_types.py`, `utilities/openapi_generator.py`, `tests/` |
-| 2  | Widen operations to `ValueRef`; rebuild sweep         | M    | Sonnet 5  | high      | 200k / ~60k | `models/`, `tests/`                          |
+| 2 ✅ | Widen operations to `ValueRef`; rebuild sweep         | M    | Sonnet 5  | high      | 200k / ~60k | `models/`, `tests/`                          |
 | 3  | Builder: `Expr` and its operators                     | M    | Sonnet 5  | high      | 200k / ~45k | `builder/_expressions.py`, `tests/`          |
 | 4  | Builder: leaf checking, acceptance, exports           | M    | Sonnet 5  | medium    | 200k / ~50k | `builder/`, `tests/`                         |
 | 5  | Schema tag, docs, example                             | S    | Haiku 4.5 | medium    | 200k / ~30k | `utilities/`, `docs/`, `examples/`, `tests/` |
@@ -288,7 +288,21 @@ tag-list entry and its test (task 5).
 
 ---
 
-## Task 2 — Widen operations to `ValueRef`; the rebuild sweep
+## Task 2 — Widen operations to `ValueRef`; the rebuild sweep — **done**
+
+**Status:** done, 2026-08-22. QA green (pyright 0, mypy clean, 950 tests). As built, matching the
+acceptance criteria, with one addition noted below.
+
+> **As built.** `expressions.py`'s own `from .data_ops import SymbolValue` moved to the bottom of
+> that module (after `Expression`/`ValueRef` are defined) to break the cycle task 1 flagged; every
+> other widened module (`data_ops`, `pulse_types`, `channel_ops`, `control_flow`, `external_block`)
+> keeps the `*Like` alias under `TYPE_CHECKING` only and adds a deferred
+> `from .expressions import ValueRef` plus a `model_rebuild()` sweep at its own bottom.
+> `control_flow.py` was missing `from __future__ import annotations`, required by the pattern; added
+> it. `models/experimental/schedule.py`'s `SchedRepetition`/`SchedConditional` needed their
+> `TYPE_CHECKING`-only `__init__` overrides widened too (not called out by name in the steps, but the
+> same trap the table above already names for `sequence.py`) — no separate `model_rebuild()` for
+> them, since they inherit the already-rebuilt fields from their generic base.
 
 **Read:** plan §3 in full, and §2 of the #6 plan for the read-site inventory.
 **Goal:** an `Expression` is accepted wherever a `SymbolRef` is.

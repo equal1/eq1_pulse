@@ -22,7 +22,6 @@ from typing import TYPE_CHECKING, Annotated, Any, Final, Literal, Self
 from pydantic import Discriminator, model_validator
 
 from .base_models import LeanModel
-from .data_ops import SymbolValue
 from .reference_types import SymbolRef
 
 if TYPE_CHECKING:
@@ -280,6 +279,12 @@ An expression has no authoring spelling of its own -- it is built by the builder
 this widens only the symbol side.
 """
 
+
+# Imported here, not at module top, because :mod:`data_ops` needs :data:`ValueRef` back (its own
+# operations widen to it too) -- a real two-way edge, not just a forward reference. By the time this
+# runs, `Expression`/`ValueRef` already exist in this module's namespace, so `data_ops`'s own import
+# of them (below) succeeds regardless of which of the two modules is imported first.
+from .data_ops import SymbolValue  # noqa: E402
 
 LiteralExpr.model_rebuild()
 SymbolExpr.model_rebuild()

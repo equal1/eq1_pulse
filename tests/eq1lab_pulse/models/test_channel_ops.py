@@ -20,6 +20,7 @@ from eq1_pulse.models.channel_ops import (
     Trace,
     Wait,
 )
+from eq1_pulse.models.expressions import BinaryExpr, LiteralExpr, SymbolExpr
 from eq1_pulse.models.pulse_types import SquarePulse
 from eq1_pulse.models.reference_types import ChannelRef, ExternalRef, VariableRef
 
@@ -339,3 +340,15 @@ def test_demod_integration_scale_cos_sin_default_still_elided():
     """Widening scale_cos/scale_sin to accept a SymbolRef must not perturb LeanModel's default elision."""
     demod = DemodIntegration()
     assert demod.model_dump() == {"integration_type": "demod"}
+
+
+def test_wait_duration_accepts_expression():
+    """``Wait.duration`` accepts an ``Expression``, not just a bare ``SymbolRef``."""
+    duration = BinaryExpr(op="+", left=SymbolExpr(symbol=VariableRef("d")), right=LiteralExpr(value={"ns": 10}))
+    wait_op = Wait("ch1", "ch2", duration=duration)
+    assert isinstance(wait_op.duration, BinaryExpr)
+
+    document = wait_op.model_dump()
+    reloaded: Any = TypeAdapter(ChannelOp).validate_python(document)
+    assert isinstance(reloaded, Wait)
+    assert isinstance(reloaded.duration, BinaryExpr)

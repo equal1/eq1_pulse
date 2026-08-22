@@ -26,7 +26,7 @@ from .basic_types import (
 from .complex import complex_from_tuple
 from .identifier_str import ExternalSymbolStr, IdentifierStr
 from .pulse_types import PulseType
-from .reference_types import SymbolRef, VariableRef
+from .reference_types import VariableRef
 
 if TYPE_CHECKING:
     from .basic_types import (
@@ -38,7 +38,8 @@ if TYPE_CHECKING:
         TimeLike,
         VoltageLike,
     )
-    from .reference_types import SymbolRefLike, VariableRefLike
+    from .expressions import ValueRefLike
+    from .reference_types import VariableRefLike
 
 __all__ = (
     "ComparisonMode",
@@ -319,9 +320,9 @@ class Discriminate(DataOpBase):
     """The target variable to store the discrimination result."""
     source: VariableRef
     """The source variable containing the data to discriminate."""
-    threshold: Threshold | SymbolRef
+    threshold: Threshold | ValueRef
     """The threshold value for discrimination."""
-    rotation: Phase | SymbolRef = Phase(0)
+    rotation: Phase | ValueRef = Phase(0)
     """Phase rotation to apply before discrimination."""
     compare: ComparisonMode = ComparisonMode.GreaterEqual
     """The comparison mode to use."""
@@ -336,8 +337,8 @@ class Discriminate(DataOpBase):
             *,
             target: VariableRefLike,
             source: VariableRefLike,
-            threshold: ThresholdLike | SymbolRefLike,
-            rotation: PhaseLike | SymbolRefLike = 0,
+            threshold: ThresholdLike | ValueRefLike,
+            rotation: PhaseLike | ValueRefLike = 0,
             compare: ComparisonModeLike = ComparisonMode.GreaterEqual,
             project: ComplexToRealProjectionModeLike = ComplexToRealProjectionMode.RealPart,
             **data,
@@ -391,3 +392,11 @@ This is a closed set of data operations that can be used in a sequence of operat
 All data operation types have a common discriminator field `op_type` (inherited from `OpBase`)
 that is used to distinguish between them.
 """
+
+# Deferred: `expressions` imports `SymbolValue` from this module, so importing it back at module
+# top would be a real cycle rather than a forward reference. By the time this runs, `expressions`
+# has already defined `ValueRef`/`ValueRefLike` (see its own bottom-of-module comment), so this
+# succeeds regardless of which of the two modules is imported first.
+from .expressions import ValueRef  # noqa: E402
+
+Discriminate.model_rebuild()

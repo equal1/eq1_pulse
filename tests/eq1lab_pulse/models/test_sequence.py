@@ -19,6 +19,7 @@ from eq1_pulse.models import (
     SquarePulse,
     VariableRef,
 )
+from eq1_pulse.models.expressions import BinaryExpr, CompareExpr, LiteralExpr, SymbolExpr
 
 
 def test_op_sequence_init():
@@ -278,3 +279,27 @@ def test_sequence_external_param_references_round_trip_without_degrading():
     assert isinstance(params["var"], VariableRef)
     assert isinstance(params["pulse"], PulseRef)
     assert isinstance(params["ext"], ExternalRef)
+
+
+def test_sequence_with_expressions_round_trips_through_json():
+    """A sequence with a widened field holding an Expression round-trips through JSON, not just model_dump."""
+    count = BinaryExpr(op="+", left=SymbolExpr(symbol=VariableRef("n")), right=LiteralExpr(value=1))
+    predicate = CompareExpr(op=">", left=SymbolExpr(symbol=VariableRef("x")), right=LiteralExpr(value=1))
+    pulse = SquarePulse(duration={"ns": 100}, amplitude={"V": 1.0})
+    play = Play(channel="ch1", pulse=pulse)
+
+    rep = Repetition(count=count, body=OpSequence([play]))
+    cond = Conditional(var=predicate, body=OpSequence([play]))
+    seq = OpSequence([rep, cond])
+
+    dumped = seq.model_dump_json()
+    restored = OpSequence.model_validate_json(dumped)
+    assert restored == seq
+
+    restored_rep = restored.items[0]
+    assert isinstance(restored_rep, Repetition)
+    assert isinstance(restored_rep.count, BinaryExpr)
+
+    restored_cond = restored.items[1]
+    assert isinstance(restored_cond, Conditional)
+    assert isinstance(restored_cond.var, CompareExpr)

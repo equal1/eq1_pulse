@@ -26,6 +26,7 @@ from ..data_ops import DataOp
 
 if TYPE_CHECKING:
     from ..basic_types import LinSpaceLike, RangeLike, TimeDict
+    from ..expressions import ValueRefLike
     from ..nd_array import NumpyArrayLike
     from ..reference_types import VariableRefLike
 
@@ -175,7 +176,7 @@ class SchedRepetition(RepetitionBase[Schedule]):
 
     if TYPE_CHECKING:
 
-        def __init__(self, /, *, count: int, body: ScheduleLike, **data):  # noqa: D107
+        def __init__(self, /, *, count: int | ValueRefLike, body: ScheduleLike, **data):  # noqa: D107
             ...
 
 
@@ -208,5 +209,5 @@ class SchedConditional(ConditionalBase[Schedule]):
 
     if TYPE_CHECKING:
 
-        def __init__(self, /, *, var: VariableRefLike, body: ScheduleLike, **data):  # noqa: D107
+        def __init__(self, /, *, var: ValueRefLike, body: ScheduleLike, **data):  # noqa: D107
             ...

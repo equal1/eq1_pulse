@@ -5,6 +5,7 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from eq1_pulse.models.basic_types import Amplitude, ComplexVoltage, Duration, Frequency, Magnitude, Phase, Voltage
+from eq1_pulse.models.expressions import BinaryExpr, LiteralExpr, SymbolExpr
 from eq1_pulse.models.pulse_types import (
     ArbitrarySampledPulse,
     ExternalParamValue,
@@ -130,6 +131,19 @@ def test_pulse_with_external_refs():
     assert isinstance(sine.duration, ExternalRef)
     assert isinstance(sine.amplitude, ExternalRef)
     assert isinstance(sine.frequency, ExternalRef)
+
+
+def test_pulse_with_expression():
+    """Test that a widened pulse field accepts an Expression, not just a bare SymbolRef."""
+    duration = BinaryExpr(op="+", left=SymbolExpr(symbol=VariableRef("d")), right=LiteralExpr(value={"ns": 10}))
+    square = SquarePulse(duration=duration, amplitude=Amplitude(V=0.5))
+    assert isinstance(square.duration, BinaryExpr)
+
+    document = square.model_dump()
+    reloaded: Any = TypeAdapter(PulseType).validate_python(document)
+    assert isinstance(reloaded, SquarePulse)
+    assert isinstance(reloaded.duration, BinaryExpr)
+    assert isinstance(reloaded.duration.left, SymbolExpr)
 
 
 def test_sine_pulse_frequency_sweep():
@@ -633,6 +647,25 @@ def test_external_param_value_complex_round_trips_through_json():
     dumped = adapter.dump_json(1 + 2j)
     restored = adapter.validate_json(dumped)
     assert restored == 1 + 2j
+
+
+def test_external_param_value_expression():
+    """An Expression is tagged on its own ``expr_type`` key and survives round-tripping.
+
+    Its dict shape (multiple keys, none of them a unit or a single-key reference) is what the
+    ``_external_param_value_tag`` branch has to recognize before falling through to the
+    single-key-mapping checks the rest of the union relies on.
+    """
+    node = BinaryExpr(op="+", left=SymbolExpr(symbol=VariableRef("x")), right=LiteralExpr(value=1))
+    adapter: TypeAdapter[Any] = TypeAdapter(ExternalParamValue)
+    value = adapter.validate_python(node)
+    assert isinstance(value, BinaryExpr)
+    assert value == node
+
+    dumped = adapter.dump_python(node)
+    restored = adapter.validate_python(dumped)
+    assert isinstance(restored, BinaryExpr)
+    assert restored == node
 
 
 def test_external_pulse_params_widened_types():

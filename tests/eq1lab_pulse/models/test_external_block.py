@@ -6,6 +6,7 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from eq1_pulse.models.basic_types import Amplitude, Duration, Frequency, Magnitude, Phase, Voltage
+from eq1_pulse.models.expressions import BinaryExpr, LiteralExpr, SymbolExpr
 from eq1_pulse.models.external_block import ExternalBlock
 from eq1_pulse.models.pulse_types import SquarePulse
 from eq1_pulse.models.reference_types import ChannelRef, ExternalRef, PulseRef, VariableRef
@@ -171,3 +172,13 @@ def test_external_block_channels_accept_an_external_ref():
     assert block.channels == {"drive": ExternalRef("q0.drive"), "readout": ChannelRef("q0_ro")}
     assert block.model_dump()["channels"] == {"drive": {"ext": "q0.drive"}, "readout": "q0_ro"}
     assert ExternalBlock.model_validate_json(block.model_dump_json()) == block
+
+
+def test_external_block_duration_accepts_expression():
+    """``ExternalBlock.duration`` accepts an ``Expression``, not just a bare ``SymbolRef``."""
+    duration = BinaryExpr(op="+", left=SymbolExpr(symbol=VariableRef("d")), right=LiteralExpr(value={"ns": 10}))
+    block = ExternalBlock(channels={"a": "q0"}, duration=duration)
+    assert isinstance(block.duration, BinaryExpr)
+
+    restored = ExternalBlock.model_validate(block.model_dump())
+    assert isinstance(restored.duration, BinaryExpr)

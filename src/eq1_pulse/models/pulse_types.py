@@ -28,11 +28,12 @@ from .basic_types import (
 from .complex import complex_from_tuple
 from .identifier_str import FullyQualifiedIdentifier
 from .nd_array import NumpyArray, NumpyComplexArray1D, NumpyFloatArray1D
-from .reference_types import ExternalRef, ExtRefDict, PulseRef, SymbolRef, VariableRef
+from .reference_types import ExternalRef, ExtRefDict, PulseRef, VariableRef
 
 if TYPE_CHECKING:
     from .basic_types import AngleLike, ComplexVoltageLike, FrequencyLike, TimeLike, VoltageLike
-    from .reference_types import PulseRefLike, SymbolRefLike, VariableRefLike
+    from .expressions import ValueRefLike
+    from .reference_types import PulseRefLike, VariableRefLike
 
 __all__ = (
     "ArbitrarySampledPulse",
@@ -54,9 +55,9 @@ class PulseBase(_LeanModel):
 
     pulse_type: Any  # str
     """The type discriminator for pulse types."""
-    duration: Duration | SymbolRef
+    duration: Duration | ValueRef
     """The duration of the pulse."""
-    amplitude: Amplitude | SymbolRef
+    amplitude: Amplitude | ValueRef
     """The amplitude of the pulse."""
 
     if TYPE_CHECKING:
@@ -64,8 +65,8 @@ class PulseBase(_LeanModel):
         def __init__(
             self,
             *,
-            duration: Duration | dict[str, float] | SymbolRefLike,
-            amplitude: Amplitude | dict[str, float | complex] | SymbolRefLike,
+            duration: Duration | dict[str, float] | ValueRefLike,
+            amplitude: Amplitude | dict[str, float | complex] | ValueRefLike,
             **data,
         ): ...
 
@@ -81,9 +82,9 @@ class SquarePulse(PulseBase):
 
     pulse_type: Literal["square"] = "square"
     """The type discriminator, always "square"."""
-    rise_time: Duration | SymbolRef | None = None
+    rise_time: Duration | ValueRef | None = None
     """The rise time of the pulse. It's also included in the total duration."""
-    fall_time: Duration | SymbolRef | None = None
+    fall_time: Duration | ValueRef | None = None
     """The fall time of the pulse. It's also included in the total duration."""
 
     if TYPE_CHECKING:
@@ -91,10 +92,10 @@ class SquarePulse(PulseBase):
         def __init__(
             self,
             *,
-            duration: Duration | dict[str, float] | SymbolRefLike,
-            amplitude: Amplitude | dict[str, float | complex] | SymbolRefLike,
-            rise_time: Duration | dict[str, float] | SymbolRefLike | None = None,
-            fall_time: Duration | dict[str, float] | SymbolRefLike | None = None,
+            duration: Duration | dict[str, float] | ValueRefLike,
+            amplitude: Amplitude | dict[str, float | complex] | ValueRefLike,
+            rise_time: Duration | dict[str, float] | ValueRefLike | None = None,
+            fall_time: Duration | dict[str, float] | ValueRefLike | None = None,
             **data,
         ): ...
 
@@ -104,9 +105,9 @@ class SinePulse(PulseBase):
 
     pulse_type: Literal["sine"] = "sine"
     """The type discriminator, always "sine"."""
-    frequency: Frequency | SymbolRef
+    frequency: Frequency | ValueRef
     """The frequency of the sine wave."""
-    to_frequency: Frequency | SymbolRef | None = None
+    to_frequency: Frequency | ValueRef | None = None
     """The target frequency for frequency sweeps."""
 
     if TYPE_CHECKING:
@@ -114,10 +115,10 @@ class SinePulse(PulseBase):
         def __init__(
             self,
             *,
-            duration: Duration | dict[str, float] | SymbolRefLike,
-            amplitude: Amplitude | dict[str, float | complex] | SymbolRefLike,
-            frequency: Frequency | dict[str, float] | SymbolRefLike,
-            to_frequency: Frequency | dict[str, float] | SymbolRefLike | None = None,
+            duration: Duration | dict[str, float] | ValueRefLike,
+            amplitude: Amplitude | dict[str, float | complex] | ValueRefLike,
+            frequency: Frequency | dict[str, float] | ValueRefLike,
+            to_frequency: Frequency | dict[str, float] | ValueRefLike | None = None,
             **data,
         ): ...
 
@@ -135,9 +136,9 @@ class ExternalPulse(PulseBase):
     """The type discriminator for external pulses. It is always "external"."""
     function: FullyQualifiedIdentifier
     """The name of the externally defined pulse function to use."""
-    duration: Duration | SymbolRef
+    duration: Duration | ValueRef
     """The duration of the pulse."""
-    amplitude: Amplitude | SymbolRef
+    amplitude: Amplitude | ValueRef
     """The reference amplitude of the pulse. This is usually the peak amplitude."""
     params: dict[str, ExternalParamValue] | None = None
     """Additional parameters to pass to the pulse function."""
@@ -148,8 +149,8 @@ class ExternalPulse(PulseBase):
             self,
             function: FullyQualifiedIdentifier,
             *,
-            duration: Duration | dict[str, float] | SymbolRefLike,
-            amplitude: Amplitude | dict[str, float | complex] | SymbolRefLike,
+            duration: Duration | dict[str, float] | ValueRefLike,
+            amplitude: Amplitude | dict[str, float | complex] | ValueRefLike,
             params: dict[str, ExternalParamValueLike] | None = None,
         ): ...
 
@@ -187,8 +188,8 @@ class ArbitrarySampledPulse(PulseBase):
             self,
             samples: list[float] | list[complex] | NumpyArray | VariableRefLike,
             *,
-            duration: Duration | dict[str, float] | SymbolRefLike,
-            amplitude: Amplitude | dict[str, float | complex] | SymbolRefLike,
+            duration: Duration | dict[str, float] | ValueRefLike,
+            amplitude: Amplitude | dict[str, float | complex] | ValueRefLike,
             interpolation: str | None = None,
             time_points: list[float] | NumpyArray | None = None,
         ): ...
@@ -229,6 +230,11 @@ _EXTERNAL_PARAM_REFERENCE_TAGS: Final[dict[type, str]] = {
 
 _EXTERNAL_PARAM_PULSE_TAG: Final = "pulse_type"
 
+_EXTERNAL_PARAM_EXPR_TAG: Final = "expr"
+"""Tag for an :data:`~.expressions.Expression` member -- named separately from its own
+``expr_type`` discriminator, which resolves the specific node once this outer tag has selected it.
+"""
+
 
 def _external_param_value_tag(value: Any) -> str | None:
     """Return the tag *value* is spelled with, or :obj:`None` to report an unknown tag.
@@ -238,6 +244,8 @@ def _external_param_value_tag(value: Any) -> str | None:
     if isinstance(value, Mapping):
         if _EXTERNAL_PARAM_PULSE_TAG in value:
             return _EXTERNAL_PARAM_PULSE_TAG
+        if "expr_type" in value:
+            return _EXTERNAL_PARAM_EXPR_TAG
         if len(value) == 1:
             key: str = next(iter(value))
             if key in _EXTERNAL_PARAM_UNIT_TAGS:
@@ -259,6 +267,8 @@ def _external_param_value_tag(value: Any) -> str | None:
         return "complex"
     if isinstance(value, PulseBase):
         return _EXTERNAL_PARAM_PULSE_TAG
+    if isinstance(value, ExprBase):
+        return _EXTERNAL_PARAM_EXPR_TAG
     for reference, tag in _EXTERNAL_PARAM_REFERENCE_TAGS.items():
         if isinstance(value, reference):
             return tag
@@ -275,6 +285,7 @@ type ExternalParamValue = Annotated[
     | Annotated[PulseRef, Tag("pulse_name")]
     | Annotated[ExternalRef, Tag("ext")]
     | Annotated[PulseType, Tag(_EXTERNAL_PARAM_PULSE_TAG)]
+    | Annotated[Expression, Tag(_EXTERNAL_PARAM_EXPR_TAG)]
     | Annotated[bool, Tag("bool")]
     | Annotated[int, Tag("int")]
     | Annotated[float, Tag("float")]
@@ -295,7 +306,9 @@ unit keys and are told apart by the shape of the value, exactly as in
 
 Every reference here is its own tagged object -- ``{"var": name}``, ``{"pulse_name": name}``,
 ``{"ext": name}`` -- so each round-trips through JSON as its own type with nothing in this module
-to tag it.
+to tag it. :class:`~.expressions.Expression` is tagged the same way, on its own ``expr_type`` key,
+because a variable or an external constant resolved out of band is already the same obligation an
+expression tree over them is one level up.
 
 Unlike :data:`~.data_ops.SymbolValue`, this union keeps a plain :obj:`str` member: a bare string is
 now *only* ever a string, since it is opaque data passed to an external program rather than an
@@ -312,6 +325,7 @@ type ExternalParamValueLike = (
     | ExternalRef
     | ExtRefDict
     | PulseType
+    | Expression
     | ExternalParamScalarValue
 )
 """Acceptable input types for :data:`ExternalParamValue`."""
@@ -331,3 +345,16 @@ This widens the previous pulse-only union to also accept :class:`~.basic_types.A
 """
 type PulseParamValueLike = ExternalParamValueLike
 """Deprecated alias of :data:`ExternalParamValueLike`, retained for backwards compatibility."""
+
+# Deferred: `expressions` imports `SymbolValue` from `data_ops`, and `data_ops` imports `PulseType`
+# from this module at its own top -- importing `expressions` at this module's top would recurse
+# back through that edge before `PulseType` exists to satisfy it. By the time this runs, `PulseType`
+# and `ExternalParamValue` are already defined, so `data_ops`'s import of them (if it is the one
+# still waiting on this module) succeeds regardless of which of the three modules went first.
+from .expressions import ExprBase, Expression, ValueRef  # noqa: E402
+
+PulseBase.model_rebuild()
+SquarePulse.model_rebuild()
+SinePulse.model_rebuild()
+ExternalPulse.model_rebuild()
+ArbitrarySampledPulse.model_rebuild()

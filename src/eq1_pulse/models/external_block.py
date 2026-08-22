@@ -14,12 +14,13 @@ from pydantic import model_validator
 from .basic_types import Duration, OpBase
 from .identifier_str import FullyQualifiedIdentifier
 from .pulse_types import ExternalParamValue
-from .reference_types import ChannelTarget, SymbolRef, VariableRef
+from .reference_types import ChannelTarget, VariableRef
 
 if TYPE_CHECKING:
     from .basic_types import DurationLike
+    from .expressions import ValueRefLike
     from .pulse_types import ExternalParamValueLike
-    from .reference_types import ChannelRefLike, SymbolRefLike, VariableRefLike
+    from .reference_types import ChannelRefLike, VariableRefLike
 
 __all__ = ("ExternalBlock",)
 
@@ -95,7 +96,7 @@ class ExternalBlock(OpBase):
     results: dict[str, VariableRef] | None = None
     """Output bindings: variables the referenced program writes into."""
 
-    duration: Duration | SymbolRef | None = None
+    duration: Duration | ValueRef | None = None
     """Total duration.
 
     :obj:`None` means *flex*: the duration is whatever the referenced program naturally takes,
@@ -111,7 +112,7 @@ class ExternalBlock(OpBase):
             channels: dict[str, ChannelRefLike],
             params: dict[str, ExternalParamValueLike] | None = None,
             results: dict[str, VariableRefLike] | None = None,
-            duration: DurationLike | SymbolRefLike | None = None,
+            duration: DurationLike | ValueRefLike | None = None,
             **data,
         ): ...
 
@@ -126,3 +127,10 @@ class ExternalBlock(OpBase):
                         f"or pass a compile-time value for {name!r}."
                     )
         return self
+
+
+# Deferred: this module is reachable (via `pulse_types`) before `expressions` has finished defining
+# `ValueRef`, so importing it at the top would recurse back through that edge.
+from .expressions import ValueRef  # noqa: E402
+
+ExternalBlock.model_rebuild()
