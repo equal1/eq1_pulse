@@ -652,6 +652,34 @@ works, but a deserialized expression will not contain a string — it contains t
 
 See ``examples/expression_ramsey.py`` for a complete Ramsey experiment using expressions.
 
+What an expression looks like on the wire
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+On the wire, each expression node carries exactly one key naming what it is, and that key's value
+holds the node's data. For the operator nodes, the key itself is the operator qualified by arity
+(``unary_op``, ``binary_op``, ``compare_op``, ``logical_op``):
+
+.. code-block:: json
+
+    {
+      "binary_op": "*",
+      "left": {
+        "symbol": {
+          "var": "scale"
+        }
+      },
+      "right": {
+        "value": {
+          "mV": 80
+        }
+      }
+    }
+
+This is the wire form of ``expr(var("scale")) * Amplitude("80mV")``: a binary multiplication of a
+symbol and a voltage literal. No discriminator field is needed -- the presence of ``binary_op``,
+``compare_op``, ``logical_op``, ``unary_op``, ``symbol``, ``value``, or ``function`` is itself the
+discriminator.
+
 Control Flow
 ------------
 

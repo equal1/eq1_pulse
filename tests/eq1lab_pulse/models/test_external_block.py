@@ -176,7 +176,7 @@ def test_external_block_channels_accept_an_external_ref():
 
 def test_external_block_duration_accepts_expression():
     """``ExternalBlock.duration`` accepts an ``Expression``, not just a bare ``SymbolRef``."""
-    duration = BinaryExpr(op="+", left=SymbolExpr(symbol=VariableRef("d")), right=LiteralExpr(value={"ns": 10}))
+    duration = BinaryExpr(binary_op="+", left=SymbolExpr(symbol=VariableRef("d")), right=LiteralExpr(value={"ns": 10}))
     block = ExternalBlock(channels={"a": "q0"}, duration=duration)
     assert isinstance(block.duration, BinaryExpr)
 

@@ -12,7 +12,7 @@ from eq1_pulse.models.sequence import Conditional, OpSequence, Repetition
 
 def test_repetition_count_accepts_expression():
     """``RepetitionBase.count`` accepts an ``Expression``, like the rest of the widened fields."""
-    count = BinaryExpr(op="+", left=SymbolExpr(symbol=VariableRef("n")), right=LiteralExpr(value=1))
+    count = BinaryExpr(binary_op="+", left=SymbolExpr(symbol=VariableRef("n")), right=LiteralExpr(value=1))
     rep = Repetition(count=count, body=OpSequence([]))
     assert isinstance(rep.count, BinaryExpr)
 
@@ -28,7 +28,7 @@ def test_conditional_accepts_bare_symbol_ref():
 
 def test_conditional_accepts_compare_expr():
     """``ConditionalBase.var`` accepts a ``CompareExpr``."""
-    predicate = CompareExpr(op=">", left=SymbolExpr(symbol=VariableRef("x")), right=LiteralExpr(value=1))
+    predicate = CompareExpr(compare_op=">", left=SymbolExpr(symbol=VariableRef("x")), right=LiteralExpr(value=1))
     cond = Conditional(var=predicate, body=OpSequence([]))
     assert isinstance(cond.var, CompareExpr)
 
@@ -36,9 +36,9 @@ def test_conditional_accepts_compare_expr():
 def test_conditional_accepts_logical_expr():
     """``ConditionalBase.var`` accepts a ``LogicalExpr``."""
     predicate = LogicalExpr(
-        op="and",
+        logical_op="and",
         operands=[
-            CompareExpr(op="<", left=SymbolExpr(symbol=VariableRef("x")), right=LiteralExpr(value=1)),
+            CompareExpr(compare_op="<", left=SymbolExpr(symbol=VariableRef("x")), right=LiteralExpr(value=1)),
             SymbolExpr(symbol=VariableRef("flag")),
         ],
     )
@@ -50,7 +50,7 @@ def test_conditional_accepts_logical_expr():
     "node",
     [
         pytest.param(
-            BinaryExpr(op="+", left=SymbolExpr(symbol=VariableRef("x")), right=LiteralExpr(value=1)), id="binary"
+            BinaryExpr(binary_op="+", left=SymbolExpr(symbol=VariableRef("x")), right=LiteralExpr(value=1)), id="binary"
         ),
         pytest.param(LiteralExpr(value=1), id="literal"),
     ],

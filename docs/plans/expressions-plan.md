@@ -77,6 +77,11 @@ Python operators to build it. That is the whole of the user-visible feature.
 
 New module `src/eq1_pulse/models/expressions.py`.
 
+**Revision — operator-keyed serialization.** The wire form described below has been revised by a
+follow-up change (see `docs/plans/expression-serialization-tasks.md`): `expr_type` was removed and
+each node is keyed on its own field — the operator for the four operator nodes, the payload field
+for the others. The node set, validators and builder API are unchanged; only the wire form changed.
+
 ### 2.1 Node types
 
 ```text
@@ -116,16 +121,34 @@ rewrite dropped.
 `SymbolExpr.symbol` is `SymbolRef` from #6, so `var("t1") + ext("q0.t2")` is expressible with no
 extra work.
 
-The `LeanModel` convention (first single-valued `Literal` field is the discriminator and is always
-serialized) is satisfied by `expr_type` being declared first in every class. `op` is an ordinary
-field — for four of the five nodes because it is *multi*-valued, which is the behaviour wanted.
+.. note::
 
-`UnaryExpr.op` is the exception, and it is a trap: `Literal["-"]` is single-valued. It is not
-stripped as a discriminator — `_non_discriminator_fields` strips only the *first* field — but it is
-subject to `LeanModel`'s ordinary default elision. Measured: `op: Literal["-"] = "-"` serializes as
-`{"expr_type": "unary", "operand": …}`, with the operator gone, while `op: Literal["-"]` keeps it.
-**No `op` or `function` field carries a default**, on any node. That is the whole of the rule, and
-it also protects `CallExpr.function` should its literal ever narrow to one name.
+    **[Revision: operator-keyed serialization]** The `LeanModel` convention has changed: each node
+    is now keyed on its own field (the operator or payload), and the discriminator is callable
+    rather than a literal field. The first field on each operator node is now the operator itself
+    (``unary_op``, ``binary_op``, ``compare_op``, ``logical_op``), and it is always serialized.
+
+.. old::
+
+    The `LeanModel` convention (first single-valued `Literal` field is the discriminator and is
+    always serialized) is satisfied by `expr_type` being declared first in every class. `op` is an
+    ordinary field — for four of the five nodes because it is *multi*-valued, which is the
+    behaviour wanted.
+
+.. note::
+
+    **[Revision: operator-keyed serialization]** The trap described below no longer applies:
+    operator fields are now the discriminator and are always serialized regardless of defaults.
+
+.. old::
+
+    `UnaryExpr.op` is the exception, and it is a trap: `Literal["-"]` is single-valued. It is not
+    stripped as a discriminator — `_non_discriminator_fields` strips only the *first* field — but
+    it is subject to `LeanModel`'s ordinary default elision. Measured: `op: Literal["-"] = "-"`
+    serializes as `{"expr_type": "unary", "operand": …}`, with the operator gone, while
+    `op: Literal["-"]` keeps it. **No `op` or `function` field carries a default**, on any node.
+    That is the whole of the rule, and it also protects `CallExpr.function` should its literal
+    ever narrow to one name.
 
 ### 2.2 Function set
 

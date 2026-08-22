@@ -73,7 +73,7 @@ class TestExprConstruction:
         assert expr(wrapped) is wrapped
 
     def test_identity_on_a_bare_node(self):
-        node = BinaryExpr(op="+", left=LiteralExpr(value=1), right=LiteralExpr(value=2))
+        node = BinaryExpr(binary_op="+", left=LiteralExpr(value=1), right=LiteralExpr(value=2))
         assert expr(node).unwrap() is node
 
     def test_expr_of_expr_is_expr_of_x(self):
@@ -98,7 +98,7 @@ class TestArithmeticOperators:
     def test_binary_op_produces_the_right_node(self, a, op, symbol):
         node = op(a, 2).unwrap()
         assert isinstance(node, BinaryExpr)
-        assert node.op == symbol
+        assert node.binary_op == symbol
         assert node.left == a.unwrap()
         assert node.right == expr(2).unwrap()
 
@@ -107,7 +107,7 @@ class TestArithmeticOperators:
         right = (2 * a).unwrap()
         assert isinstance(left, BinaryExpr)
         assert isinstance(right, BinaryExpr)
-        assert left.op == right.op == "*"
+        assert left.binary_op == right.binary_op == "*"
         assert left.left == right.right == a.unwrap()
         assert left.right == right.left == expr(2).unwrap()
 
@@ -124,14 +124,14 @@ class TestArithmeticOperators:
     def test_reflected_op_puts_other_on_the_left(self, a, op, symbol):
         node = op(a, 2).unwrap()
         assert isinstance(node, BinaryExpr)
-        assert node.op == symbol
+        assert node.binary_op == symbol
         assert node.left == expr(2).unwrap()
         assert node.right == a.unwrap()
 
     def test_unary_negation(self, a):
         node = (-a).unwrap()
         assert isinstance(node, UnaryExpr)
-        assert node.op == "-"
+        assert node.unary_op == "-"
         assert node.operand == a.unwrap()
 
     def test_abs_is_a_call_expr(self, a):
@@ -156,21 +156,21 @@ class TestComparisonOperators:
     def test_comparison_op_produces_the_right_node(self, a, op, symbol):
         node = op(a, 2).unwrap()
         assert isinstance(node, CompareExpr)
-        assert node.op == symbol
+        assert node.compare_op == symbol
         assert node.left == a.unwrap()
         assert node.right == expr(2).unwrap()
 
     def test_eq_produces_a_compare_expr(self, a):
         node = a.eq(2).unwrap()
         assert isinstance(node, CompareExpr)
-        assert node.op == "=="
+        assert node.compare_op == "=="
         assert node.left == a.unwrap()
         assert node.right == expr(2).unwrap()
 
     def test_ne_produces_a_compare_expr(self, a):
         node = a.ne(2).unwrap()
         assert isinstance(node, CompareExpr)
-        assert node.op == "!="
+        assert node.compare_op == "!="
 
     def test_dunder_eq_does_not_build_a_compare_expr(self, a):
         """The asymmetry the class docstring documents: ``==`` is identity, not a node builder."""
@@ -186,19 +186,19 @@ class TestLogicalOperators:
     def test_and(self, a):
         node = a.and_(True).unwrap()
         assert isinstance(node, LogicalExpr)
-        assert node.op == "and"
+        assert node.logical_op == "and"
         assert node.operands == [a.unwrap(), expr(True).unwrap()]
 
     def test_or(self, a):
         node = a.or_(True).unwrap()
         assert isinstance(node, LogicalExpr)
-        assert node.op == "or"
+        assert node.logical_op == "or"
         assert node.operands == [a.unwrap(), expr(True).unwrap()]
 
     def test_not(self, a):
         node = a.not_().unwrap()
         assert isinstance(node, LogicalExpr)
-        assert node.op == "not"
+        assert node.logical_op == "not"
         assert node.operands == [a.unwrap()]
 
 
@@ -212,7 +212,7 @@ def test_a_deep_expression_round_trips(a):
     tree = ((a + 1) * 2 - abs(-a)) / (a % 3)
     node = tree.unwrap()
     assert isinstance(node, BinaryExpr)
-    assert node.op == "/"
+    assert node.binary_op == "/"
     # Round-trip through the model layer to check the composed tree actually validates.
     dumped = node.model_dump_json()
     TypeAdapter(Expression).validate_json(dumped)
