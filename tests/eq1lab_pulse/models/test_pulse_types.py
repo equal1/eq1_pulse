@@ -143,7 +143,7 @@ def test_pulse_with_external_refs():
 
 def test_pulse_with_expression():
     """Test that a widened pulse field accepts an Expression, not just a bare SymbolRef."""
-    duration = BinaryExpr(binary_op="+", left=SymbolExpr(symbol=VariableRef("d")), right=LiteralExpr(value={"ns": 10}))
+    duration = BinaryExpr(binary_op="+", lhs=SymbolExpr(symbol=VariableRef("d")), rhs=LiteralExpr(value={"ns": 10}))
     square = SquarePulse(duration=duration, amplitude=Amplitude(V=0.5))
     assert isinstance(square.duration, BinaryExpr)
 
@@ -151,7 +151,7 @@ def test_pulse_with_expression():
     reloaded: Any = TypeAdapter(PulseType).validate_python(document)
     assert isinstance(reloaded, SquarePulse)
     assert isinstance(reloaded.duration, BinaryExpr)
-    assert isinstance(reloaded.duration.left, SymbolExpr)
+    assert isinstance(reloaded.duration.lhs, SymbolExpr)
 
 
 def test_sine_pulse_frequency_sweep():

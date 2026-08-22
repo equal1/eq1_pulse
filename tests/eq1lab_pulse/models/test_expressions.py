@@ -33,7 +33,7 @@ def nested_negations(levels: int) -> Any:
     """Build a tree *levels* nodes deep: a literal under ``levels - 1`` negations."""
     expression: Any = LiteralExpr(value=1)
     for _ in range(levels - 1):
-        expression = UnaryExpr(unary_op="-", operand=expression)
+        expression = UnaryExpr(unary_op="-", rhs=expression)
     return expression
 
 
@@ -42,20 +42,20 @@ def nested_negations(levels: int) -> Any:
     [
         pytest.param(LiteralExpr(value=1.5), id="literal"),
         pytest.param(SymbolExpr(symbol=VariableRef("scale")), id="symbol"),
-        pytest.param(UnaryExpr(unary_op="-", operand=LiteralExpr(value=1)), id="unary"),
+        pytest.param(UnaryExpr(unary_op="-", rhs=LiteralExpr(value=1)), id="unary"),
         pytest.param(
-            BinaryExpr(binary_op="*", left=SymbolExpr(symbol=VariableRef("scale")), right=LiteralExpr(value=2)),
+            BinaryExpr(binary_op="*", lhs=SymbolExpr(symbol=VariableRef("scale")), rhs=LiteralExpr(value=2)),
             id="binary",
         ),
         pytest.param(
-            CompareExpr(compare_op=">=", left=SymbolExpr(symbol=VariableRef("count")), right=LiteralExpr(value=3)),
+            CompareExpr(compare_op=">=", lhs=SymbolExpr(symbol=VariableRef("count")), rhs=LiteralExpr(value=3)),
             id="compare",
         ),
         pytest.param(
             LogicalExpr(
                 logical_op="and",
                 operands=[
-                    CompareExpr(compare_op="<", left=SymbolExpr(symbol=VariableRef("x")), right=LiteralExpr(value=1)),
+                    CompareExpr(compare_op="<", lhs=SymbolExpr(symbol=VariableRef("x")), rhs=LiteralExpr(value=1)),
                     SymbolExpr(symbol=VariableRef("flag")),
                 ],
             ),
@@ -91,9 +91,9 @@ def test_union_discriminates_on_node_key(key: str, node_type: type):
     documents: dict[str, dict[str, Any]] = {
         "value": {"value": 1},
         "symbol": {"symbol": {"var": "x"}},
-        "unary_op": {"unary_op": "-", "operand": operand},
-        "binary_op": {"binary_op": "+", "left": operand, "right": operand},
-        "compare_op": {"compare_op": "<", "left": operand, "right": operand},
+        "unary_op": {"unary_op": "-", "rhs": operand},
+        "binary_op": {"binary_op": "+", "lhs": operand, "rhs": operand},
+        "compare_op": {"compare_op": "<", "lhs": operand, "rhs": operand},
         "logical_op": {"logical_op": "or", "operands": [operand, operand]},
         "function": {"function": "sqrt", "args": [operand]},
     }
@@ -110,18 +110,18 @@ def test_nested_tree_validates_from_a_plain_dict():
     """
     document = {
         "compare_op": "<",
-        "left": {
+        "lhs": {
             "binary_op": "+",
-            "left": {"symbol": {"var": "x"}},
-            "right": {"value": 1},
+            "lhs": {"symbol": {"var": "x"}},
+            "rhs": {"value": 1},
         },
-        "right": {"value": 2},
+        "rhs": {"value": 2},
     }
     node: Any = expression_adapter().validate_python(document)
     assert isinstance(node, CompareExpr)
-    assert isinstance(node.left, BinaryExpr)
-    assert isinstance(node.left.left, SymbolExpr)
-    assert isinstance(node.left.right, LiteralExpr)
+    assert isinstance(node.lhs, BinaryExpr)
+    assert isinstance(node.lhs.lhs, SymbolExpr)
+    assert isinstance(node.lhs.rhs, LiteralExpr)
     assert json.loads(node.model_dump_json()) == document
 
 
@@ -131,9 +131,9 @@ def test_unary_op_is_serialized():
     A default on it would be elided by :class:`~.base_models.LeanModel` -- ordinary default elision,
     not the discriminator rule -- and the operator would vanish from the wire.
     """
-    assert UnaryExpr(unary_op="-", operand=LiteralExpr(value=1)).model_dump() == {
+    assert UnaryExpr(unary_op="-", rhs=LiteralExpr(value=1)).model_dump() == {
         "unary_op": "-",
-        "operand": {"value": 1},
+        "rhs": {"value": 1},
     }
 
 
@@ -191,7 +191,7 @@ def test_deep_tree_is_rejected_from_the_wire_too():
     """A too-deep document is rejected on validation, not only on construction."""
     document = json.loads(nested_negations(MAX_EXPRESSION_DEPTH).model_dump_json())
     with pytest.raises(ValidationError, match=str(MAX_EXPRESSION_DEPTH)):
-        expression_adapter().validate_python({"unary_op": "-", "operand": document})
+        expression_adapter().validate_python({"unary_op": "-", "rhs": document})
 
 
 def test_symbol_expr_keeps_the_external_reference_form():
@@ -228,12 +228,12 @@ def test_exact_serialization_of_mixed_tree_with_warnings_as_errors():
     """
     compare_node = CompareExpr(
         compare_op="<",
-        left=BinaryExpr(
+        lhs=BinaryExpr(
             binary_op="+",
-            left=SymbolExpr(symbol=VariableRef("x")),
-            right=LiteralExpr(value=1),
+            lhs=SymbolExpr(symbol=VariableRef("x")),
+            rhs=LiteralExpr(value=1),
         ),
-        right=CallExpr(function="abs", args=[UnaryExpr(unary_op="-", operand=LiteralExpr(value=2))]),
+        rhs=CallExpr(function="abs", args=[UnaryExpr(unary_op="-", rhs=LiteralExpr(value=2))]),
     )
     tree = LogicalExpr(
         logical_op="and",
@@ -252,29 +252,29 @@ def test_exact_serialization_of_mixed_tree_with_warnings_as_errors():
 
 def test_binary_and_compare_expr_do_not_collide():
     """BinaryExpr and CompareExpr differ only in operator key and do not confuse the union."""
-    binary = BinaryExpr(binary_op="+", left=LiteralExpr(value=1), right=LiteralExpr(value=2))
-    compare = CompareExpr(compare_op="<", left=LiteralExpr(value=1), right=LiteralExpr(value=2))
+    binary = BinaryExpr(binary_op="+", lhs=LiteralExpr(value=1), rhs=LiteralExpr(value=2))
+    compare = CompareExpr(compare_op="<", lhs=LiteralExpr(value=1), rhs=LiteralExpr(value=2))
 
     binary_in_compare = CompareExpr(
         compare_op="<",
-        left=binary,
-        right=LiteralExpr(value=3),
+        lhs=binary,
+        rhs=LiteralExpr(value=3),
     )
     compare_in_binary = BinaryExpr(
         binary_op="+",
-        left=compare,
-        right=LiteralExpr(value=3),
+        lhs=compare,
+        rhs=LiteralExpr(value=3),
     )
 
     binary_doc = binary_in_compare.model_dump()
     binary_reloaded: Any = expression_adapter().validate_python(binary_doc)
-    assert isinstance(binary_reloaded.left, BinaryExpr)
-    assert binary_reloaded.left == binary
+    assert isinstance(binary_reloaded.lhs, BinaryExpr)
+    assert binary_reloaded.lhs == binary
 
     compare_doc = compare_in_binary.model_dump()
     compare_reloaded: Any = expression_adapter().validate_python(compare_doc)
-    assert isinstance(compare_reloaded.left, CompareExpr)
-    assert compare_reloaded.left == compare
+    assert isinstance(compare_reloaded.lhs, CompareExpr)
+    assert compare_reloaded.lhs == compare
 
 
 @pytest.mark.parametrize(
@@ -284,19 +284,19 @@ def test_binary_and_compare_expr_do_not_collide():
         pytest.param("symbol", {"symbol": {"var": "x"}}, SymbolExpr, id="symbol"),
         pytest.param(
             "unary_op",
-            {"unary_op": "-", "operand": {"value": 1}},
+            {"unary_op": "-", "rhs": {"value": 1}},
             UnaryExpr,
             id="unary",
         ),
         pytest.param(
             "binary_op",
-            {"binary_op": "+", "left": {"value": 1}, "right": {"value": 2}},
+            {"binary_op": "+", "lhs": {"value": 1}, "rhs": {"value": 2}},
             BinaryExpr,
             id="binary",
         ),
         pytest.param(
             "compare_op",
-            {"compare_op": "<", "left": {"value": 1}, "right": {"value": 2}},
+            {"compare_op": "<", "lhs": {"value": 1}, "rhs": {"value": 2}},
             CompareExpr,
             id="compare",
         ),
@@ -337,7 +337,7 @@ def test_valueref_still_disambiguates():
     adapter: TypeAdapter[Any] = TypeAdapter(ValueRef)
     assert isinstance(adapter.validate_python({"var": "x"}), VariableRef)
     assert isinstance(adapter.validate_python({"ext": "q0.f01"}), ExternalRef)
-    binary_doc = {"binary_op": "+", "left": {"value": 1}, "right": {"value": 2}}
+    binary_doc = {"binary_op": "+", "lhs": {"value": 1}, "rhs": {"value": 2}}
     node: Any = adapter.validate_python(binary_doc)
     assert isinstance(node, BinaryExpr)
 
@@ -346,12 +346,12 @@ def test_no_expr_type_survives_in_dumped_tree():
     """The string 'expr_type' does not appear anywhere in a serialized tree."""
     tree = CompareExpr(
         compare_op="<",
-        left=BinaryExpr(
+        lhs=BinaryExpr(
             binary_op="+",
-            left=SymbolExpr(symbol=VariableRef("scale")),
-            right=LiteralExpr(value={"mV": 80}),
+            lhs=SymbolExpr(symbol=VariableRef("scale")),
+            rhs=LiteralExpr(value={"mV": 80}),
         ),
-        right=LiteralExpr(value=2),
+        rhs=LiteralExpr(value=2),
     )
     json_str = tree.model_dump_json()
     assert "expr_type" not in json_str

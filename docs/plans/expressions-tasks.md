@@ -208,23 +208,19 @@ value union it builds on, and building on it first only means fixing it twice.
 
 2. Create `src/eq1_pulse/models/expressions.py` with the seven node types from plan §2.1:
    `ExprBase(LeanModel)`, `LiteralExpr`, `SymbolExpr`, `UnaryExpr`, `BinaryExpr`, `CompareExpr`,
-   `LogicalExpr`, `CallExpr`, and the `Expression` discriminated union on `expr_type`. (`ExprBase` is
-   the base, not one of the seven.)
+   `LogicalExpr`, `CallExpr`, and the `Expression` discriminated union. (`ExprBase` is the base, not
+   one of the seven.)
 
-   `expr_type` is declared **first** in every class — `LeanModel` treats the first single-valued
-   `Literal` field as the discriminator and always serializes it.
+   The operator fields (`unary_op`, `binary_op`, `compare_op`, `logical_op`) are declared **first**
+   on their respective classes and serve as discriminators via a callable `Discriminator` function.
 
-3. **No `op` or `function` field carries a default.** `op` is multi-valued on four of the five nodes
-   and so is an ordinary field, which is what is wanted — but `UnaryExpr.op` is `Literal["-"]`,
-   single-valued, and `LeanModel`'s ordinary default elision then drops it from the wire entirely:
-   measured, `op: Literal["-"] = "-"` serializes as `{"expr_type": "unary", "operand": …}`. Declare
-   it without a default and test that `model_dump()` contains `op`.
+3. **No operator field carries a default.** The operator fields are `unary_op`, `binary_op`, `compare_op`, and `logical_op` — all single-valued `Literal`s declared first on their respective classes and always serialized as discriminators. Test that `UnaryExpr.model_dump()` contains `unary_op`.
 
 4. `LiteralExpr.value` is `SymbolValue`, imported from `data_ops.py` where #6 put it and step 1 fixed
    it. `SymbolExpr.symbol` is `SymbolRef` from `reference_types.py`. Do not redefine either.
 
-5. `UnaryExpr.op` is `Literal["-"]` **only**. `abs` is a `CallExpr` function, not a unary op
-   (plan §8 Q3). `LogicalExpr` carries `operands: list[Expression]` and `op: Literal["and", "or", "not"]`.
+5. `UnaryExpr.unary_op` is `Literal["-"]` **only**. `abs` is a `CallExpr` function, not a unary op
+   (plan §8 Q3). `LogicalExpr` carries `operands: list[Expression]` and `logical_op: Literal["and", "or", "not"]`.
 
 6. Validators — these three and no others:
    - `CallExpr`: `min`/`max` take ≥ 2 args, every other function takes exactly 1.

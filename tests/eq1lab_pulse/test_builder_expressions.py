@@ -73,7 +73,7 @@ class TestExprConstruction:
         assert expr(wrapped) is wrapped
 
     def test_identity_on_a_bare_node(self):
-        node = BinaryExpr(binary_op="+", left=LiteralExpr(value=1), right=LiteralExpr(value=2))
+        node = BinaryExpr(binary_op="+", lhs=LiteralExpr(value=1), rhs=LiteralExpr(value=2))
         assert expr(node).unwrap() is node
 
     def test_expr_of_expr_is_expr_of_x(self):
@@ -99,17 +99,17 @@ class TestArithmeticOperators:
         node = op(a, 2).unwrap()
         assert isinstance(node, BinaryExpr)
         assert node.binary_op == symbol
-        assert node.left == a.unwrap()
-        assert node.right == expr(2).unwrap()
+        assert node.lhs == a.unwrap()
+        assert node.rhs == expr(2).unwrap()
 
     def test_reflected_forms_differ_only_in_operand_order(self, a):
-        left = (a * 2).unwrap()
-        right = (2 * a).unwrap()
-        assert isinstance(left, BinaryExpr)
-        assert isinstance(right, BinaryExpr)
-        assert left.binary_op == right.binary_op == "*"
-        assert left.left == right.right == a.unwrap()
-        assert left.right == right.left == expr(2).unwrap()
+        left_expr = (a * 2).unwrap()
+        right_expr = (2 * a).unwrap()
+        assert isinstance(left_expr, BinaryExpr)
+        assert isinstance(right_expr, BinaryExpr)
+        assert left_expr.binary_op == right_expr.binary_op == "*"
+        assert left_expr.lhs == right_expr.rhs == a.unwrap()
+        assert left_expr.rhs == right_expr.lhs == expr(2).unwrap()
 
     @pytest.mark.parametrize(
         ("op", "symbol"),
@@ -125,14 +125,14 @@ class TestArithmeticOperators:
         node = op(a, 2).unwrap()
         assert isinstance(node, BinaryExpr)
         assert node.binary_op == symbol
-        assert node.left == expr(2).unwrap()
-        assert node.right == a.unwrap()
+        assert node.lhs == expr(2).unwrap()
+        assert node.rhs == a.unwrap()
 
     def test_unary_negation(self, a):
         node = (-a).unwrap()
         assert isinstance(node, UnaryExpr)
         assert node.unary_op == "-"
-        assert node.operand == a.unwrap()
+        assert node.rhs == a.unwrap()
 
     def test_abs_is_a_call_expr(self, a):
         node = abs(a).unwrap()
@@ -157,15 +157,15 @@ class TestComparisonOperators:
         node = op(a, 2).unwrap()
         assert isinstance(node, CompareExpr)
         assert node.compare_op == symbol
-        assert node.left == a.unwrap()
-        assert node.right == expr(2).unwrap()
+        assert node.lhs == a.unwrap()
+        assert node.rhs == expr(2).unwrap()
 
     def test_eq_produces_a_compare_expr(self, a):
         node = a.eq(2).unwrap()
         assert isinstance(node, CompareExpr)
         assert node.compare_op == "=="
-        assert node.left == a.unwrap()
-        assert node.right == expr(2).unwrap()
+        assert node.lhs == a.unwrap()
+        assert node.rhs == expr(2).unwrap()
 
     def test_ne_produces_a_compare_expr(self, a):
         node = a.ne(2).unwrap()

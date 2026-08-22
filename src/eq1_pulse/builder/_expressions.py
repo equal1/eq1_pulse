@@ -93,52 +93,52 @@ class Expr:
         return self._node
 
     def __add__(self, other: _ExprOperand) -> Expr:
-        return Expr(BinaryExpr(binary_op="+", left=self.unwrap(), right=expr(other).unwrap()))
+        return Expr(BinaryExpr(binary_op="+", lhs=self.unwrap(), rhs=expr(other).unwrap()))
 
     def __radd__(self, other: _ExprOperand) -> Expr:
-        return Expr(BinaryExpr(binary_op="+", left=expr(other).unwrap(), right=self.unwrap()))
+        return Expr(BinaryExpr(binary_op="+", lhs=expr(other).unwrap(), rhs=self.unwrap()))
 
     def __sub__(self, other: _ExprOperand) -> Expr:
-        return Expr(BinaryExpr(binary_op="-", left=self.unwrap(), right=expr(other).unwrap()))
+        return Expr(BinaryExpr(binary_op="-", lhs=self.unwrap(), rhs=expr(other).unwrap()))
 
     def __rsub__(self, other: _ExprOperand) -> Expr:
-        return Expr(BinaryExpr(binary_op="-", left=expr(other).unwrap(), right=self.unwrap()))
+        return Expr(BinaryExpr(binary_op="-", lhs=expr(other).unwrap(), rhs=self.unwrap()))
 
     def __mul__(self, other: _ExprOperand) -> Expr:
-        return Expr(BinaryExpr(binary_op="*", left=self.unwrap(), right=expr(other).unwrap()))
+        return Expr(BinaryExpr(binary_op="*", lhs=self.unwrap(), rhs=expr(other).unwrap()))
 
     def __rmul__(self, other: _ExprOperand) -> Expr:
-        return Expr(BinaryExpr(binary_op="*", left=expr(other).unwrap(), right=self.unwrap()))
+        return Expr(BinaryExpr(binary_op="*", lhs=expr(other).unwrap(), rhs=self.unwrap()))
 
     def __truediv__(self, other: _ExprOperand) -> Expr:
-        return Expr(BinaryExpr(binary_op="/", left=self.unwrap(), right=expr(other).unwrap()))
+        return Expr(BinaryExpr(binary_op="/", lhs=self.unwrap(), rhs=expr(other).unwrap()))
 
     def __rtruediv__(self, other: _ExprOperand) -> Expr:
-        return Expr(BinaryExpr(binary_op="/", left=expr(other).unwrap(), right=self.unwrap()))
+        return Expr(BinaryExpr(binary_op="/", lhs=expr(other).unwrap(), rhs=self.unwrap()))
 
     def __mod__(self, other: _ExprOperand) -> Expr:
-        return Expr(BinaryExpr(binary_op="%", left=self.unwrap(), right=expr(other).unwrap()))
+        return Expr(BinaryExpr(binary_op="%", lhs=self.unwrap(), rhs=expr(other).unwrap()))
 
     def __rmod__(self, other: _ExprOperand) -> Expr:
-        return Expr(BinaryExpr(binary_op="%", left=expr(other).unwrap(), right=self.unwrap()))
+        return Expr(BinaryExpr(binary_op="%", lhs=expr(other).unwrap(), rhs=self.unwrap()))
 
     def __neg__(self) -> Expr:
-        return Expr(UnaryExpr(unary_op="-", operand=self.unwrap()))
+        return Expr(UnaryExpr(unary_op="-", rhs=self.unwrap()))
 
     def __abs__(self) -> Expr:
         return Expr(CallExpr(function="abs", args=[self.unwrap()]))
 
     def __lt__(self, other: _ExprOperand) -> Expr:
-        return Expr(CompareExpr(compare_op="<", left=self.unwrap(), right=expr(other).unwrap()))
+        return Expr(CompareExpr(compare_op="<", lhs=self.unwrap(), rhs=expr(other).unwrap()))
 
     def __le__(self, other: _ExprOperand) -> Expr:
-        return Expr(CompareExpr(compare_op="<=", left=self.unwrap(), right=expr(other).unwrap()))
+        return Expr(CompareExpr(compare_op="<=", lhs=self.unwrap(), rhs=expr(other).unwrap()))
 
     def __gt__(self, other: _ExprOperand) -> Expr:
-        return Expr(CompareExpr(compare_op=">", left=self.unwrap(), right=expr(other).unwrap()))
+        return Expr(CompareExpr(compare_op=">", lhs=self.unwrap(), rhs=expr(other).unwrap()))
 
     def __ge__(self, other: _ExprOperand) -> Expr:
-        return Expr(CompareExpr(compare_op=">=", left=self.unwrap(), right=expr(other).unwrap()))
+        return Expr(CompareExpr(compare_op=">=", lhs=self.unwrap(), rhs=expr(other).unwrap()))
 
     def eq(self, other: _ExprOperand) -> Expr:
         """Build a :class:`~.expressions.CompareExpr` testing equality with *other*.
@@ -148,7 +148,7 @@ class Expr:
         :param other: The value to compare against.
         :return: An :class:`Expr` wrapping the comparison.
         """
-        return Expr(CompareExpr(compare_op="==", left=self.unwrap(), right=expr(other).unwrap()))
+        return Expr(CompareExpr(compare_op="==", lhs=self.unwrap(), rhs=expr(other).unwrap()))
 
     def ne(self, other: _ExprOperand) -> Expr:
         """Build a :class:`~.expressions.CompareExpr` testing inequality with *other*.
@@ -158,7 +158,7 @@ class Expr:
         :param other: The value to compare against.
         :return: An :class:`Expr` wrapping the comparison.
         """
-        return Expr(CompareExpr(compare_op="!=", left=self.unwrap(), right=expr(other).unwrap()))
+        return Expr(CompareExpr(compare_op="!=", lhs=self.unwrap(), rhs=expr(other).unwrap()))
 
     def and_(self, other: _ExprOperand) -> Expr:
         """Build a :class:`~.expressions.LogicalExpr` ANDing this expression with *other*.

@@ -148,13 +148,13 @@ class UnaryExpr(ExprBase):
     """
 
     unary_op: Literal["-"]
-    """The operator applied to :attr:`operand`.
+    """The operator applied to :attr:`rhs`.
 
     Declared without a default even though it has exactly one possible value: it is the
     discriminator for this node now, first in the class, so :class:`~.base_models.LeanModel`
     serializes it always regardless of whether it has one.
     """
-    operand: Expression
+    rhs: Expression
     """The expression being negated."""
 
 
@@ -163,9 +163,9 @@ class BinaryExpr(ExprBase):
 
     binary_op: Literal["+", "-", "*", "/", "%"]
     """The arithmetic operator."""
-    left: Expression
+    lhs: Expression
     """The left-hand operand."""
-    right: Expression
+    rhs: Expression
     """The right-hand operand."""
 
 
@@ -178,9 +178,9 @@ class CompareExpr(ExprBase):
 
     compare_op: Literal["<", "<=", ">", ">=", "==", "!="]
     """The comparison operator."""
-    left: Expression
+    lhs: Expression
     """The left-hand operand."""
-    right: Expression
+    rhs: Expression
     """The right-hand operand."""
 
 

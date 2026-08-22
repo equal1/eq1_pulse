@@ -132,10 +132,10 @@ def _check_expression_leaves(node: Expression) -> None:
             else:
                 _check_external_declared(symbol.ext)
         elif isinstance(current, UnaryExpr):
-            stack.append(current.operand)
+            stack.append(current.rhs)
         elif isinstance(current, BinaryExpr | CompareExpr):
-            stack.append(current.left)
-            stack.append(current.right)
+            stack.append(current.lhs)
+            stack.append(current.rhs)
         elif isinstance(current, LogicalExpr):
             stack.extend(current.operands)
         elif isinstance(current, CallExpr):

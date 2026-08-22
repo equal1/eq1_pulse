@@ -86,18 +86,18 @@ for the others. The node set, validators and builder API are unchanged; only the
 
 ```text
 ExprBase(LeanModel)
-├── LiteralExpr    expr_type="literal"   value: SymbolValue
-├── SymbolExpr     expr_type="symbol"    symbol: SymbolRef
-├── UnaryExpr      expr_type="unary"     op: "-"                           operand: Expression
-├── BinaryExpr     expr_type="binary"    op: "+" | "-" | "*" | "/" | "%"
-│                                        left: Expression, right: Expression
-├── CompareExpr    expr_type="compare"   op: "<" | "<=" | ">" | ">=" | "==" | "!="
-│                                        left: Expression, right: Expression
-├── LogicalExpr    expr_type="logical"   op: "and" | "or" | "not"          operands: list[Expression]
-└── CallExpr       expr_type="call"      function: Literal[...]            args: list[Expression]
+├── LiteralExpr    value: SymbolValue
+├── SymbolExpr     symbol: SymbolRef
+├── UnaryExpr      unary_op: "-"                           rhs: Expression
+├── BinaryExpr     binary_op: "+" | "-" | "*" | "/" | "%"
+│                  lhs: Expression, rhs: Expression
+├── CompareExpr    compare_op: "<" | "<=" | ">" | ">=" | "==" | "!="
+│                  lhs: Expression, rhs: Expression
+├── LogicalExpr    logical_op: "and" | "or" | "not"        operands: list[Expression]
+└── CallExpr       function: Literal[...]                   args: list[Expression]
 
 Expression = Annotated[LiteralExpr | SymbolExpr | UnaryExpr | BinaryExpr | CompareExpr | LogicalExpr | CallExpr,
-                       Discriminator("expr_type")]
+                       Discriminator(...)]
 ```
 
 `CompareExpr` and `LogicalExpr` are separate from `BinaryExpr` rather than further `op` values
@@ -106,7 +106,7 @@ because their result type is categorically different — both yield booleans, an
 predicate?" is answerable from the discriminator alone, without inspecting `op`. Applying that rule
 consistently is what makes it a rule rather than a special case for comparisons.
 
-`LogicalExpr` takes a `list[Expression]` rather than `left`/`right` because `not` is unary and
+`LogicalExpr` takes a `list[Expression]` for `operands` rather than `lhs`/`rhs` because `not` is unary and
 `and`/`or` are naturally n-ary; a validator checks that `not` has exactly one operand and
 `and`/`or` have at least two. Same shape, and the same kind of validator, as `CallExpr` arity.
 
@@ -128,27 +128,6 @@ extra work.
     rather than a literal field. The first field on each operator node is now the operator itself
     (``unary_op``, ``binary_op``, ``compare_op``, ``logical_op``), and it is always serialized.
 
-.. old::
-
-    The `LeanModel` convention (first single-valued `Literal` field is the discriminator and is
-    always serialized) is satisfied by `expr_type` being declared first in every class. `op` is an
-    ordinary field — for four of the five nodes because it is *multi*-valued, which is the
-    behaviour wanted.
-
-.. note::
-
-    **[Revision: operator-keyed serialization]** The trap described below no longer applies:
-    operator fields are now the discriminator and are always serialized regardless of defaults.
-
-.. old::
-
-    `UnaryExpr.op` is the exception, and it is a trap: `Literal["-"]` is single-valued. It is not
-    stripped as a discriminator — `_non_discriminator_fields` strips only the *first* field — but
-    it is subject to `LeanModel`'s ordinary default elision. Measured: `op: Literal["-"] = "-"`
-    serializes as `{"expr_type": "unary", "operand": …}`, with the operator gone, while
-    `op: Literal["-"]` keeps it. **No `op` or `function` field carries a default**, on any node.
-    That is the whole of the rule, and it also protects `CallExpr.function` should its literal
-    ever narrow to one name.
 
 ### 2.2 Function set
 

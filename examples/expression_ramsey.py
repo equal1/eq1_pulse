@@ -48,3 +48,5 @@ with build_sequence() as seq:
             amplitude="50mV",
             integration=full_integration(),
         )
+
+print(seq.model_dump_json(indent=2))
