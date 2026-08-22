@@ -29,12 +29,21 @@ if TYPE_CHECKING:
 
 __all__ = (
     "Expr",
+    "ExprLike",
     "expr",
 )
 
 
 type _ExprOperand = Expr | Expression | SymbolRef | SymbolValueLike
 """Anything an operator or :class:`Expr`'s constructor accepts on either side."""
+
+type ExprLike = Expr | Expression
+"""An already-wrapped :class:`Expr` or a bare :data:`~.expressions.Expression` node.
+
+What every builder function that widened for expressions accepts in addition to its existing
+:data:`~.reference_types.SymbolRefLike`: a value already run through :func:`expr`, or a fragment
+deserialized straight into an :data:`~.expressions.Expression` model.
+"""
 
 
 class Expr:

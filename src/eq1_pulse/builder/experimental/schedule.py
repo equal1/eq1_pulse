@@ -88,6 +88,7 @@ if TYPE_CHECKING:
     from ...models.basic_types import AmplitudeLike, DurationLike, FrequencyLike, PhaseLike, ThresholdLike
     from ...models.data_ops import ComparisonModeLike, ComplexToRealProjectionModeLike
     from ...models.reference_types import ChannelRefLike, PulseRefLike, SymbolRefLike, VariableRefLike
+    from .._expressions import ExprLike
 
 __all__ = (
     "ScheduleBlock",
@@ -754,7 +755,7 @@ def play(
     channel: ChannelRefLike,
     pulse: PulseType | str | PulseRefLike,
     *,
-    scale_amp: float | complex | str | SymbolRefLike | None = None,
+    scale_amp: float | complex | str | SymbolRefLike | ExprLike | None = None,
     cond: str | VariableRefLike | None = None,
     **schedule_params: Unpack[ScheduleParams],
 ) -> OperationToken:

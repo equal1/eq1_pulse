@@ -70,6 +70,7 @@ from ..models.pulse_types import PulseType
 from ..models.reference_types import PulseRef, VariableRef
 from ..models.sequence import Conditional, Iteration, OpSequence, Repetition
 from ._coerce import as_channel_ref, as_duration, as_frequency, as_phase, as_pulse_ref, as_symbol_value, as_threshold
+from ._expressions import expr as expr
 from ._factories import _coerce_or_ref as _coerce_or_ref
 from ._factories import (
     _convert_range_to_model,
@@ -105,6 +106,7 @@ if TYPE_CHECKING:
     from ..models.basic_types import AmplitudeLike, DurationLike, FrequencyLike, PhaseLike, ThresholdLike
     from ..models.data_ops import ComparisonModeLike, ComplexToRealProjectionModeLike, SymbolValueLike
     from ..models.reference_types import ChannelRefLike, PulseRefLike, SymbolRefLike, VariableRefLike
+    from ._expressions import ExprLike
 
 __all__ = (
     "arbitrary_pulse",
@@ -113,6 +115,7 @@ __all__ = (
     "channel",
     "demod_integration",
     "discriminate",
+    "expr",
     "ext",
     "extern_decl",
     "external_block",
@@ -260,7 +263,7 @@ def sub_sequence() -> Iterator[OpSequence]:
 
 
 @contextmanager
-def repeat(count: int | str | SymbolRefLike) -> Iterator[Repetition]:
+def repeat(count: int | str | SymbolRefLike | ExprLike) -> Iterator[Repetition]:
     """Context manager for building a repetition block.
 
     :param count: Number of times to repeat, or a variable/external reference resolved at run time
@@ -409,14 +412,19 @@ def for_(
 
 
 @contextmanager
-def if_(var: str | SymbolRefLike) -> Iterator[Conditional]:
+def if_(var: str | SymbolRefLike | ExprLike) -> Iterator[Conditional]:
     """Context manager for building a conditional block.
 
-    :param var: Variable or external reference for the condition
+    :param var: The predicate for the condition: a variable/external reference, an expression
+        built with :func:`~eq1_pulse.builder.expr` (a comparison or boolean connective -- an
+        arithmetic expression is rejected), or a bare :data:`~.expressions.Expression` fragment
 
     :yield: The conditional being built
 
-    :raises RuntimeError: If not called within a sequence context
+    :raises RuntimeError: If not called within a sequence context, or *var* is an expression
+        naming an undeclared variable or external symbol
+    :raises pydantic.ValidationError: If *var* is an expression but not a predicate (e.g. an
+        arithmetic node)
 
     Examples
 
@@ -428,6 +436,10 @@ def if_(var: str | SymbolRefLike) -> Iterator[Conditional]:
             var_decl("result", "bool")
             # ... perform measurement to populate result ...
             with if_("result"):
+                play("qubit", square_pulse(duration="50ns", amplitude="100mV"))
+
+            var_decl("count", "int")
+            with if_(expr(var("count")) > 5):
                 play("qubit", square_pulse(duration="50ns", amplitude="100mV"))
     """
     validated_var = _validate_or_pass_through(var, param_name="var", context="if_()")
@@ -756,8 +768,8 @@ def play(
     channel: ChannelRefLike,
     pulse: PulseType | str | PulseRefLike,
     *,
-    scale_amp: float | complex | str | SymbolRefLike | None = None,
-    cond: str | SymbolRefLike | None = None,
+    scale_amp: float | complex | str | SymbolRefLike | ExprLike | None = None,
+    cond: str | SymbolRefLike | ExprLike | None = None,
 ) -> None:
     """Play a pulse on a channel.
 
@@ -790,7 +802,7 @@ def play(
 
 def wait(
     *channels: ChannelRefLike,
-    duration: DurationLike | SymbolRefLike,
+    duration: DurationLike | SymbolRefLike | ExprLike,
 ) -> None:
     """Add wait operation on channel(s).
 
@@ -863,7 +875,7 @@ def barrier(
 
 def set_frequency(
     channel: ChannelRefLike,
-    frequency: FrequencyLike | SymbolRefLike,
+    frequency: FrequencyLike | SymbolRefLike | ExprLike,
 ) -> None:
     """Set channel frequency.
 
@@ -881,7 +893,7 @@ def set_frequency(
     channel = as_channel_ref(channel)
     frequency = _coerce_or_ref(frequency, coerce=as_frequency, param_name="frequency", context="set_frequency()")  # type: ignore[assignment]
 
-    op = SetFrequency(channel=channel, frequency=frequency)
+    op = SetFrequency(channel=channel, frequency=frequency)  # type: ignore[arg-type]
 
     context = _current_context("set_frequency()")
     if not _in_sequence(context):
@@ -891,7 +903,7 @@ def set_frequency(
 
 def shift_frequency(
     channel: ChannelRefLike,
-    frequency: FrequencyLike | SymbolRefLike,
+    frequency: FrequencyLike | SymbolRefLike | ExprLike,
 ) -> None:
     """Shift channel frequency.
 
@@ -909,7 +921,7 @@ def shift_frequency(
     channel = as_channel_ref(channel)
     frequency = _coerce_or_ref(frequency, coerce=as_frequency, param_name="frequency", context="shift_frequency()")  # type: ignore[assignment]
 
-    op = ShiftFrequency(channel=channel, frequency=frequency)
+    op = ShiftFrequency(channel=channel, frequency=frequency)  # type: ignore[arg-type]
 
     context = _current_context("shift_frequency()")
     if not _in_sequence(context):
@@ -919,7 +931,7 @@ def shift_frequency(
 
 def set_phase(
     channel: ChannelRefLike,
-    phase: PhaseLike | SymbolRefLike,
+    phase: PhaseLike | SymbolRefLike | ExprLike,
 ) -> None:
     """Set channel phase.
 
@@ -937,7 +949,7 @@ def set_phase(
     channel = as_channel_ref(channel)
     phase = _coerce_or_ref(phase, coerce=as_phase, param_name="phase", context="set_phase()")  # type: ignore[assignment]
 
-    op = SetPhase(channel=channel, phase=phase)
+    op = SetPhase(channel=channel, phase=phase)  # type: ignore[arg-type]
 
     context = _current_context("set_phase()")
     if not _in_sequence(context):
@@ -947,7 +959,7 @@ def set_phase(
 
 def shift_phase(
     channel: ChannelRefLike,
-    phase: PhaseLike | SymbolRefLike,
+    phase: PhaseLike | SymbolRefLike | ExprLike,
 ) -> None:
     """Shift channel phase.
 
@@ -965,7 +977,7 @@ def shift_phase(
     channel = as_channel_ref(channel)
     phase = _coerce_or_ref(phase, coerce=as_phase, param_name="phase", context="shift_phase()")  # type: ignore[assignment]
 
-    op = ShiftPhase(channel=channel, phase=phase)
+    op = ShiftPhase(channel=channel, phase=phase)  # type: ignore[arg-type]
 
     context = _current_context("shift_phase()")
     if not _in_sequence(context):
@@ -977,7 +989,7 @@ def record(
     channel: ChannelRefLike,
     var: str | VariableRefLike,
     *,
-    duration: DurationLike | SymbolRefLike,
+    duration: DurationLike | SymbolRefLike | ExprLike,
     integration: FullIntegration | DemodIntegration,
 ) -> None:
     """Record (acquire) data from a channel.
@@ -1022,9 +1034,9 @@ def record(
 def discriminate(
     target: str | VariableRefLike,
     source: str | VariableRefLike,
-    threshold: ThresholdLike | SymbolRefLike,
+    threshold: ThresholdLike | SymbolRefLike | ExprLike,
     *,
-    rotation: PhaseLike | SymbolRefLike = 0,
+    rotation: PhaseLike | SymbolRefLike | ExprLike = 0,
     compare: ComparisonModeLike = ">=",
     project: ComplexToRealProjectionModeLike = "real",
 ) -> None:
@@ -1200,7 +1212,7 @@ def external_block(
     channels: dict[str, ChannelRefLike] | None = None,
     params: dict[str, Any] | None = None,
     results: dict[str, str | VariableRefLike] | None = None,
-    duration: DurationLike | SymbolRefLike | None = None,
+    duration: DurationLike | SymbolRefLike | ExprLike | None = None,
 ) -> None:
     """Reserve channels for an opaque, externally defined block of operations.
 

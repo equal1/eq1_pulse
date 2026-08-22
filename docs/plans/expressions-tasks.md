@@ -101,7 +101,7 @@ other task depends on.
 | 1 ✅ | `models/expressions.py` — the node set, plus the `SymbolValue` fix | L    | Opus 5    | high      | 200k / ~75k | `models/expressions.py`, `models/basic_types.py`, `models/data_ops.py`, `models/pulse_types.py`, `utilities/openapi_generator.py`, `tests/` |
 | 2 ✅ | Widen operations to `ValueRef`; rebuild sweep         | M    | Sonnet 5  | high      | 200k / ~60k | `models/`, `tests/`                          |
 | 3 ✅ | Builder: `Expr` and its operators                     | M    | Sonnet 5  | high      | 200k / ~45k | `builder/_expressions.py`, `tests/`          |
-| 4  | Builder: leaf checking, acceptance, exports           | M    | Sonnet 5  | medium    | 200k / ~50k | `builder/`, `tests/`                         |
+| 4 ✅ | Builder: leaf checking, acceptance, exports           | M    | Sonnet 5  | medium    | 200k / ~50k | `builder/`, `tests/`                         |
 | 5  | Schema tag, docs, example                             | S    | Haiku 4.5 | medium    | 200k / ~30k | `utilities/`, `docs/`, `examples/`, `tests/` |
 
 ### Legend
@@ -425,7 +425,36 @@ Wiring `Expr` into the operation builders (task 4). Exporting `expr` (task 4).
 
 ---
 
-## Task 4 — Builder: leaf checking, acceptance, exports
+## Task 4 — Builder: leaf checking, acceptance, exports — **done**
+
+**Status:** done, 2026-08-22. QA green (pyright 0, mypy clean, 1003 tests). As built, with a few
+additions beyond the letter of the plan, noted below.
+
+> **As built.** `_check_expression_leaves` and the `Expr`/bare-`Expression` branches on
+> `_validate_or_pass_through` / `_coerce_or_ref` / `_validate_explicit_variable_ref` landed exactly
+> as specced. Beyond that:
+>
+> - **Every `SymbolRefLike`-typed parameter in `builder/core.py` was widened to
+>   `SymbolRefLike | ExprLike`**, not only the ones pyright flagged (`repeat`, `if_`, `play`,
+>   `wait`, `set_frequency`/`shift_frequency`, `set_phase`/`shift_phase`, `record`, `discriminate`,
+>   `external_block`). The unflagged ones type-checked silently only because their model-construction
+>   call already carried a stale `# type: ignore[assignment]`/`[arg-type]` from before this task —
+>   the parameter's *declared* type, not the narrower inferred one, is what a caller sees. Widening
+>   only the flagged sites would have left `set_frequency(ch, expr(...))` accepted at runtime but
+>   rejected by a caller's own type checker. `ExprLike = Expr | Expression`, added to
+>   `builder/_expressions.py` and exported from it (plan didn't name where this alias should live).
+> - Four model-construction call sites (`SetFrequency`, `ShiftFrequency`, `SetPhase`, `ShiftPhase`)
+>   needed their own new `# type: ignore[arg-type]`, matching the pattern `_factories.py`'s pulse
+>   constructors already used — `Expr` itself (the builder wrapper, not `Expression`) is never a
+>   valid model field value, so the widened parameter type doesn't match the model's `ValueRefLike`.
+> - `builder/experimental/schedule.py` needed the type-hint-only widening the trap table predicts,
+>   on `play()`'s `scale_amp` — no functional `expr` support, per the out-of-scope note.
+> - The plan's own §5 snippet does not run as printed: `measure(..., amplitude="50mV")` omits the
+>   required `integration=` keyword, and `result_var="iq"` is never `var_decl`-ed. Both are
+>   independent of this task's changes (verified against `main` before this branch). Confirmed the
+>   snippet runs end to end with `integration=full_integration()` and a preceding
+>   `var_decl("iq", "complex")` added; task 5 owns making `examples/expression_ramsey.py` itself
+>   runnable and should carry this fix forward.
 
 **Read:** plan §4.3.
 **Goal:** builder functions accept an `Expr` and check its leaves.

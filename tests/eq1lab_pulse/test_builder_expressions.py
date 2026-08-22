@@ -1,16 +1,17 @@
 """Tests for the ``Expr`` operator-overloading wrapper and its ``expr()`` entry point.
 
-Nothing here wires ``Expr`` into the operation builders -- that is task 4. These tests only cover
-tree construction: that each operator produces the node the plan names, and the asymmetries the
-class docstring documents (``==``/``!=`` not overloaded, ``Expr`` unhashable).
+The first classes cover tree construction alone: that each operator produces the node the plan
+names, and the asymmetries the class docstring documents (``==``/``!=`` not overloaded, ``Expr``
+unhashable). :class:`TestExprWiredIntoBuilders` at the end covers task 4: builder functions
+accepting ``Expr``/``Expression`` and checking their leaves.
 """
 
 from collections.abc import Iterator
 
 import pytest
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 
-from eq1_pulse.builder import build_sequence, var, var_decl
+from eq1_pulse.builder import build_sequence, ext, extern_decl, if_, set_frequency, square_pulse, var, var_decl, wait
 from eq1_pulse.builder._expressions import Expr, expr
 from eq1_pulse.models.basic_types import Amplitude, Frequency, Time
 from eq1_pulse.models.expressions import (
@@ -23,7 +24,7 @@ from eq1_pulse.models.expressions import (
     SymbolExpr,
     UnaryExpr,
 )
-from eq1_pulse.models.reference_types import VariableRef
+from eq1_pulse.models.reference_types import ExternalRef, VariableRef
 
 
 @pytest.fixture
@@ -227,3 +228,71 @@ def test_expr_wraps_time_from_a_unit_suffixed_string():
     assert isinstance(node, LiteralExpr)
     assert isinstance(node.value, Time)
     assert node.value == Time(us=10)
+
+
+class TestExprWiredIntoBuilders:
+    """Task 4: builder functions accept ``Expr``/``Expression`` and check their leaves."""
+
+    def test_pulse_parameter_accepts_an_expression(self):
+        with build_sequence():
+            var_decl("scale", "float")
+            pulse = square_pulse(duration="25ns", amplitude=expr(var("scale")) * Amplitude("80mV"))
+        assert isinstance(pulse.amplitude, BinaryExpr)
+
+    def test_wait_duration_accepts_an_expression(self):
+        with build_sequence():
+            var_decl("step", "int")
+            var_decl("tau_step", "int")
+            wait("ch1", duration=expr(var("step")) * expr(var("tau_step")))
+
+    def test_set_frequency_accepts_an_expression(self):
+        with build_sequence():
+            extern_decl("q0.f01", "float", unit="GHz")
+            var_decl("detuning", "float", unit="MHz")
+            set_frequency("q0_drive", expr(ext("q0.f01")) + expr(var("detuning")))
+
+    def test_undeclared_variable_leaf_raises(self):
+        # VariableRef built directly, bypassing var()'s own declaration check, so the RuntimeError
+        # below is verifiably the leaf walker's, not var()'s.
+        undeclared_b = expr(SymbolExpr(symbol=VariableRef(var="b")))
+        with build_sequence():
+            var_decl("a", "int")
+            with pytest.raises(RuntimeError, match="Variable 'b' has not been declared"):
+                wait("ch1", duration=expr(var("a")) + undeclared_b)
+
+    def test_undeclared_external_leaf_raises(self):
+        # Built directly from ExternalRef, bypassing ext()'s own declaration check, so the
+        # RuntimeError below is verifiably the leaf walker's, not ext()'s.
+        undeclared = expr(SymbolExpr(symbol=ExternalRef(ext="q0.f01")))
+        with build_sequence():
+            with pytest.raises(RuntimeError, match="External symbol 'q0.f01' has not been declared"):
+                wait("ch1", duration=undeclared)
+
+    def test_undeclared_leaf_three_levels_deep_raises(self):
+        # VariableRef built directly, bypassing var()'s own declaration check, so the leaf is
+        # undeclared only three BinaryExpr levels deep -- exactly what the walker exists to catch.
+        undeclared_c = expr(SymbolExpr(symbol=VariableRef(var="c")))
+        with build_sequence():
+            var_decl("a", "int")
+            var_decl("b", "int")
+            tree = ((expr(var("a")) + expr(var("b"))) * 2) - undeclared_c
+            with pytest.raises(RuntimeError, match="Variable 'c' has not been declared"):
+                wait("ch1", duration=tree)
+
+    def test_if_accepts_a_comparison_expression(self):
+        with build_sequence():
+            var_decl("count", "int")
+            with if_(expr(var("count")) > 5):
+                pass
+
+    def test_if_rejects_an_arithmetic_expression(self):
+        with build_sequence():
+            var_decl("count", "int")
+            with pytest.raises(ValidationError, match="not a predicate"):
+                with if_(expr(var("count")) + 1):
+                    pass
+
+    def test_bare_expression_model_is_accepted_unwrapped(self):
+        with build_sequence():
+            node = expr("10us").unwrap()
+            wait("ch1", duration=node)

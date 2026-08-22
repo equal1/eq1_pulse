@@ -2,8 +2,11 @@
 
 import pytest
 
+from eq1_pulse.builder._expressions import expr
+from eq1_pulse.builder._factories import _coerce_or_ref
 from eq1_pulse.builder.core import _validate_explicit_variable_ref, _validate_or_pass_through
 from eq1_pulse.models import Amplitude, Duration, ExternalRef, Frequency, Phase, VariableRef
+from eq1_pulse.models.expressions import BinaryExpr, Expression, SymbolExpr
 
 
 class TestValidateOrPassThrough:
@@ -28,7 +31,7 @@ class TestValidateOrPassThrough:
 
     def test_model_instances_pass_through(self):
         """Model instances should pass through unchanged."""
-        result: Frequency | Duration | Amplitude | Phase | VariableRef | ExternalRef
+        result: Frequency | Duration | Amplitude | Phase | VariableRef | ExternalRef | Expression
 
         duration = Duration(us=10)
         result = _validate_or_pass_through(duration, param_name="duration", context="test()")
@@ -336,3 +339,68 @@ class TestValidateExplicitVariableRef:
         """A bare identifier-like string is not an explicit reference and passes through."""
         result = _validate_explicit_variable_ref("q0_f01", param_name="test")
         assert result == "q0_f01"
+
+    def test_expr_unwraps_and_checks_leaves(self):
+        """An Expr is unwrapped to its Expression, with its leaves checked."""
+        from eq1_pulse.builder import build_sequence, var, var_decl
+
+        with build_sequence():
+            var_decl("a", "int")
+            result = _validate_explicit_variable_ref(expr(var("a")), param_name="test")
+            assert isinstance(result, SymbolExpr)
+            assert result.symbol == VariableRef("a")
+
+    def test_expr_undeclared_leaf_raises(self):
+        undeclared = expr(SymbolExpr(symbol=VariableRef(var="undeclared_var")))
+        with pytest.raises(RuntimeError, match="Variable 'undeclared_var' has not been declared"):
+            _validate_explicit_variable_ref(undeclared, param_name="test")
+
+    def test_bare_expression_model_checked_and_passed_through(self):
+        """A bare Expression model is accepted directly, without needing to be wrapped in Expr."""
+        from eq1_pulse.builder import build_sequence, var, var_decl
+
+        with build_sequence():
+            var_decl("a", "int")
+            node = expr(var("a")).unwrap()
+            result = _validate_explicit_variable_ref(node, param_name="test")
+            assert result is node
+
+
+class TestValueRefChainAcceptsExpressions:
+    """Task 4: the widened chain -- Expr/Expression branches shared by all three functions."""
+
+    def test_validate_or_pass_through_unwraps_expr(self):
+        from eq1_pulse.builder import build_sequence, var, var_decl
+
+        with build_sequence():
+            var_decl("a", "int")
+            result = _validate_or_pass_through(expr(var("a")) + 1, param_name="test", context="test()")
+            assert isinstance(result, BinaryExpr)
+
+    def test_validate_or_pass_through_passes_through_bare_expression(self):
+        from eq1_pulse.builder import build_sequence, var, var_decl
+
+        with build_sequence():
+            var_decl("a", "int")
+            node = (expr(var("a")) + 1).unwrap()
+            result = _validate_or_pass_through(node, param_name="test", context="test()")
+            assert result is node
+
+    def test_validate_or_pass_through_undeclared_leaf_raises(self):
+        undeclared = expr(SymbolExpr(symbol=VariableRef(var="undeclared_var")))
+        with pytest.raises(RuntimeError, match="Variable 'undeclared_var' has not been declared"):
+            _validate_or_pass_through(undeclared, param_name="test", context="test()")
+
+    def test_coerce_or_ref_returns_expression_unchanged_rather_than_coercing(self):
+        """An Expression must not fall through to *coerce*, or it is silently mishandled."""
+        from eq1_pulse.builder import build_sequence, var, var_decl
+
+        with build_sequence():
+            var_decl("a", "int")
+            node = expr(var("a")).unwrap()
+
+            def _coerce_should_not_be_called(_value: object) -> Duration:
+                raise AssertionError("coerce must not be called for an Expression")
+
+            result = _coerce_or_ref(node, coerce=_coerce_should_not_be_called, param_name="duration", context="test()")
+            assert result is node
