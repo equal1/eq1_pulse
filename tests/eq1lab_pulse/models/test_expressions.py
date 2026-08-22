@@ -30,7 +30,7 @@ def nested_negations(levels: int) -> Any:
     """Build a tree *levels* nodes deep: a literal under ``levels - 1`` negations."""
     expression: Any = LiteralExpr(value=1)
     for _ in range(levels - 1):
-        expression = UnaryExpr(op="-", operand=expression)
+        expression = UnaryExpr(unary_op="-", operand=expression)
     return expression
 
 
@@ -39,20 +39,20 @@ def nested_negations(levels: int) -> Any:
     [
         pytest.param(LiteralExpr(value=1.5), id="literal"),
         pytest.param(SymbolExpr(symbol=VariableRef("scale")), id="symbol"),
-        pytest.param(UnaryExpr(op="-", operand=LiteralExpr(value=1)), id="unary"),
+        pytest.param(UnaryExpr(unary_op="-", operand=LiteralExpr(value=1)), id="unary"),
         pytest.param(
-            BinaryExpr(op="*", left=SymbolExpr(symbol=VariableRef("scale")), right=LiteralExpr(value=2)),
+            BinaryExpr(binary_op="*", left=SymbolExpr(symbol=VariableRef("scale")), right=LiteralExpr(value=2)),
             id="binary",
         ),
         pytest.param(
-            CompareExpr(op=">=", left=SymbolExpr(symbol=VariableRef("count")), right=LiteralExpr(value=3)),
+            CompareExpr(compare_op=">=", left=SymbolExpr(symbol=VariableRef("count")), right=LiteralExpr(value=3)),
             id="compare",
         ),
         pytest.param(
             LogicalExpr(
-                op="and",
+                logical_op="and",
                 operands=[
-                    CompareExpr(op="<", left=SymbolExpr(symbol=VariableRef("x")), right=LiteralExpr(value=1)),
+                    CompareExpr(compare_op="<", left=SymbolExpr(symbol=VariableRef("x")), right=LiteralExpr(value=1)),
                     SymbolExpr(symbol=VariableRef("flag")),
                 ],
             ),
@@ -71,32 +71,31 @@ def test_each_node_round_trips(node: Any):
 
 
 @pytest.mark.parametrize(
-    ("expr_type", "node_type"),
+    ("key", "node_type"),
     [
-        ("literal", LiteralExpr),
+        ("value", LiteralExpr),
         ("symbol", SymbolExpr),
-        ("unary", UnaryExpr),
-        ("binary", BinaryExpr),
-        ("compare", CompareExpr),
-        ("logical", LogicalExpr),
-        ("call", CallExpr),
+        ("unary_op", UnaryExpr),
+        ("binary_op", BinaryExpr),
+        ("compare_op", CompareExpr),
+        ("logical_op", LogicalExpr),
+        ("function", CallExpr),
     ],
 )
-def test_union_discriminates_on_expr_type(expr_type: str, node_type: type):
-    """Each ``expr_type`` routes to its own node type, from a plain dict."""
-    operand = {"expr_type": "literal", "value": 1}
+def test_union_discriminates_on_node_key(key: str, node_type: type):
+    """Each node key routes to its own node type, from a plain dict."""
+    operand = {"value": 1}
     documents: dict[str, dict[str, Any]] = {
-        "literal": {"value": 1},
+        "value": {"value": 1},
         "symbol": {"symbol": {"var": "x"}},
-        "unary": {"op": "-", "operand": operand},
-        "binary": {"op": "+", "left": operand, "right": operand},
-        "compare": {"op": "<", "left": operand, "right": operand},
-        "logical": {"op": "or", "operands": [operand, operand]},
-        "call": {"function": "sqrt", "args": [operand]},
+        "unary_op": {"unary_op": "-", "operand": operand},
+        "binary_op": {"binary_op": "+", "left": operand, "right": operand},
+        "compare_op": {"compare_op": "<", "left": operand, "right": operand},
+        "logical_op": {"logical_op": "or", "operands": [operand, operand]},
+        "function": {"function": "sqrt", "args": [operand]},
     }
-    node: Any = expression_adapter().validate_python({"expr_type": expr_type, **documents[expr_type]})
-    assert node.expr_type == expr_type
-    assert type(node) is node_type
+    node: Any = expression_adapter().validate_python(documents[key])
+    assert isinstance(node, node_type)
 
 
 def test_nested_tree_validates_from_a_plain_dict():
@@ -107,15 +106,13 @@ def test_nested_tree_validates_from_a_plain_dict():
     :obj:`dict` instead of failing.
     """
     document = {
-        "expr_type": "compare",
-        "op": "<",
+        "compare_op": "<",
         "left": {
-            "expr_type": "binary",
-            "op": "+",
-            "left": {"expr_type": "symbol", "symbol": {"var": "x"}},
-            "right": {"expr_type": "literal", "value": 1},
+            "binary_op": "+",
+            "left": {"symbol": {"var": "x"}},
+            "right": {"value": 1},
         },
-        "right": {"expr_type": "literal", "value": 2},
+        "right": {"value": 2},
     }
     node: Any = expression_adapter().validate_python(document)
     assert isinstance(node, CompareExpr)
@@ -126,15 +123,14 @@ def test_nested_tree_validates_from_a_plain_dict():
 
 
 def test_unary_op_is_serialized():
-    """``UnaryExpr.op`` survives serialization despite having exactly one possible value.
+    """``UnaryExpr.unary_op`` survives serialization despite having exactly one possible value.
 
     A default on it would be elided by :class:`~.base_models.LeanModel` -- ordinary default elision,
     not the discriminator rule -- and the operator would vanish from the wire.
     """
-    assert UnaryExpr(op="-", operand=LiteralExpr(value=1)).model_dump() == {
-        "expr_type": "unary",
-        "op": "-",
-        "operand": {"expr_type": "literal", "value": 1},
+    assert UnaryExpr(unary_op="-", operand=LiteralExpr(value=1)).model_dump() == {
+        "unary_op": "-",
+        "operand": {"value": 1},
     }
 
 
@@ -156,25 +152,25 @@ def test_call_arity_rejected(function: Any, count: int):
         CallExpr(function=function, args=args)
 
 
-@pytest.mark.parametrize(("op", "count"), [("not", 1), ("and", 2), ("and", 3), ("or", 2)])
-def test_logical_operand_count_accepted(op: Any, count: int):
+@pytest.mark.parametrize(("logical_op", "count"), [("not", 1), ("and", 2), ("and", 3), ("or", 2)])
+def test_logical_operand_count_accepted(logical_op: Any, count: int):
     """``not`` takes exactly one operand; ``and``/``or`` take two or more."""
     operands: list[Expression] = [LiteralExpr(value=index) for index in range(count)]
-    assert len(LogicalExpr(op=op, operands=operands).operands) == count
+    assert len(LogicalExpr(logical_op=logical_op, operands=operands).operands) == count
 
 
-@pytest.mark.parametrize(("op", "count"), [("not", 0), ("not", 2), ("and", 1), ("or", 0)])
-def test_logical_operand_count_rejected(op: Any, count: int):
+@pytest.mark.parametrize(("logical_op", "count"), [("not", 0), ("not", 2), ("and", 1), ("or", 0)])
+def test_logical_operand_count_rejected(logical_op: Any, count: int):
     """A wrong operand count is a validation error naming the connective."""
     operands: list[Expression] = [LiteralExpr(value=index) for index in range(count)]
-    with pytest.raises(ValidationError, match=op):
-        LogicalExpr(op=op, operands=operands)
+    with pytest.raises(ValidationError, match=logical_op):
+        LogicalExpr(logical_op=logical_op, operands=operands)
 
 
 def test_tree_at_the_depth_limit_builds_and_serializes():
     """A tree exactly ``MAX_EXPRESSION_DEPTH`` deep is accepted and serializes."""
     node = nested_negations(MAX_EXPRESSION_DEPTH)
-    assert json.loads(node.model_dump_json())["expr_type"] == "unary"
+    assert json.loads(node.model_dump_json())["unary_op"] == "-"
 
 
 def test_tree_past_the_depth_limit_is_rejected():
@@ -192,13 +188,13 @@ def test_deep_tree_is_rejected_from_the_wire_too():
     """A too-deep document is rejected on validation, not only on construction."""
     document = json.loads(nested_negations(MAX_EXPRESSION_DEPTH).model_dump_json())
     with pytest.raises(ValidationError, match=str(MAX_EXPRESSION_DEPTH)):
-        expression_adapter().validate_python({"expr_type": "unary", "op": "-", "operand": document})
+        expression_adapter().validate_python({"unary_op": "-", "operand": document})
 
 
 def test_symbol_expr_keeps_the_external_reference_form():
     """A SymbolExpr over an ExternalRef round-trips with its ``{"ext": ...}`` object intact."""
     node = SymbolExpr(symbol=ExternalRef("q0.f01"))
-    assert node.model_dump() == {"expr_type": "symbol", "symbol": {"ext": "q0.f01"}}
+    assert node.model_dump() == {"symbol": {"ext": "q0.f01"}}
     reloaded: Any = expression_adapter().validate_python(node.model_dump())
     assert isinstance(reloaded.symbol, ExternalRef)
     assert reloaded.symbol.ext == "q0.f01"
@@ -214,7 +210,7 @@ def test_literal_expr_holds_a_complex_amplitude():
     node = LiteralExpr(value=Amplitude(mV=1 + 2j))
     assert isinstance(node.value, Amplitude)
     document = node.model_dump()
-    assert document == {"expr_type": "literal", "value": {"mV": (1.0, 2.0)}}
+    assert document == {"value": {"mV": (1.0, 2.0)}}
     reloaded: Any = expression_adapter().validate_python(document)
     assert isinstance(reloaded.value, ComplexVoltage)
     assert reloaded.value.mV == 1 + 2j

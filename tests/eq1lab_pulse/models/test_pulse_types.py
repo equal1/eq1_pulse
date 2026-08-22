@@ -135,7 +135,7 @@ def test_pulse_with_external_refs():
 
 def test_pulse_with_expression():
     """Test that a widened pulse field accepts an Expression, not just a bare SymbolRef."""
-    duration = BinaryExpr(op="+", left=SymbolExpr(symbol=VariableRef("d")), right=LiteralExpr(value={"ns": 10}))
+    duration = BinaryExpr(binary_op="+", left=SymbolExpr(symbol=VariableRef("d")), right=LiteralExpr(value={"ns": 10}))
     square = SquarePulse(duration=duration, amplitude=Amplitude(V=0.5))
     assert isinstance(square.duration, BinaryExpr)
 
@@ -650,13 +650,13 @@ def test_external_param_value_complex_round_trips_through_json():
 
 
 def test_external_param_value_expression():
-    """An Expression is tagged on its own ``expr_type`` key and survives round-tripping.
+    """An Expression is tagged on its own node key and survives round-tripping.
 
     Its dict shape (multiple keys, none of them a unit or a single-key reference) is what the
     ``_external_param_value_tag`` branch has to recognize before falling through to the
     single-key-mapping checks the rest of the union relies on.
     """
-    node = BinaryExpr(op="+", left=SymbolExpr(symbol=VariableRef("x")), right=LiteralExpr(value=1))
+    node = BinaryExpr(binary_op="+", left=SymbolExpr(symbol=VariableRef("x")), right=LiteralExpr(value=1))
     adapter: TypeAdapter[Any] = TypeAdapter(ExternalParamValue)
     value = adapter.validate_python(node)
     assert isinstance(value, BinaryExpr)

@@ -231,8 +231,8 @@ _EXTERNAL_PARAM_REFERENCE_TAGS: Final[dict[type, str]] = {
 _EXTERNAL_PARAM_PULSE_TAG: Final = "pulse_type"
 
 _EXTERNAL_PARAM_EXPR_TAG: Final = "expr"
-"""Tag for an :data:`~.expressions.Expression` member -- named separately from its own
-``expr_type`` discriminator, which resolves the specific node once this outer tag has selected it.
+"""Tag for an :data:`~.expressions.Expression` member -- named separately from the node key that
+resolves the specific node once this outer tag has selected it.
 """
 
 
@@ -244,7 +244,7 @@ def _external_param_value_tag(value: Any) -> str | None:
     if isinstance(value, Mapping):
         if _EXTERNAL_PARAM_PULSE_TAG in value:
             return _EXTERNAL_PARAM_PULSE_TAG
-        if "expr_type" in value:
+        if expression_tag_of(value) is not None:
             return _EXTERNAL_PARAM_EXPR_TAG
         if len(value) == 1:
             key: str = next(iter(value))
@@ -306,9 +306,9 @@ unit keys and are told apart by the shape of the value, exactly as in
 
 Every reference here is its own tagged object -- ``{"var": name}``, ``{"pulse_name": name}``,
 ``{"ext": name}`` -- so each round-trips through JSON as its own type with nothing in this module
-to tag it. :class:`~.expressions.Expression` is tagged the same way, on its own ``expr_type`` key,
-because a variable or an external constant resolved out of band is already the same obligation an
-expression tree over them is one level up.
+to tag it. :class:`~.expressions.Expression` is tagged the same way, on its own node key, because a
+variable or an external constant resolved out of band is already the same obligation an expression
+tree over them is one level up.
 
 Unlike :data:`~.data_ops.SymbolValue`, this union keeps a plain :obj:`str` member: a bare string is
 now *only* ever a string, since it is opaque data passed to an external program rather than an
@@ -351,7 +351,7 @@ type PulseParamValueLike = ExternalParamValueLike
 # back through that edge before `PulseType` exists to satisfy it. By the time this runs, `PulseType`
 # and `ExternalParamValue` are already defined, so `data_ops`'s import of them (if it is the one
 # still waiting on this module) succeeds regardless of which of the three modules went first.
-from .expressions import ExprBase, Expression, ValueRef  # noqa: E402
+from .expressions import ExprBase, Expression, ValueRef, expression_tag_of  # noqa: E402
 
 PulseBase.model_rebuild()
 SquarePulse.model_rebuild()

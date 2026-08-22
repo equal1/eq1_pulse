@@ -11,15 +11,16 @@ There is one node type per *arity and result kind* rather than one per operator 
 :class:`BinaryExpr` with ``op="+"``, not an ``AddExpr``. :class:`CompareExpr` and
 :class:`LogicalExpr` are split out of :class:`BinaryExpr` for the same reason applied one level up:
 both yield booleans, both are valid where an arithmetic node is not, and keeping them distinct makes
-"is this a predicate?" answerable from :attr:`~ExprBase.expr_type` alone without inspecting ``op``.
+"is this a predicate?" answerable from the wire key alone -- ``compare_op`` / ``logical_op`` versus
+``binary_op`` -- as well as in Python.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from typing import TYPE_CHECKING, Annotated, Any, Final, Literal, Self
 
-from pydantic import Discriminator, model_validator
+from pydantic import Discriminator, Tag, model_validator
 
 from .base_models import LeanModel
 from .reference_types import SymbolRef
@@ -59,17 +60,13 @@ serialize. Hand-written expressions do not approach 32.
 class ExprBase(LeanModel):
     """Base class for all expression nodes.
 
-    The ``expr_type`` field is a literal string naming the node type, overridden in subclasses. It
-    is declared first in every one of them, which is what makes it the discriminator
-    :class:`LeanModel` always serializes.
+    Each node is keyed on a field it already needs -- the operator for the four operator nodes, and
+    the single payload field for the other three -- rather than on a separate discriminator field.
     """
 
     if TYPE_CHECKING:
 
         def __init__(self, *args, **kwargs): ...  # noqa: D107
-
-    expr_type: Any  # str
-    """The type discriminator for expression nodes."""
 
     @model_validator(mode="after")
     def _validate_depth(self) -> Self:
@@ -120,8 +117,6 @@ class LiteralExpr(ExprBase):
     ``default``, so there is one notion of "a concrete value" across the IR.
     """
 
-    expr_type: Literal["literal"] = "literal"
-    """The type discriminator, always "literal"."""
     value: SymbolValue
     """The value itself: dimensional, boolean, or plain numeric."""
 
@@ -137,8 +132,6 @@ class SymbolExpr(ExprBase):
     constant are all spelled the same way here.
     """
 
-    expr_type: Literal["symbol"] = "symbol"
-    """The type discriminator, always "symbol"."""
     symbol: SymbolRef
     """The referenced variable, parameter, or external constant."""
 
@@ -154,15 +147,12 @@ class UnaryExpr(ExprBase):
     every other named mathematical operation lives.
     """
 
-    expr_type: Literal["unary"] = "unary"
-    """The type discriminator, always "unary"."""
-    op: Literal["-"]
+    unary_op: Literal["-"]
     """The operator applied to :attr:`operand`.
 
-    Declared without a default even though it has exactly one possible value. A default would make
-    :class:`~.base_models.LeanModel` elide the field from the wire -- ordinary default elision, not
-    the discriminator rule, which strips only the *first* literal field -- and the operator would
-    disappear from the serialized node.
+    Declared without a default even though it has exactly one possible value: it is the
+    discriminator for this node now, first in the class, so :class:`~.base_models.LeanModel`
+    serializes it always regardless of whether it has one.
     """
     operand: Expression
     """The expression being negated."""
@@ -171,9 +161,7 @@ class UnaryExpr(ExprBase):
 class BinaryExpr(ExprBase):
     """An arithmetic operation on two operands."""
 
-    expr_type: Literal["binary"] = "binary"
-    """The type discriminator, always "binary"."""
-    op: Literal["+", "-", "*", "/", "%"]
+    binary_op: Literal["+", "-", "*", "/", "%"]
     """The arithmetic operator."""
     left: Expression
     """The left-hand operand."""
@@ -188,9 +176,7 @@ class CompareExpr(ExprBase):
     comparison is a valid :attr:`~.control_flow.ConditionalBase.var` where an arithmetic node is not.
     """
 
-    expr_type: Literal["compare"] = "compare"
-    """The type discriminator, always "compare"."""
-    op: Literal["<", "<=", ">", ">=", "==", "!="]
+    compare_op: Literal["<", "<=", ">", ">=", "==", "!="]
     """The comparison operator."""
     left: Expression
     """The left-hand operand."""
@@ -205,20 +191,18 @@ class LogicalExpr(ExprBase):
     ``or`` are naturally n-ary. A validator checks the count.
     """
 
-    expr_type: Literal["logical"] = "logical"
-    """The type discriminator, always "logical"."""
-    op: Literal["and", "or", "not"]
+    logical_op: Literal["and", "or", "not"]
     """The boolean connective."""
     operands: list[Expression]
     """The operands the connective is applied to."""
 
     @model_validator(mode="after")
     def _validate_operand_count(self) -> Self:
-        if self.op == "not":
+        if self.logical_op == "not":
             if len(self.operands) != 1:
                 raise ValueError(f'"not" takes exactly 1 operand, got {len(self.operands)}')
         elif len(self.operands) < 2:
-            raise ValueError(f'"{self.op}" takes at least 2 operands, got {len(self.operands)}')
+            raise ValueError(f'"{self.logical_op}" takes at least 2 operands, got {len(self.operands)}')
         return self
 
 
@@ -236,8 +220,6 @@ _VARIADIC_FUNCTIONS: Final = frozenset({"min", "max"})
 class CallExpr(ExprBase):
     """A call to one of the named functions in :data:`ExpressionFunction`."""
 
-    expr_type: Literal["call"] = "call"
-    """The type discriminator, always "call"."""
     function: ExpressionFunction
     """The function being called."""
     args: list[Expression]
@@ -253,11 +235,43 @@ class CallExpr(ExprBase):
         return self
 
 
+_EXPRESSION_TAGS: Final[dict[type[ExprBase], str]] = {
+    LiteralExpr: "value",
+    SymbolExpr: "symbol",
+    UnaryExpr: "unary_op",
+    BinaryExpr: "binary_op",
+    CompareExpr: "compare_op",
+    LogicalExpr: "logical_op",
+    CallExpr: "function",
+}
+"""Expression node type -> the sole wire key that discriminates it."""
+
+
+def expression_tag_of(value: Any) -> str | None:
+    """Return the wire key that discriminates *value* as an expression node, or :obj:`None`.
+
+    :param value: A mapping (raw input) or an :class:`ExprBase` instance
+    :return: The discriminating key, or :obj:`None` if *value* is neither
+    """
+    if isinstance(value, Mapping):
+        return next((tag for tag in _EXPRESSION_TAGS.values() if tag in value), None)
+    for node_type, tag in _EXPRESSION_TAGS.items():
+        if isinstance(value, node_type):
+            return tag
+    return None
+
+
 type Expression = Annotated[
-    LiteralExpr | SymbolExpr | UnaryExpr | BinaryExpr | CompareExpr | LogicalExpr | CallExpr,
-    Discriminator("expr_type"),
+    Annotated[LiteralExpr, Tag("value")]
+    | Annotated[SymbolExpr, Tag("symbol")]
+    | Annotated[UnaryExpr, Tag("unary_op")]
+    | Annotated[BinaryExpr, Tag("binary_op")]
+    | Annotated[CompareExpr, Tag("compare_op")]
+    | Annotated[LogicalExpr, Tag("logical_op")]
+    | Annotated[CallExpr, Tag("function")],
+    Discriminator(expression_tag_of),
 ]
-"""Any expression node, discriminated by the "expr_type" field."""
+"""Any expression node, discriminated by the wire key naming its type."""
 
 
 type ValueRef = SymbolRef | Expression
@@ -269,7 +283,8 @@ one way: ``reference_types`` -> ``expressions`` -> the operation modules.
 
 A plain ``|`` union rather than a tagged one in the style of :data:`~.data_ops.SymbolValue`: its
 members are unambiguous by wire shape -- a symbol is ``{"var": ...}`` or ``{"ext": ...}``, an
-expression carries ``expr_type`` -- so there is no ambiguity for a discriminator to remove.
+expression carries one of the seven node keys -- so there is no ambiguity for a discriminator to
+remove.
 """
 
 type ValueRefLike = SymbolRefLike | Expression
