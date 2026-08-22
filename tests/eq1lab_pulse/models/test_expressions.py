@@ -1,6 +1,7 @@
 """Tests for the expression node models."""
 
 import json
+import warnings
 from typing import Any
 
 import pytest
@@ -17,6 +18,8 @@ from eq1_pulse.models.expressions import (
     LogicalExpr,
     SymbolExpr,
     UnaryExpr,
+    ValueRef,
+    expression_tag_of,
 )
 from eq1_pulse.models.reference_types import ExternalRef, VariableRef
 
@@ -215,3 +218,140 @@ def test_literal_expr_holds_a_complex_amplitude():
     assert isinstance(reloaded.value, ComplexVoltage)
     assert reloaded.value.mV == 1 + 2j
     assert reloaded.model_dump() == document
+
+
+def test_exact_serialization_of_mixed_tree_with_warnings_as_errors():
+    """A mixed tree containing all seven node types validates and round-trips exactly.
+
+    Warnings emitted during serialization (a sign of union member mismatch) are treated as errors
+    so the test fails if the union picks the wrong member.
+    """
+    compare_node = CompareExpr(
+        compare_op="<",
+        left=BinaryExpr(
+            binary_op="+",
+            left=SymbolExpr(symbol=VariableRef("x")),
+            right=LiteralExpr(value=1),
+        ),
+        right=CallExpr(function="abs", args=[UnaryExpr(unary_op="-", operand=LiteralExpr(value=2))]),
+    )
+    tree = LogicalExpr(
+        logical_op="and",
+        operands=[compare_node, SymbolExpr(symbol=VariableRef("flag"))],
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        document = tree.model_dump()
+        reloaded = expression_adapter().validate_python(document)
+        assert reloaded == tree
+        json_str = tree.model_dump_json()
+        json_reloaded = json.loads(json_str)
+        assert json_reloaded == document
+
+
+def test_binary_and_compare_expr_do_not_collide():
+    """BinaryExpr and CompareExpr differ only in operator key and do not confuse the union."""
+    binary = BinaryExpr(binary_op="+", left=LiteralExpr(value=1), right=LiteralExpr(value=2))
+    compare = CompareExpr(compare_op="<", left=LiteralExpr(value=1), right=LiteralExpr(value=2))
+
+    binary_in_compare = CompareExpr(
+        compare_op="<",
+        left=binary,
+        right=LiteralExpr(value=3),
+    )
+    compare_in_binary = BinaryExpr(
+        binary_op="+",
+        left=compare,
+        right=LiteralExpr(value=3),
+    )
+
+    binary_doc = binary_in_compare.model_dump()
+    binary_reloaded: Any = expression_adapter().validate_python(binary_doc)
+    assert isinstance(binary_reloaded.left, BinaryExpr)
+    assert binary_reloaded.left == binary
+
+    compare_doc = compare_in_binary.model_dump()
+    compare_reloaded: Any = expression_adapter().validate_python(compare_doc)
+    assert isinstance(compare_reloaded.left, CompareExpr)
+    assert compare_reloaded.left == compare
+
+
+@pytest.mark.parametrize(
+    ("key", "document", "node_type"),
+    [
+        pytest.param("value", {"value": 1}, LiteralExpr, id="literal"),
+        pytest.param("symbol", {"symbol": {"var": "x"}}, SymbolExpr, id="symbol"),
+        pytest.param(
+            "unary_op",
+            {"unary_op": "-", "operand": {"value": 1}},
+            UnaryExpr,
+            id="unary",
+        ),
+        pytest.param(
+            "binary_op",
+            {"binary_op": "+", "left": {"value": 1}, "right": {"value": 2}},
+            BinaryExpr,
+            id="binary",
+        ),
+        pytest.param(
+            "compare_op",
+            {"compare_op": "<", "left": {"value": 1}, "right": {"value": 2}},
+            CompareExpr,
+            id="compare",
+        ),
+        pytest.param(
+            "logical_op",
+            {"logical_op": "not", "operands": [{"value": 1}]},
+            LogicalExpr,
+            id="logical",
+        ),
+        pytest.param(
+            "function",
+            {"function": "abs", "args": [{"value": 1}]},
+            CallExpr,
+            id="call",
+        ),
+    ],
+)
+def test_expression_tag_of_identifies_all_nodes(
+    key: str,
+    document: dict[str, Any],
+    node_type: type,
+):
+    """``expression_tag_of`` returns the expected key for every node, and the union validates it."""
+    assert expression_tag_of(document) == key
+    node: Any = expression_adapter().validate_python(document)
+    assert isinstance(node, node_type)
+
+
+def test_expression_tag_of_returns_none_for_non_expressions():
+    """``expression_tag_of`` returns None for mappings and values that are not expressions."""
+    assert expression_tag_of({"var": "x"}) is None
+    assert expression_tag_of({}) is None
+    assert expression_tag_of(5) is None
+
+
+def test_valueref_still_disambiguates():
+    """ValueRef resolves expressions, variable refs, and external refs correctly."""
+    adapter: TypeAdapter[Any] = TypeAdapter(ValueRef)
+    assert isinstance(adapter.validate_python({"var": "x"}), VariableRef)
+    assert isinstance(adapter.validate_python({"ext": "q0.f01"}), ExternalRef)
+    binary_doc = {"binary_op": "+", "left": {"value": 1}, "right": {"value": 2}}
+    node: Any = adapter.validate_python(binary_doc)
+    assert isinstance(node, BinaryExpr)
+
+
+def test_no_expr_type_survives_in_dumped_tree():
+    """The string 'expr_type' does not appear anywhere in a serialized tree."""
+    tree = CompareExpr(
+        compare_op="<",
+        left=BinaryExpr(
+            binary_op="+",
+            left=SymbolExpr(symbol=VariableRef("scale")),
+            right=LiteralExpr(value={"mV": 80}),
+        ),
+        right=LiteralExpr(value=2),
+    )
+    json_str = tree.model_dump_json()
+    assert "expr_type" not in json_str

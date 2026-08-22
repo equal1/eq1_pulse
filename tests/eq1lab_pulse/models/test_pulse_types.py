@@ -5,7 +5,15 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from eq1_pulse.models.basic_types import Amplitude, ComplexVoltage, Duration, Frequency, Magnitude, Phase, Voltage
-from eq1_pulse.models.expressions import BinaryExpr, LiteralExpr, SymbolExpr
+from eq1_pulse.models.expressions import (
+    BinaryExpr,
+    CallExpr,
+    CompareExpr,
+    LiteralExpr,
+    LogicalExpr,
+    SymbolExpr,
+    UnaryExpr,
+)
 from eq1_pulse.models.pulse_types import (
     ArbitrarySampledPulse,
     ExternalParamValue,
@@ -649,23 +657,53 @@ def test_external_param_value_complex_round_trips_through_json():
     assert restored == 1 + 2j
 
 
-def test_external_param_value_expression():
-    """An Expression is tagged on its own node key and survives round-tripping.
+@pytest.mark.parametrize(
+    ("expr_mapping", "expr_type"),
+    [
+        pytest.param({"value": 1}, LiteralExpr, id="literal"),
+        pytest.param({"symbol": {"var": "x"}}, SymbolExpr, id="symbol"),
+        pytest.param(
+            {"unary_op": "-", "operand": {"value": 1}},
+            UnaryExpr,
+            id="unary",
+        ),
+        pytest.param(
+            {"binary_op": "+", "left": {"value": 1}, "right": {"value": 2}},
+            BinaryExpr,
+            id="binary",
+        ),
+        pytest.param(
+            {"compare_op": "<", "left": {"value": 1}, "right": {"value": 2}},
+            CompareExpr,
+            id="compare",
+        ),
+        pytest.param(
+            {"logical_op": "and", "operands": [{"value": 1}, {"value": 2}]},
+            LogicalExpr,
+            id="logical",
+        ),
+        pytest.param(
+            {"function": "abs", "args": [{"value": 1}]},
+            CallExpr,
+            id="call",
+        ),
+    ],
+)
+def test_external_param_value_expression(expr_mapping: dict[str, Any], expr_type: type):
+    """An Expression is tagged on its own node key and survives round-tripping from a mapping.
 
     Its dict shape (multiple keys, none of them a unit or a single-key reference) is what the
     ``_external_param_value_tag`` branch has to recognize before falling through to the
     single-key-mapping checks the rest of the union relies on.
     """
-    node = BinaryExpr(binary_op="+", left=SymbolExpr(symbol=VariableRef("x")), right=LiteralExpr(value=1))
     adapter: TypeAdapter[Any] = TypeAdapter(ExternalParamValue)
-    value = adapter.validate_python(node)
-    assert isinstance(value, BinaryExpr)
-    assert value == node
+    value = adapter.validate_python(expr_mapping)
+    assert isinstance(value, expr_type)
 
-    dumped = adapter.dump_python(node)
+    dumped = adapter.dump_python(value)
     restored = adapter.validate_python(dumped)
-    assert isinstance(restored, BinaryExpr)
-    assert restored == node
+    assert isinstance(restored, expr_type)
+    assert restored == value
 
 
 def test_external_pulse_params_widened_types():
