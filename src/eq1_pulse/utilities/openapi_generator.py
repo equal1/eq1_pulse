@@ -230,6 +230,7 @@ def generate_openapi_schema(
     if include_tags:
         tags = [
             {"name": "basic-types", "description": "Basic types like Amplitude, Duration, Frequency, etc."},
+            {"name": "expressions", "description": "Expression nodes for building computed values"},
             {"name": "pulse-types", "description": "Pulse type definitions (Square, Sine, Arbitrary, etc.)"},
             {"name": "channel-ops", "description": "Channel operations (Play, Record, Barrier, etc.)"},
             {"name": "control-flow", "description": "Control flow operations (Repetition, Iteration, Conditional)"},

@@ -393,3 +393,26 @@ def test_serialized_opsequence_validates_against_the_generated_schema():
 
     document = json.loads(seq.model_dump_json())
     jsonschema.validate(document, OpSequence.model_json_schema())
+
+
+def test_expression_models_are_in_the_schema(generated_schemas):
+    """The seven expression node types are published; their base class is not.
+
+    ``ExprBase`` is excluded the same way ``PulseBase`` and ``OpBase`` are -- it serves only
+    as a common base and is never referenced by a discriminated union or output directly.
+    """
+    expression_node_names = {
+        "LiteralExpr",
+        "SymbolExpr",
+        "UnaryExpr",
+        "BinaryExpr",
+        "CompareExpr",
+        "LogicalExpr",
+        "CallExpr",
+    }
+
+    for name in expression_node_names:
+        assert name in generated_schemas, f"{name} should be present in components.schemas"
+
+    assert "Expression" in generated_schemas, "Expression discriminated union should be present"
+    assert "ExprBase" not in generated_schemas, "ExprBase should not be published"

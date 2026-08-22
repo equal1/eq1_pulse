@@ -534,6 +534,124 @@ the responsibility of whatever submits the program.
 
 See ``examples/calibrated_rabi.py`` for a full sequence built from both kinds of late-bound value.
 
+Expressions
+-----------
+
+**Building computed values with expressions**
+
+Expressions allow you to compute values dynamically within a sequence using Python operators.
+Unlike plain values, expressions are recorded and executed at runtime, not evaluated by the
+builder. They are particularly useful for:
+
+* Combining variables and external constants (e.g., detuning relative to a calibrated frequency)
+* Scaling amplitude or duration based on a parameter
+* Encoding conditional logic in predicates
+
+**Why ``expr()`` is required**
+
+The builder reads authoring forms like ``"10us"`` and ``"80mV"`` in function parameters and
+resolves them to canonical unit objects before constructing models. Expressions work differently:
+operators like ``+``, ``*``, and ``<`` are not available on plain values or references because
+they would be evaluated immediately by Python.
+
+Use ``expr()`` to wrap values into an ``Expr`` wrapper, which overloads operators to build an
+expression tree:
+
+.. code-block:: python
+
+    from eq1_pulse.builder import *
+    from eq1_pulse.models import Amplitude
+
+    var_decl("scale", "float", unit="mV")
+    param_decl("detuning", "float", unit="MHz")
+    extern_decl("q0.f01", "float", unit="GHz")
+
+    # Use expr() to build expressions
+    scaled_amplitude = expr(var("scale")) * Amplitude("80mV")
+    detuned_frequency = expr(ext("q0.f01")) + expr(var("detuning"))
+
+    # Use expressions in operations
+    play("drive", square_pulse(duration="25ns", amplitude=scaled_amplitude))
+    set_frequency("drive", detuned_frequency)
+
+**Supported operators**
+
+Arithmetic:
+
+* ``+``, ``-``, ``*``, ``/``, ``%`` — standard arithmetic operations
+* ``abs(expr)`` — absolute value via ``CallExpr(function="abs")``
+* Reflected forms: ``2 * expr(var("a"))`` works as well as ``expr(var("a")) * 2``
+
+Comparison:
+
+* ``<``, ``<=``, ``>``, ``>=`` — produce predicates for use in conditionals
+* ``.eq()``, ``.ne()`` — use these methods instead of ``==`` and ``!=``, which return
+  boolean values (not expressions)
+
+Logical:
+
+* ``.and_()``, ``.or_()``, ``.not_()`` — logical operations; Python keywords ``and``, ``or``,
+  ``not`` cannot be overloaded
+
+Example:
+
+.. code-block:: python
+
+    from eq1_pulse.builder import *
+    from eq1_pulse.models import Amplitude
+
+    with build_sequence() as seq:
+        var_decl("amplitude", "float", unit="mV")
+        var_decl("state", "bool")
+
+        # Arithmetic expression
+        pulse = square_pulse(
+            duration="25ns",
+            amplitude=expr(var("amplitude")) * Amplitude("1mV")
+        )
+        play("drive", pulse)
+
+        # Comparison expression in conditional
+        with if_(expr(var("amplitude")) > 50):
+            # amplitude > 50 mV
+            play("readout", square_pulse(duration="1us", amplitude="30mV"))
+
+**What expressions do and don't do**
+
+Expressions are **recorded, never evaluated** by eq1_pulse:
+
+* No type or unit checking — an expression like ``ext("q0.f01") + var("state")`` (adding a
+  frequency and a boolean) is syntactically valid and serializes normally
+* No simplification — ``x + 0`` serializes as a full binary expression, not as ``x``
+* No evaluation — the result of ``expr(var("a")) + 1`` is never computed by the builder
+
+These are the responsibility of the backend that executes the program. The builder's job is to
+record what the user wrote, in a form the backend can consume and evaluate as it chooses
+(eagerly, lazily, symbolically, etc.).
+
+**Authoring forms in expressions**
+
+Like the rest of the builder, expressions read the same authoring forms for quantities. This
+means you can write:
+
+.. code-block:: python
+
+    # String forms work in expressions
+    set_frequency("drive", expr(var("f")) + expr("100MHz"))
+
+    # Amplitude as a literal (enabled by the SymbolValue fix in task 1)
+    play("drive", square_pulse(
+        duration="25ns",
+        amplitude=expr(var("scale")) * Amplitude("80mV")
+    ))
+
+However, bare strings and identifiers like ``"10us"`` and ``"my_var"`` are not wire forms and
+are rejected by models if they escape the builder. They survive as builder conveniences only.
+Expressions route them through the same ``_coerce.py`` grammar the builder does, so ``expr("10us")``
+works, but a deserialized expression will not contain a string — it contains the resolved quantity.
+
+See ``examples/expression_ramsey.py`` for a complete Ramsey experiment using expressions.
+
 Control Flow
 ------------
 
