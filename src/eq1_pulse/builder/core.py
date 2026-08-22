@@ -96,6 +96,7 @@ from ._state import (
     _pop_context,
     _push_context,
     _register_external,
+    _register_pulse,
     _register_variable,
 )
 from ._state import _get_state as _get_state
@@ -682,6 +683,8 @@ def pulse_decl(
             play("qubit", pulse_ref("my_square"))  # Reuse the same pulse
     """
     pulse_decl_obj = PulseDecl(name=name, pulse=pulse)
+
+    _register_pulse(name)
 
     context = _current_context("pulse_decl()")
     if not _in_sequence(context):

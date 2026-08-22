@@ -30,7 +30,7 @@ from ..models.pulse_types import ArbitrarySampledPulse, ExternalPulse, SinePulse
 from ..models.reference_types import ChannelRef, ExternalRef, PulseRef, VariableRef
 from ._coerce import as_amplitude, as_duration, as_frequency, as_phase, as_symbol_ref
 from ._expressions import Expr
-from ._state import _check_external_declared, _check_variable_declared
+from ._state import _check_external_declared, _check_pulse_declared, _check_variable_declared
 
 if TYPE_CHECKING:
     from ..models.basic_types import AmplitudeLike, DurationLike, FrequencyLike, PhaseLike
@@ -645,6 +645,8 @@ def pulse_ref(name: str) -> PulseRef:
 
         p = pulse_ref("pi_pulse")
     """
+    _check_pulse_declared(name)
+
     return PulseRef(pulse_name=name)
 
 

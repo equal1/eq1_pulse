@@ -286,10 +286,10 @@ def save_openapi_schema(
         yaml.preserve_quotes = True
         yaml.width = 4096  # Prevent line wrapping
 
-        with output_path.open("w") as f:
+        with output_path.open("w", encoding="utf-8") as f:
             yaml.dump(schema, f)
     elif format.lower() == "json":
-        with output_path.open("w") as f:
+        with output_path.open("w", encoding="utf-8") as f:
             json.dump(schema, f, indent=2)
     else:
         raise ValueError(f"Unsupported format: {format}. Use 'yaml' or 'json'.")

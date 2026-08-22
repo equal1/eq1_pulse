@@ -375,8 +375,10 @@ class TestVariables:
 
     def test_pulse_reference(self):
         """Test pulse reference creation."""
-        pref = pulse_ref("my_pulse")
-        assert pref.pulse_name == "my_pulse"
+        with build_sequence():
+            pulse_decl("my_pulse", square_pulse(duration="100ns", amplitude="200mV"))
+            pref = pulse_ref("my_pulse")
+            assert pref.pulse_name == "my_pulse"
 
     def test_pulse_decl_in_sequence(self):
         """Test pulse declaration in sequence context."""
