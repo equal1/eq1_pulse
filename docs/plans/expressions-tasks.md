@@ -17,8 +17,10 @@ same material as traps. The short version: `"10us"` and bare identifiers are no 
 only place authoring grammars are read, and `test_schema_symmetry.py` holds a tree-wide invariant the
 new models must satisfy. Task 1 grew as a result; task 5 shrank.
 
-**Run them in numeric order.** Each task assumes every lower-numbered task is complete and
-committed. Each leaves the tree green.
+**All tasks in this breakdown are complete.** They landed in the main branch. A successor breakdown,
+[expression-serialization-tasks.md](expression-serialization-tasks.md), changed only the wire form
+of the expression nodes: each node is now keyed on its own field rather than on a shared `expr_type`
+key, reducing redundancy in serialized trees.
 
 ---
 
@@ -102,7 +104,7 @@ other task depends on.
 | 2 ✅ | Widen operations to `ValueRef`; rebuild sweep         | M    | Sonnet 5  | high      | 200k / ~60k | `models/`, `tests/`                          |
 | 3 ✅ | Builder: `Expr` and its operators                     | M    | Sonnet 5  | high      | 200k / ~45k | `builder/_expressions.py`, `tests/`          |
 | 4 ✅ | Builder: leaf checking, acceptance, exports           | M    | Sonnet 5  | medium    | 200k / ~50k | `builder/`, `tests/`                         |
-| 5  | Schema tag, docs, example                             | S    | Haiku 4.5 | medium    | 200k / ~30k | `utilities/`, `docs/`, `examples/`, `tests/` |
+| 5 ✅ | Schema tag, docs, example                             | S    | Haiku 4.5 | medium    | 200k / ~30k | `utilities/`, `docs/`, `examples/`, `tests/` |
 
 ### Legend
 
