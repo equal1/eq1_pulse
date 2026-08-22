@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-from eq1_pulse.models.basic_types import Amplitude, Duration, Frequency, Magnitude, Phase, Voltage
+from eq1_pulse.models.basic_types import Amplitude, ComplexVoltage, Duration, Frequency, Magnitude, Phase, Voltage
 from eq1_pulse.models.pulse_types import (
     ArbitrarySampledPulse,
     ExternalParamValue,
@@ -466,16 +466,43 @@ def test_external_param_value_voltage():
     assert value.V == 0.5
 
 
-def test_external_param_value_amplitude_is_rejected():
-    """Test that an Amplitude instance -- not a Voltage subclass -- is rejected by ExternalParamValue.
+def test_external_param_value_amplitude_instance_survives_as_amplitude():
+    """An Amplitude instance is tagged by its type, so it stays an Amplitude.
 
-    :class:`~.basic_types.Amplitude` and :class:`~.basic_types.Voltage` are siblings under
-    :class:`~.basic_types.ComplexVoltage`, not a subclass relationship, and merging them is out of
-    scope (plan §6). A caller who wants a complex voltage in an open union passes
-    :class:`~.basic_types.Voltage` with a complex value instead.
+    The complex-voltage member is what admits it: :class:`~.basic_types.Amplitude` derives from
+    :class:`~.basic_types.ComplexVoltage`, which is not a :class:`~.basic_types.Voltage` subclass,
+    so before it was added the union rejected the most common pulse parameter outright.
     """
-    with pytest.raises(ValidationError):
-        TypeAdapter(ExternalParamValue).validate_python(Amplitude(V=0.5))
+    value: Any = TypeAdapter(ExternalParamValue).validate_python(Amplitude(V=0.5))
+    assert isinstance(value, Amplitude)
+    assert value.V == 0.5
+
+
+def test_external_param_value_complex_voltage_wire_form():
+    """A ``(real, imag)`` pair under a voltage unit key is a ComplexVoltage and dumps back unchanged."""
+    adapter: TypeAdapter[Any] = TypeAdapter(ExternalParamValue)
+    value = adapter.validate_python({"mV": [1, 2]})
+    assert isinstance(value, ComplexVoltage)
+    assert value.mV == 1 + 2j
+    assert adapter.dump_python(value) == {"mV": (1.0, 2.0)}
+
+
+def test_external_param_value_real_voltage_key_is_still_a_voltage():
+    """A real number under the same unit key still resolves to the real dimension."""
+    value: Any = TypeAdapter(ExternalParamValue).validate_python({"mV": 100})
+    assert type(value) is Voltage
+    assert value.mV == 100
+
+
+def test_external_param_value_unit_typo_reports_one_error():
+    """An unknown unit key is one union_tag_not_found, not one error per member.
+
+    The complex-voltage member is decided by value shape rather than by its own unit key, so it adds
+    no second way for a typo to be reported.
+    """
+    with pytest.raises(ValidationError) as excinfo:
+        TypeAdapter(ExternalParamValue).validate_python({"usec": 3})
+    assert [error["type"] for error in excinfo.value.errors()] == ["union_tag_not_found"]
 
 
 def test_external_param_value_duration():

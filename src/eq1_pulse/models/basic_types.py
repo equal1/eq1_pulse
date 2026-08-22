@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import cmath
 import operator
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from functools import cached_property
 from typing import (
     TYPE_CHECKING,
@@ -32,6 +32,7 @@ from typing import (
     overload,
 )
 
+import numpy as np
 from pydantic import Field, model_validator
 
 from .arithmetic import get_unit_value_field_name_and_type
@@ -806,11 +807,30 @@ _DIMENSION_TAGS: Final[dict[type[Time] | type[Voltage] | type[Frequency] | type[
     Frequency: "frequency",
     Angle: "angle",
 }
-"""The one type per dimension the open value unions (:data:`~.data_ops.SymbolValue`,
+"""The one type per *real* dimension the open value unions (:data:`~.data_ops.SymbolValue`,
 :data:`~.pulse_types.ExternalParamValue`) list -- see issue #10 -- mapped to the tag each is given in
-those unions. Their refinements (:class:`Duration`, :class:`Amplitude`, :class:`Threshold`,
-:class:`Magnitude`, :class:`Phase`) stay the correct types for *closed* fields, where the field
-itself says which refinement applies."""
+those unions. Their refinements (:class:`Duration`, :class:`Threshold`, :class:`Magnitude`,
+:class:`Phase`) stay the correct types for *closed* fields, where the field itself says which
+refinement applies.
+
+:class:`ComplexVoltage` (and its refinement :class:`Amplitude`) is deliberately **not** here: this
+dict is also what :func:`dimension_unit_tag_map` iterates, and :class:`~.units.ComplexVolts` /
+:class:`~.units.ComplexMillivolts` carry the same ``V`` / ``mV`` keys as :class:`~.units.Volts` /
+:class:`~.units.Millivolts`, so listing it would make every voltage key resolve to whichever of the
+two was iterated last. It gets :data:`COMPLEX_VOLTAGE_TAG` instead, decided by value shape --
+see :func:`dimension_tag_of_unit_mapping`."""
+
+
+COMPLEX_VOLTAGE_TAG: Final = "complex_voltage"
+"""The tag the open value unions give :class:`ComplexVoltage`.
+
+Not a member of :data:`_DIMENSION_TAGS`, for the reason given there: the complex voltage units share
+their unit keys with the real ones, so the two dimensions are told apart by the *shape* of the value
+under the key rather than by the key itself.
+"""
+
+_VOLTAGE_TAG: Final = _DIMENSION_TAGS[Voltage]
+"""The tag of the real voltage dimension -- the only one a complex spelling can refine."""
 
 
 def dimension_unit_tag_map() -> dict[str, str]:
@@ -827,17 +847,64 @@ def dimension_unit_tag_map() -> dict[str, str]:
     return tags
 
 
+def is_complex_voltage_spelling(value: Any) -> bool:
+    """Whether *value* is the value of a unit key spelled as a complex quantity.
+
+    The shape test behind :data:`COMPLEX_VOLTAGE_TAG`: within a voltage unit key a real number is a
+    :class:`Voltage` and a ``(real, imag)`` pair is a :class:`ComplexVoltage`. ``{"mV": 100}`` and
+    ``{"mV": [1, 2]}`` are distinct wire shapes, so the two dimensions keep one wire form each
+    (issue #10).
+
+    :param value: The value found under a unit key
+    :return: :obj:`True` if *value* is a complex number or a two-element ``(real, imag)`` pair, in
+        any of the spellings :func:`~.complex.validate_complex_tuple` accepts
+    """
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, complex | np.complexfloating):
+        return True
+    if isinstance(value, list | tuple):
+        return len(value) == 2
+    if isinstance(value, np.ndarray):
+        return value.shape == (2,) and issubclass(value.dtype.type, np.integer | np.floating)
+    return False
+
+
+def dimension_tag_of_unit_mapping(value: Mapping[str, Any], unit_tags: Mapping[str, str]) -> str | None:
+    """Return the tag the single-unit-key mapping *value* is spelled with.
+
+    Shared by :data:`~.data_ops.SymbolValue`'s and :data:`~.pulse_types.ExternalParamValue`'s
+    discriminators, so that the complex-voltage carve-out is written once.
+
+    :param value: A candidate wire mapping for an open, dimension-carrying union
+    :param unit_tags: The unit key -> dimension tag map from :func:`dimension_unit_tag_map`
+    :return: The dimension tag *value*'s sole unit key names, refined to
+        :data:`COMPLEX_VOLTAGE_TAG` when a voltage key carries a complex spelling, or :obj:`None`
+        if *value* is not a single known unit key
+    """
+    if len(value) != 1:
+        return None
+    key = next(iter(value))
+    tag = unit_tags.get(key)
+    if tag == _VOLTAGE_TAG and is_complex_voltage_spelling(value[key]):
+        return COMPLEX_VOLTAGE_TAG
+    return tag
+
+
 def dimension_tag_of(value: Any) -> str | None:
     """Return the tag *value* is expressed in.
 
     Checked against :data:`~.data_ops.SymbolValue` and :data:`~.pulse_types.ExternalParamValue`'s
-    dimensional members.
+    dimensional members. Unlike :func:`dimension_tag_of_unit_mapping` this reads an already-built
+    instance, whose type says which dimension it is with no shape test needed.
 
     :param value: A candidate value for an open, dimension-carrying union
-    :return: ``"time"``, ``"voltage"``, ``"frequency"`` or ``"angle"`` if *value* is a :class:`Time`,
-        :class:`Voltage`, :class:`Frequency` or :class:`Angle` (or a refinement of one), otherwise
-        :obj:`None`
+    :return: ``"time"``, ``"voltage"``, ``"complex_voltage"``, ``"frequency"`` or ``"angle"`` if
+        *value* is a :class:`Time`, :class:`Voltage`, :class:`ComplexVoltage`, :class:`Frequency` or
+        :class:`Angle` (or a refinement of one), otherwise :obj:`None`
     """
+    if isinstance(value, ComplexVoltage):
+        return COMPLEX_VOLTAGE_TAG
     for quantity, tag in _DIMENSION_TAGS.items():
         if isinstance(value, quantity):
             return tag

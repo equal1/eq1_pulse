@@ -10,7 +10,9 @@ from pydantic import Discriminator, Tag
 
 from .base_models import LeanModel
 from .basic_types import (
+    COMPLEX_VOLTAGE_TAG,
     Angle,
+    ComplexVoltage,
     Frequency,
     OpBase,
     Phase,
@@ -18,6 +20,7 @@ from .basic_types import (
     Time,
     Voltage,
     dimension_tag_of,
+    dimension_tag_of_unit_mapping,
     dimension_unit_tag_map,
 )
 from .complex import complex_from_tuple
@@ -26,7 +29,15 @@ from .pulse_types import PulseType
 from .reference_types import SymbolRef, VariableRef
 
 if TYPE_CHECKING:
-    from .basic_types import AngleLike, FrequencyLike, PhaseLike, ThresholdLike, TimeLike, VoltageLike
+    from .basic_types import (
+        AngleLike,
+        ComplexVoltageLike,
+        FrequencyLike,
+        PhaseLike,
+        ThresholdLike,
+        TimeLike,
+        VoltageLike,
+    )
     from .reference_types import SymbolRefLike, VariableRefLike
 
 __all__ = (
@@ -69,8 +80,7 @@ def _symbol_value_tag(value: Any) -> str | None:
     :param value: Raw input for a :data:`SymbolValue`
     """
     if isinstance(value, Mapping):
-        key: str = next(iter(value)) if len(value) == 1 else ""
-        return _SYMBOL_VALUE_UNIT_TAGS.get(key)
+        return dimension_tag_of_unit_mapping(value, _SYMBOL_VALUE_UNIT_TAGS)
     if isinstance(value, bool):
         return "bool"
     if isinstance(value, int):
@@ -87,6 +97,7 @@ def _symbol_value_tag(value: Any) -> str | None:
 type SymbolValue = Annotated[
     Annotated[Time, Tag("time")]
     | Annotated[Voltage, Tag("voltage")]
+    | Annotated[ComplexVoltage, Tag(COMPLEX_VOLTAGE_TAG)]
     | Annotated[Frequency, Tag("frequency")]
     | Annotated[Angle, Tag("angle")]
     | Annotated[bool, Tag("bool")]
@@ -99,15 +110,25 @@ type SymbolValue = Annotated[
 or plain numeric.
 
 Lists one type per dimension -- :class:`~.basic_types.Time`, :class:`~.basic_types.Voltage`,
-:class:`~.basic_types.Frequency`, :class:`~.basic_types.Angle` -- rather than per refinement:
-:class:`~.basic_types.Duration`, :class:`~.basic_types.Amplitude`, :class:`~.basic_types.Threshold`,
-:class:`~.basic_types.Magnitude` and :class:`~.basic_types.Phase` are indistinguishable on the wire
-from their base dimension, so listing them here would make resolution depend on declaration order.
+:class:`~.basic_types.ComplexVoltage`, :class:`~.basic_types.Frequency`, :class:`~.basic_types.Angle`
+-- rather than per refinement: :class:`~.basic_types.Duration`, :class:`~.basic_types.Amplitude`,
+:class:`~.basic_types.Threshold`, :class:`~.basic_types.Magnitude` and :class:`~.basic_types.Phase`
+are indistinguishable on the wire from their base dimension, so listing them here would make
+resolution depend on declaration order.
+
+The two voltage dimensions share their unit keys, so they are told apart by the shape of the value:
+``{"mV": 100}`` is a :class:`~.basic_types.Voltage` and ``{"mV": [1, 2]}`` a
+:class:`~.basic_types.ComplexVoltage`. A real-valued :class:`~.basic_types.Amplitude` therefore
+narrows to :class:`~.basic_types.Voltage` on the way back in, the same narrowing
+:class:`~.basic_types.Duration` gets, and for the same reason: on the wire the two are one document.
+
 Unlike :data:`~.pulse_types.ExternalParamValue`, there is no plain :obj:`str` member: a unit-suffixed
 string is not a wire form for either union any more, so it is rejected here rather than kept as-is.
 """
 
-type SymbolValueLike = TimeLike | VoltageLike | FrequencyLike | AngleLike | bool | int | float | complex
+type SymbolValueLike = (
+    TimeLike | VoltageLike | ComplexVoltageLike | FrequencyLike | AngleLike | bool | int | float | complex
+)
 """Acceptable input types for :data:`SymbolValue`."""
 
 

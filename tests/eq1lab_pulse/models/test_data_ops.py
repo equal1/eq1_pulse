@@ -3,9 +3,9 @@ from typing import Any
 
 import numpy as np
 import pytest
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 
-from eq1_pulse.models.basic_types import Phase, Threshold, Voltage
+from eq1_pulse.models.basic_types import Amplitude, ComplexVoltage, Phase, Threshold, Voltage
 from eq1_pulse.models.data_ops import (
     ComparisonMode,
     ComplexToRealProjectionMode,
@@ -213,6 +213,59 @@ def test_symbol_value_numpy_complex_forms_are_tagged_as_complex():
     adapter: TypeAdapter[Any] = TypeAdapter(SymbolValue)
     assert adapter.validate_python(np.array([1.0, 2.0])) == 1 + 2j
     assert adapter.validate_python(np.complex128(1 + 2j)) == 1 + 2j
+
+
+def test_symbol_value_amplitude_instance_survives_as_amplitude():
+    """An Amplitude instance is tagged by its type, so it stays an Amplitude.
+
+    :class:`~.basic_types.Amplitude` derives from :class:`~.basic_types.ComplexVoltage`, which is not
+    a :class:`~.basic_types.Voltage` subclass; before the complex-voltage member was added the union
+    rejected it, and with it :data:`~.expressions.LiteralExpr`'s most common value.
+    """
+    value: Any = TypeAdapter(SymbolValue).validate_python(Amplitude(mV=1 + 2j))
+    assert isinstance(value, Amplitude)
+    assert value.mV == 1 + 2j
+
+
+def test_symbol_value_complex_voltage_wire_form():
+    """A ``(real, imag)`` pair under a voltage unit key is a ComplexVoltage and dumps back unchanged."""
+    adapter: TypeAdapter[Any] = TypeAdapter(SymbolValue)
+    value = adapter.validate_python({"mV": [1, 2]})
+    assert isinstance(value, ComplexVoltage)
+    assert value.mV == 1 + 2j
+    assert adapter.dump_python(value) == {"mV": (1.0, 2.0)}
+
+
+def test_symbol_value_real_voltage_key_is_still_a_voltage():
+    """A real number under the same unit key still resolves to the real dimension."""
+    value: Any = TypeAdapter(SymbolValue).validate_python({"mV": 100})
+    assert type(value) is Voltage
+    assert value.mV == 100
+
+
+def test_symbol_value_real_amplitude_narrows_to_voltage_on_the_way_back():
+    """A real-valued Amplitude dumps ``{"mV": 100}`` and revalidates as a Voltage.
+
+    The document round-trips unchanged and only the type narrows -- the same narrowing
+    :class:`~.basic_types.Duration` gets to :class:`~.basic_types.Time`, for the same reason: on the
+    wire a real complex voltage and a real voltage are one document. Intended, not a defect.
+    """
+    adapter: TypeAdapter[Any] = TypeAdapter(SymbolValue)
+    document = adapter.dump_python(adapter.validate_python(Amplitude(mV=100)))
+    assert document == {"mV": 100}
+    assert type(adapter.validate_python(document)) is Voltage
+    assert adapter.dump_python(adapter.validate_python(document)) == document
+
+
+def test_symbol_value_unit_typo_reports_one_error():
+    """An unknown unit key is one union_tag_not_found, not one error per member.
+
+    The complex-voltage member is decided by value shape rather than by its own unit key, so it adds
+    no second way for a typo to be reported.
+    """
+    with pytest.raises(ValidationError) as excinfo:
+        TypeAdapter(SymbolValue).validate_python({"usec": 3})
+    assert [error["type"] for error in excinfo.value.errors()] == ["union_tag_not_found"]
 
 
 def test_value_limits_default_elision():

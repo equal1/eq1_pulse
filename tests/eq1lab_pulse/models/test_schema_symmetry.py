@@ -47,6 +47,7 @@ def _canonical_round_trip_instances():
     from eq1_pulse.models.basic_types import Amplitude, Duration, Threshold
     from eq1_pulse.models.channel_ops import Wait
     from eq1_pulse.models.data_ops import ComparisonMode, Discriminate, VariableDecl
+    from eq1_pulse.models.expressions import BinaryExpr, LiteralExpr, SymbolExpr
     from eq1_pulse.models.external_block import ExternalBlock
     from eq1_pulse.models.pulse_types import SquarePulse
     from eq1_pulse.models.reference_types import ExternalRef, PulseRef, VariableRef
@@ -70,6 +71,11 @@ def _canonical_round_trip_instances():
             compare=ComparisonMode.GreaterEqual,
         ),
         ExternalBlock(program="eq1.cal.measure", channels={"readout": "ch1"}, duration=Duration("10us")),
+        BinaryExpr(
+            op="*",
+            left=SymbolExpr(symbol=VariableRef(var="scale")),
+            right=LiteralExpr(value=Amplitude("80mV")),
+        ),
         Repetition(count=3, body=OpSequence([Wait(channels=["ch1"], duration=Duration("10us"))])),
         OpSequence([Wait(channels=["ch1"], duration=Duration("10us"))]),
     ]

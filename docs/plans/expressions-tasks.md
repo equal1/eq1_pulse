@@ -98,7 +98,7 @@ other task depends on.
 
 | #  | Task                                                  | Size | Model     | Reasoning | Context     | Touches                                    |
 | -- | ------------------------------------------------------- | ---- | --------- | --------- | ----------- | -------------------------------------------- |
-| 1  | `models/expressions.py` — the node set, plus the `SymbolValue` fix | L    | Opus 5    | high      | 200k / ~75k | `models/expressions.py`, `models/basic_types.py`, `models/data_ops.py`, `models/pulse_types.py`, `utilities/openapi_generator.py`, `tests/` |
+| 1 ✅ | `models/expressions.py` — the node set, plus the `SymbolValue` fix | L    | Opus 5    | high      | 200k / ~75k | `models/expressions.py`, `models/basic_types.py`, `models/data_ops.py`, `models/pulse_types.py`, `utilities/openapi_generator.py`, `tests/` |
 | 2  | Widen operations to `ValueRef`; rebuild sweep         | M    | Sonnet 5  | high      | 200k / ~60k | `models/`, `tests/`                          |
 | 3  | Builder: `Expr` and its operators                     | M    | Sonnet 5  | high      | 200k / ~45k | `builder/_expressions.py`, `tests/`          |
 | 4  | Builder: leaf checking, acceptance, exports           | M    | Sonnet 5  | medium    | 200k / ~50k | `builder/`, `tests/`                         |
@@ -137,11 +137,41 @@ big.
 
 ---
 
-## Task 1 — `models/expressions.py`, and the value union it needs
+## Task 1 — `models/expressions.py`, and the value union it needs — **done**
+
+**Status:** done, 2026-08-22. QA green (pyright 0, mypy clean, 933 tests). As built, with one
+deviation from the acceptance criteria, noted below.
 
 **Read:** plan §2 in full (including §2.4), §3.4, §7, and §8 Q3/Q4/Q7/Q8.
 **Goal:** the expression tree exists, validates, round-trips, and is covered by the tree-wide schema
 invariant. Nothing uses it yet.
+
+> **As built.** The shape test is `is_complex_voltage_spelling` plus `dimension_tag_of_unit_mapping`
+> in `basic_types.py`, which both tag functions now call for the mapping branch; the instance branch
+> is a `ComplexVoltage` carve-out at the top of `dimension_tag_of`. `_DIMENSION_TAGS` is untouched,
+> as the trap requires.
+>
+> **One existing test had to change rather than gain a case**, which the acceptance criteria asks be
+> reported: `test_pulse_types.py::test_external_param_value_amplitude_is_rejected` asserted the
+> exact gap §2.4 closes ("an `Amplitude` instance is rejected by `ExternalParamValue`"), citing a
+> since-superseded scope decision. It is replaced by
+> `test_external_param_value_amplitude_instance_survives_as_amplitude`. Nothing else changed; the
+> `SymbolValue` and `ExternalParamValue` tests only gained cases.
+>
+> Depth is enforced by a `model_validator(mode="after")` on `ExprBase` over an iterative
+> breadth-first walk (`_expression_depth`), which reads operands off field values rather than a
+> per-class list, so a node type added later is walked without registering it. Recursion is
+> deliberately avoided there: the validator runs on trees that have not yet been depth-checked.
+>
+> `ExpressionFunction` (the closed `Literal` of function names) is a module-level alias rather than
+> an inline literal, so `CallExpr.function` and the arity validator name the same thing. It is not
+> in `__all__` — step 9's list is unchanged.
+>
+> **Left for task 2, flagged here:** `expressions.py` imports `SymbolValue` from `data_ops.py` at
+> module level, as step 4 directs. Task 2 widens `data_ops`'s own fields to `ValueRef`, which lives
+> here — so task 2 inherits a `data_ops` ↔ `expressions` import cycle to break (a bottom-of-module
+> import plus `model_rebuild()` in `data_ops` is the obvious shape). It is not a defect in this
+> task; it is the first thing task 2 will hit.
 
 Two pieces, in this order. The second is the one the plan is about; the first is a defect in the
 value union it builds on, and building on it first only means fixing it twice.

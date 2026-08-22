@@ -13,13 +13,16 @@ from pydantic import (
 
 from .base_models import LeanModel as _LeanModel
 from .basic_types import (
+    COMPLEX_VOLTAGE_TAG,
     Amplitude,
     Angle,
+    ComplexVoltage,
     Duration,
     Frequency,
     Time,
     Voltage,
     dimension_tag_of,
+    dimension_tag_of_unit_mapping,
     dimension_unit_tag_map,
 )
 from .complex import complex_from_tuple
@@ -28,7 +31,7 @@ from .nd_array import NumpyArray, NumpyComplexArray1D, NumpyFloatArray1D
 from .reference_types import ExternalRef, ExtRefDict, PulseRef, SymbolRef, VariableRef
 
 if TYPE_CHECKING:
-    from .basic_types import AngleLike, FrequencyLike, TimeLike, VoltageLike
+    from .basic_types import AngleLike, ComplexVoltageLike, FrequencyLike, TimeLike, VoltageLike
     from .reference_types import PulseRefLike, SymbolRefLike, VariableRefLike
 
 __all__ = (
@@ -238,7 +241,7 @@ def _external_param_value_tag(value: Any) -> str | None:
         if len(value) == 1:
             key: str = next(iter(value))
             if key in _EXTERNAL_PARAM_UNIT_TAGS:
-                return _EXTERNAL_PARAM_UNIT_TAGS[key]
+                return dimension_tag_of_unit_mapping(value, _EXTERNAL_PARAM_UNIT_TAGS)
             if key in _EXTERNAL_PARAM_REFERENCE_TAGS.values():
                 return key
         return None
@@ -265,6 +268,7 @@ def _external_param_value_tag(value: Any) -> str | None:
 type ExternalParamValue = Annotated[
     Annotated[Time, Tag("time")]
     | Annotated[Voltage, Tag("voltage")]
+    | Annotated[ComplexVoltage, Tag(COMPLEX_VOLTAGE_TAG)]
     | Annotated[Frequency, Tag("frequency")]
     | Annotated[Angle, Tag("angle")]
     | Annotated[VariableRef, Tag("var")]
@@ -281,11 +285,13 @@ type ExternalParamValue = Annotated[
 """Dimensional, reference, or scalar parameter value for externally defined pulses and blocks.
 
 Lists one type per dimension -- :class:`~.basic_types.Time`, :class:`~.basic_types.Voltage`,
-:class:`~.basic_types.Frequency`, :class:`~.basic_types.Angle` -- rather than per refinement, the
-same narrowing :data:`~.data_ops.SymbolValue` makes and for the same reason (issue #10):
-:class:`~.basic_types.Duration`, :class:`~.basic_types.Amplitude`, :class:`~.basic_types.Threshold`,
-:class:`~.basic_types.Magnitude` and :class:`~.basic_types.Phase` are indistinguishable on the wire
-from their base dimension.
+:class:`~.basic_types.ComplexVoltage`, :class:`~.basic_types.Frequency`, :class:`~.basic_types.Angle`
+-- rather than per refinement, the same narrowing :data:`~.data_ops.SymbolValue` makes and for the
+same reason (issue #10): :class:`~.basic_types.Duration`, :class:`~.basic_types.Amplitude`,
+:class:`~.basic_types.Threshold`, :class:`~.basic_types.Magnitude` and :class:`~.basic_types.Phase`
+are indistinguishable on the wire from their base dimension. The two voltage dimensions share their
+unit keys and are told apart by the shape of the value, exactly as in
+:data:`~.data_ops.SymbolValue`.
 
 Every reference here is its own tagged object -- ``{"var": name}``, ``{"pulse_name": name}``,
 ``{"ext": name}`` -- so each round-trips through JSON as its own type with nothing in this module
@@ -298,6 +304,7 @@ authored quantity. It is never coerced to a dimensional type, however unit-suffi
 type ExternalParamValueLike = (
     TimeLike
     | VoltageLike
+    | ComplexVoltageLike
     | FrequencyLike
     | AngleLike
     | VariableRefLike
