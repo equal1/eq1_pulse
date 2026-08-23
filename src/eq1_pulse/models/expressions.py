@@ -23,10 +23,11 @@ module avoid.
 
 from __future__ import annotations
 
+import contextvars
 from collections.abc import Iterator, Mapping
 from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Final, Literal, Self
 
-from pydantic import Discriminator, Tag, model_validator
+from pydantic import Discriminator, Tag, model_serializer, model_validator
 
 from .base_models import NestedWireModel
 from .reference_types import SymbolRef
@@ -69,6 +70,30 @@ magnitude under the serializer's recursion limit, which is what this cap exists 
 """
 
 
+_wire_serializing: contextvars.ContextVar[frozenset[int]] = contextvars.ContextVar(
+    "_wire_serializing", default=frozenset()
+)
+"""Object ids of :class:`ExprBase` instances whose :meth:`~ExprBase._wrap_serializer` is currently
+on the call stack.
+
+Works around a pydantic-core defect in recursive models with a ``@model_serializer(mode="wrap")``
+(upstream `pydantic#11812 <https://github.com/pydantic/pydantic/issues/11812>`_ and the related
+`pydantic#11563 <https://github.com/pydantic/pydantic/issues/11563>`_): when such a model is
+reached *through another model's field* and the model's own schema is also self-referential --
+exactly the shape :data:`Expression` has, recursing directly through operand fields with no
+intervening container -- pydantic-core inserts the wrap serializer twice in series for that outer
+reference. The spurious second call receives the *same* instance, not its sibling operands, so it
+is detectable by object identity and made a no-op: only the outer (first) call performs the tag
+lift, the inner one passes the plain field dump straight through.
+
+Kept here rather than on :class:`~.base_models.NestedWireModel` itself: :class:`ExprBase` is the
+only subclass shaped this way today -- reached through a field *and* self-referential -- so every
+other ``NestedWireModel`` (every operation, every pulse) pays nothing for a defect that cannot
+reach it. A future subclass with the same shape needs this same guard, copied here rather than
+reintroduced silently on the shared base.
+"""
+
+
 class ExprBase(NestedWireModel):
     """Base class for all expression nodes.
 
@@ -82,6 +107,21 @@ class ExprBase(NestedWireModel):
     if TYPE_CHECKING:
 
         def __init__(self, *args, **kwargs): ...  # noqa: D107
+
+    @model_serializer(mode="wrap")
+    def _wrap_serializer(self, wrapped) -> Any:
+        key = id(self)
+        in_progress = _wire_serializing.get()
+        if key in in_progress:
+            # The pydantic-core duplicate-call defect described at `_wire_serializing`: this is the
+            # spurious inner invocation for the instance the outer call is already wrapping.
+            return wrapped(self)
+
+        token = _wire_serializing.set(in_progress | {key})
+        try:
+            return self._wrap_payload(wrapped)
+        finally:
+            _wire_serializing.reset(token)
 
     @model_validator(mode="after")
     def _validate_depth(self) -> Self:

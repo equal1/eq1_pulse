@@ -8,7 +8,6 @@ Inheriting from these models ensures consistent behavior across the codebase.
 
 from __future__ import annotations
 
-import contextvars
 from collections.abc import Mapping
 from functools import cache
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self, get_args
@@ -33,7 +32,6 @@ if TYPE_CHECKING:
 
 
 __all__ = (
-    "FrozenLeanModel",
     "FrozenModel",
     "FrozenWrappedValueModel",
     "LeanModel",
@@ -303,24 +301,6 @@ class LeanModel(NoExtrasModel):
         return fields[field_name].get_default(call_default_factory=True) if field_name in fields else None
 
 
-_wire_serializing: contextvars.ContextVar[frozenset[int]] = contextvars.ContextVar(
-    "_wire_serializing", default=frozenset()
-)
-"""Object ids of :class:`NestedWireModel` instances whose :meth:`~NestedWireModel._wrap_serializer`
-is currently on the call stack.
-
-Works around a pydantic-core defect in recursive models with a ``@model_serializer(mode="wrap")``
-(upstream `pydantic#11812 <https://github.com/pydantic/pydantic/issues/11812>`_ and the related
-`pydantic#11563 <https://github.com/pydantic/pydantic/issues/11563>`_): when such a model is
-reached *through another model's field* and the model's own schema is also self-referential --
-exactly the shape :data:`~.expressions.Expression` has, recursing directly through operand fields
-with no intervening container -- pydantic-core inserts the wrap serializer twice in series for that
-outer reference. The spurious second call receives the *same* instance, not its sibling operands, so
-it is detectable by object identity and made a no-op: only the outer (first) call performs the tag
-lift, the inner one passes the plain field dump straight through.
-"""
-
-
 class NestedWireModel(LeanModel):
     """A :class:`LeanModel` whose wire form is ``{tag: payload}`` rather than a flat object.
 
@@ -468,18 +448,13 @@ class NestedWireModel(LeanModel):
 
     @model_serializer(mode="wrap")
     def _wrap_serializer(self, wrapped) -> Any:
-        key = id(self)
-        in_progress = _wire_serializing.get()
-        if key in in_progress:
-            # The pydantic-core duplicate-call defect described at `_wire_serializing`: this is the
-            # spurious inner invocation for the instance the outer call is already wrapping.
-            return wrapped(self)
-
-        token = _wire_serializing.set(in_progress | {key})
-        try:
-            return self._wrap_payload(wrapped)
-        finally:
-            _wire_serializing.reset(token)
+        # No double-invoke guard here: that pydantic-core defect (see `ExprBase._wrap_serializer`)
+        # only bites a subclass that is both reached through another model's field *and*
+        # self-referential, which no shipped NestedWireModel besides ExprBase is today. A future
+        # subclass with that shape needs the same guard ExprBase carries, not one added back here
+        # speculatively -- see the docstring there for why it is kept next to its one user instead
+        # of on every NestedWireModel.
+        return self._wrap_payload(wrapped)
 
     def _wrap_payload(self, wrapped) -> Any:
         payload = self._elide_defaults(wrapped(self))
@@ -614,9 +589,3 @@ class FrozenWrappedValueModel(WrappedValueModel):
     """
 
     model_config = ConfigDict(frozen=True)
-
-
-class FrozenLeanModel(LeanModel, FrozenModel):
-    """A frozen model that is also a lean model."""
-
-    pass

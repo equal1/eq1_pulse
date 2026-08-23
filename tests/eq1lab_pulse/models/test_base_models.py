@@ -12,6 +12,7 @@ import pytest
 from pydantic import BaseModel, Field, ValidationError, model_serializer
 
 from eq1_pulse.models.base_models import LeanModel, NestedWireModel
+from eq1_pulse.models.expressions import ExprBase
 
 
 class TaggedByValue(NestedWireModel):
@@ -357,11 +358,14 @@ def test_lean_model_output_is_untouched():
     assert schema["required"] == ["channel"]
 
 
-class SelfReferential(NestedWireModel):
+class SelfReferential(ExprBase):
     """A node whose operand field points back at its own type, as expression nodes do.
 
     This is the shape that trips the pydantic-core defect
-    :func:`test_pydantic_still_double_invokes_a_recursive_wrap_serializer` pins.
+    :func:`test_pydantic_still_double_invokes_a_recursive_wrap_serializer` pins, and the one
+    :class:`~eq1_pulse.models.expressions.ExprBase` carries its re-entrancy guard for -- so this
+    is based on :class:`ExprBase`, not the plain :class:`NestedWireModel`, which no longer needs
+    or carries that guard.
     """
 
     _wire_tag_source_: ClassVar[str] = "binary_op"
@@ -390,8 +394,9 @@ def test_pydantic_still_double_invokes_a_recursive_wrap_serializer():
     the second time over the first's output -- pydantic#11812 and pydantic#11563.
 
     **This test failing is good news.** It means the upstream defect is fixed, and the guard in
-    :meth:`NestedWireModel._wrap_serializer` -- along with the ``_wire_serializing`` context
-    variable it reads -- can be deleted. Do not "fix" this test by loosening the assertion.
+    :meth:`~eq1_pulse.models.expressions.ExprBase._wrap_serializer` -- along with the
+    ``_wire_serializing`` context variable it reads -- can be deleted. Do not "fix" this test by
+    loosening the assertion.
     """
     calls: list[str] = []
 

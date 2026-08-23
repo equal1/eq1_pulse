@@ -92,7 +92,6 @@ def get_all_pydantic_models() -> list[type[BaseModel]]:
         "NoExtrasModel",
         "FrozenModel",
         "LeanModel",
-        "FrozenLeanModel",
         "NestedWireModel",
         "WrappedValueModel",
         "FrozenWrappedValueModel",
