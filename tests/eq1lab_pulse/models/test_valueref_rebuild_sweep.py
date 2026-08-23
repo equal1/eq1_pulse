@@ -20,9 +20,11 @@ from eq1_pulse.models.pulse_types import PulseType, SquarePulse
 from eq1_pulse.models.sequence import DiscriminableOp, OpSequenceItem
 
 _EXPR_DOCUMENT = {
-    "binary_op": "+",
-    "lhs": {"symbol": {"var": "x"}},
-    "rhs": {"value": 1},
+    "binary_op": {
+        "op": "+",
+        "lhs": {"symbol": {"var": "x"}},
+        "rhs": {"value": 1},
+    },
 }
 
 
@@ -66,9 +68,11 @@ def test_external_block_rebuild_sweep():
 def test_control_flow_and_sequence_rebuild_sweep():
     """Repetition.count and Conditional.var -- control_flow.py's and sequence.py's model_rebuild sweep."""
     compare_document = {
-        "compare_op": ">",
-        "lhs": {"symbol": {"var": "x"}},
-        "rhs": {"value": 1},
+        "compare_op": {
+            "op": ">",
+            "lhs": {"symbol": {"var": "x"}},
+            "rhs": {"value": 1},
+        },
     }
     rep: Any = TypeAdapter(DiscriminableOp).validate_python({"repeat": {"count": _EXPR_DOCUMENT, "body": []}})
     assert isinstance(rep.count, BinaryExpr)

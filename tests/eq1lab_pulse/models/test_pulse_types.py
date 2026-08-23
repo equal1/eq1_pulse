@@ -664,32 +664,32 @@ def test_external_param_value_complex_round_trips_through_json():
         pytest.param({"value": 1}, LiteralExpr, id="literal"),
         pytest.param({"symbol": {"var": "x"}}, SymbolExpr, id="symbol"),
         pytest.param(
-            {"unary_op": "-", "rhs": {"value": 1}},
+            {"unary_op": {"op": "-", "rhs": {"value": 1}}},
             UnaryExpr,
             id="unary",
         ),
         pytest.param(
-            {"binary_op": "+", "lhs": {"value": 1}, "rhs": {"value": 2}},
+            {"binary_op": {"op": "+", "lhs": {"value": 1}, "rhs": {"value": 2}}},
             BinaryExpr,
             id="binary",
         ),
         pytest.param(
-            {"compare_op": "<", "lhs": {"value": 1}, "rhs": {"value": 2}},
+            {"compare_op": {"op": "<", "lhs": {"value": 1}, "rhs": {"value": 2}}},
             CompareExpr,
             id="compare",
         ),
         pytest.param(
-            {"logical_op": "and", "lhs": {"value": 1}, "rhs": {"value": 2}},
+            {"logical_op": {"op": "and", "lhs": {"value": 1}, "rhs": {"value": 2}}},
             LogicalExpr,
             id="logical",
         ),
         pytest.param(
-            {"not_op": "not", "rhs": {"value": 1}},
+            {"not_op": {"rhs": {"value": 1}}},
             NotExpr,
             id="not",
         ),
         pytest.param(
-            {"function": "abs", "args": [{"value": 1}]},
+            {"function": {"name": "abs", "args": [{"value": 1}]}},
             CallExpr,
             id="call",
         ),
@@ -698,9 +698,9 @@ def test_external_param_value_complex_round_trips_through_json():
 def test_external_param_value_expression(expr_mapping: dict[str, Any], expr_type: type):
     """An Expression is tagged on its own node key and survives round-tripping from a mapping.
 
-    Its dict shape (multiple keys, none of them a unit or a single-key reference) is what the
-    ``_external_param_value_tag`` branch has to recognize before falling through to the
-    single-key-mapping checks the rest of the union relies on.
+    Its dict shape (a single key naming the node type) is what the ``_external_param_value_tag``
+    branch has to recognize -- via :func:`~.expressions.expression_tag_of` -- before falling
+    through to the single-key-mapping checks the rest of the union relies on.
     """
     adapter: TypeAdapter[Any] = TypeAdapter(ExternalParamValue)
     value = adapter.validate_python(expr_mapping)

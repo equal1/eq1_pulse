@@ -92,12 +92,12 @@ def test_union_discriminates_on_node_key(key: str, node_type: type):
     documents: dict[str, dict[str, Any]] = {
         "value": {"value": 1},
         "symbol": {"symbol": {"var": "x"}},
-        "unary_op": {"unary_op": "-", "rhs": operand},
-        "binary_op": {"binary_op": "+", "lhs": operand, "rhs": operand},
-        "compare_op": {"compare_op": "<", "lhs": operand, "rhs": operand},
-        "not_op": {"not_op": "not", "rhs": operand},
-        "logical_op": {"logical_op": "or", "lhs": operand, "rhs": operand},
-        "function": {"function": "sqrt", "args": [operand]},
+        "unary_op": {"unary_op": {"op": "-", "rhs": operand}},
+        "binary_op": {"binary_op": {"op": "+", "lhs": operand, "rhs": operand}},
+        "compare_op": {"compare_op": {"op": "<", "lhs": operand, "rhs": operand}},
+        "not_op": {"not_op": {"rhs": operand}},
+        "logical_op": {"logical_op": {"op": "or", "lhs": operand, "rhs": operand}},
+        "function": {"function": {"name": "sqrt", "args": [operand]}},
     }
     node: Any = expression_adapter().validate_python(documents[key])
     assert isinstance(node, node_type)
@@ -111,13 +111,17 @@ def test_nested_tree_validates_from_a_plain_dict():
     :obj:`dict` instead of failing.
     """
     document = {
-        "compare_op": "<",
-        "lhs": {
-            "binary_op": "+",
-            "lhs": {"symbol": {"var": "x"}},
-            "rhs": {"value": 1},
+        "compare_op": {
+            "op": "<",
+            "lhs": {
+                "binary_op": {
+                    "op": "+",
+                    "lhs": {"symbol": {"var": "x"}},
+                    "rhs": {"value": 1},
+                },
+            },
+            "rhs": {"value": 2},
         },
-        "rhs": {"value": 2},
     }
     node: Any = expression_adapter().validate_python(document)
     assert isinstance(node, CompareExpr)
@@ -134,8 +138,7 @@ def test_unary_op_is_serialized():
     not the discriminator rule -- and the operator would vanish from the wire.
     """
     assert UnaryExpr(unary_op="-", rhs=LiteralExpr(value=1)).model_dump() == {
-        "unary_op": "-",
-        "rhs": {"value": 1},
+        "unary_op": {"op": "-", "rhs": {"value": 1}},
     }
 
 
@@ -189,7 +192,7 @@ def test_logical_op_rejects_not():
 def test_tree_at_the_depth_limit_builds_and_serializes():
     """A tree exactly ``MAX_EXPRESSION_DEPTH`` deep is accepted and serializes."""
     node = nested_negations(MAX_EXPRESSION_DEPTH)
-    assert json.loads(node.model_dump_json())["unary_op"] == "-"
+    assert json.loads(node.model_dump_json())["unary_op"]["op"] == "-"
 
 
 def test_tree_past_the_depth_limit_is_rejected():
@@ -207,7 +210,7 @@ def test_deep_tree_is_rejected_from_the_wire_too():
     """A too-deep document is rejected on validation, not only on construction."""
     document = json.loads(nested_negations(MAX_EXPRESSION_DEPTH).model_dump_json())
     with pytest.raises(ValidationError, match=str(MAX_EXPRESSION_DEPTH)):
-        expression_adapter().validate_python({"unary_op": "-", "rhs": document})
+        expression_adapter().validate_python({"unary_op": {"op": "-", "rhs": document}})
 
 
 def test_symbol_expr_keeps_the_external_reference_form():
@@ -301,37 +304,37 @@ def test_binary_and_compare_expr_do_not_collide():
         pytest.param("symbol", {"symbol": {"var": "x"}}, SymbolExpr, id="symbol"),
         pytest.param(
             "unary_op",
-            {"unary_op": "-", "rhs": {"value": 1}},
+            {"unary_op": {"op": "-", "rhs": {"value": 1}}},
             UnaryExpr,
             id="unary",
         ),
         pytest.param(
             "binary_op",
-            {"binary_op": "+", "lhs": {"value": 1}, "rhs": {"value": 2}},
+            {"binary_op": {"op": "+", "lhs": {"value": 1}, "rhs": {"value": 2}}},
             BinaryExpr,
             id="binary",
         ),
         pytest.param(
             "compare_op",
-            {"compare_op": "<", "lhs": {"value": 1}, "rhs": {"value": 2}},
+            {"compare_op": {"op": "<", "lhs": {"value": 1}, "rhs": {"value": 2}}},
             CompareExpr,
             id="compare",
         ),
         pytest.param(
             "logical_op",
-            {"logical_op": "and", "lhs": {"value": 1}, "rhs": {"value": 2}},
+            {"logical_op": {"op": "and", "lhs": {"value": 1}, "rhs": {"value": 2}}},
             LogicalExpr,
             id="logical",
         ),
         pytest.param(
             "not_op",
-            {"not_op": "not", "rhs": {"value": 1}},
+            {"not_op": {"rhs": {"value": 1}}},
             NotExpr,
             id="not",
         ),
         pytest.param(
             "function",
-            {"function": "abs", "args": [{"value": 1}]},
+            {"function": {"name": "abs", "args": [{"value": 1}]}},
             CallExpr,
             id="call",
         ),
@@ -360,7 +363,7 @@ def test_valueref_still_disambiguates():
     adapter: TypeAdapter[Any] = TypeAdapter(ValueRef)
     assert isinstance(adapter.validate_python({"var": "x"}), VariableRef)
     assert isinstance(adapter.validate_python({"ext": "q0.f01"}), ExternalRef)
-    binary_doc = {"binary_op": "+", "lhs": {"value": 1}, "rhs": {"value": 2}}
+    binary_doc = {"binary_op": {"op": "+", "lhs": {"value": 1}, "rhs": {"value": 2}}}
     node: Any = adapter.validate_python(binary_doc)
     assert isinstance(node, BinaryExpr)
 

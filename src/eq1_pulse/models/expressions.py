@@ -11,8 +11,9 @@ There is one node type per *arity and result kind* rather than one per operator 
 :class:`BinaryExpr` with ``op="+"``, not an ``AddExpr``. :class:`CompareExpr`, :class:`NotExpr` and
 :class:`LogicalExpr` are split out of :class:`UnaryExpr`/:class:`BinaryExpr` for the same reason
 applied one level up: all three yield booleans, all are valid where an arithmetic node is not, and
-keeping them distinct makes "is this a predicate?" answerable from the wire key alone -- ``compare_op``
-/ ``not_op`` / ``logical_op`` versus ``unary_op`` / ``binary_op`` -- as well as in Python.
+keeping them distinct makes "is this a predicate?" answerable from the wire key alone --
+``{"compare_op": {"op": "<", ...}}`` / ``{"not_op": {"rhs": ...}}`` / ``{"logical_op": {"op": "and", ...}}``
+versus ``{"unary_op": {"op": "-", ...}}`` / ``{"binary_op": {"op": "+", ...}}`` -- as well as in Python.
 :class:`NotExpr` and :class:`LogicalExpr` are themselves split by arity, the same way
 :class:`UnaryExpr` and :class:`BinaryExpr` are: ``not`` is unary, ``and``/``or`` are binary, and a
 single node type spanning both would need an optional field and a validator to enforce which
@@ -23,11 +24,11 @@ module avoid.
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
-from typing import TYPE_CHECKING, Annotated, Any, Final, Literal, Self
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Final, Literal, Self
 
 from pydantic import Discriminator, Tag, model_validator
 
-from .base_models import LeanModel
+from .base_models import NestedWireModel
 from .reference_types import SymbolRef
 
 if TYPE_CHECKING:
@@ -60,14 +61,22 @@ guard while validating, so a deep tree already fails there with a
 ``model_dump_json()`` degrades into a storm of ``PydanticSerializationUnexpectedValue`` *warnings*
 and emits wrong output. Rejecting a too-deep tree on the way in means one can never be built to
 serialize. Hand-written expressions do not approach 32.
+
+The cap is on *Python* nesting, which :func:`_expression_depth` measures and which the six nodes'
+:class:`~.base_models.NestedWireModel` opt-in does not change. The serialized JSON gains one level
+per operator node, so a maximal tree is ~64 JSON levels deep instead of ~32 -- still an order of
+magnitude under the serializer's recursion limit, which is what this cap exists to protect.
 """
 
 
-class ExprBase(LeanModel):
+class ExprBase(NestedWireModel):
     """Base class for all expression nodes.
 
     Each node is keyed on a field it already needs -- the operator for the five operator nodes, and
     the single payload field for the other three -- rather than on a separate discriminator field.
+    Six of the eight opt into :class:`~.base_models.NestedWireModel`'s ``{tag: payload}`` wire form
+    by setting its class vars; :class:`LiteralExpr` and :class:`SymbolExpr` leave them unset and stay
+    flat, since each has exactly one field already.
     """
 
     if TYPE_CHECKING:
@@ -153,6 +162,10 @@ class UnaryExpr(ExprBase):
     every other named mathematical operation lives.
     """
 
+    _wire_tag_source_: ClassVar[str] = "unary_op"
+    _wire_tag_from_: ClassVar[Literal["value", "name"]] = "name"
+    _wire_payload_key_: ClassVar[str | None] = "op"
+
     unary_op: Literal["-"]
     """The operator applied to :attr:`rhs`.
 
@@ -166,6 +179,10 @@ class UnaryExpr(ExprBase):
 
 class BinaryExpr(ExprBase):
     """An arithmetic operation on two operands."""
+
+    _wire_tag_source_: ClassVar[str] = "binary_op"
+    _wire_tag_from_: ClassVar[Literal["value", "name"]] = "name"
+    _wire_payload_key_: ClassVar[str | None] = "op"
 
     binary_op: Literal["+", "-", "*", "/", "%"]
     """The arithmetic operator."""
@@ -181,6 +198,10 @@ class CompareExpr(ExprBase):
     Separate from :class:`BinaryExpr` because its result kind is categorically different: a
     comparison is a valid :attr:`~.control_flow.ConditionalBase.var` where an arithmetic node is not.
     """
+
+    _wire_tag_source_: ClassVar[str] = "compare_op"
+    _wire_tag_from_: ClassVar[Literal["value", "name"]] = "name"
+    _wire_payload_key_: ClassVar[str | None] = "op"
 
     compare_op: Literal["<", "<=", ">", ">=", "==", "!="]
     """The comparison operator."""
@@ -198,12 +219,18 @@ class NotExpr(ExprBase):
     instead of an optional ``lhs`` on a node shared with the binary ones.
     """
 
+    _wire_tag_source_: ClassVar[str] = "not_op"
+    _wire_tag_from_: ClassVar[Literal["value", "name"]] = "name"
+    _wire_payload_key_: ClassVar[str | None] = None
+
     not_op: Literal["not"]
     """The operator applied to :attr:`rhs`.
 
     Declared without a default even though it has exactly one possible value: it is the
-    discriminator for this node, first in the class, so :class:`~.base_models.LeanModel` serializes
-    it always regardless of whether it has one.
+    discriminator for this node, first in the class, and its wire tag besides -- read off the
+    field *name* rather than repeated inside the payload, since ``"not"`` is its only possible
+    value and the tag already says so. Recovered on the way back in from this field's sole
+    :obj:`~typing.Literal` argument.
     """
     rhs: Expression
     """The expression being negated."""
@@ -215,6 +242,10 @@ class LogicalExpr(ExprBase):
     ``and``/``or`` only -- ``not`` is :class:`NotExpr`. For n-ary ``and``/``or``, nest the
     expressions (e.g., ``and(and(a, b), c)``).
     """
+
+    _wire_tag_source_: ClassVar[str] = "logical_op"
+    _wire_tag_from_: ClassVar[Literal["value", "name"]] = "name"
+    _wire_payload_key_: ClassVar[str | None] = "op"
 
     logical_op: Literal["and", "or"]
     """The boolean connective."""
@@ -237,6 +268,10 @@ _VARIADIC_FUNCTIONS: Final = frozenset({"min", "max"})
 
 class CallExpr(ExprBase):
     """A call to one of the named functions in :data:`ExpressionFunction`."""
+
+    _wire_tag_source_: ClassVar[str] = "function"
+    _wire_tag_from_: ClassVar[Literal["value", "name"]] = "name"
+    _wire_payload_key_: ClassVar[str | None] = "name"
 
     function: ExpressionFunction
     """The function being called."""
@@ -269,11 +304,20 @@ _EXPRESSION_TAGS: Final[dict[type[ExprBase], str]] = {
 def expression_tag_of(value: Any) -> str | None:
     """Return the wire key that discriminates *value* as an expression node, or :obj:`None`.
 
+    A mapping is tagged by its **sole** key, if that key is one of :data:`_EXPRESSION_TAGS`'
+    values -- every node's wire object, nested or flat, has exactly one key naming its type, so a
+    mapping with any other number of keys, or a single key that names something else, carries no
+    tag. Returning :obj:`None` in both cases is load-bearing: :func:`~.pulse_types._external_param_value_tag`
+    depends on it to fall through to its unit and reference branches.
+
     :param value: A mapping (raw input) or an :class:`ExprBase` instance
     :return: The discriminating key, or :obj:`None` if *value* is neither
     """
     if isinstance(value, Mapping):
-        return next((tag for tag in _EXPRESSION_TAGS.values() if tag in value), None)
+        if len(value) == 1:
+            key = next(iter(value))
+            return key if key in _EXPRESSION_TAGS.values() else None
+        return None
     for node_type, tag in _EXPRESSION_TAGS.items():
         if isinstance(value, node_type):
             return tag
