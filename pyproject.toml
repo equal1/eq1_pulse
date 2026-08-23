@@ -135,7 +135,9 @@ pythonpath = "src"
 # importlib avoids sys.modules collisions between same-named test files in different
 # directories (e.g. test_builder.py under tests/ and tests/experimental/); the tree has
 # no __init__.py files, so the default "prepend" import mode cannot tell them apart.
-addopts = "--cov=src --import-mode=importlib"
+# The --cov option is used to generate a coverage report for the src directory.
+# We minimize the output for token saving.
+addopts = "-q --cov=src --import-mode=importlib --no-header --no-summary --tb=short --disable-warnings"
 testpaths = ["tests"]
 log_cli = false
 log_cli_level = "DEBUG"
