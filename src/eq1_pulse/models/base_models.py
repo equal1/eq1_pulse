@@ -10,9 +10,18 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from functools import cache
-from typing import TYPE_CHECKING, Any, Literal, Self, get_args
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self, get_args
 
-from pydantic import BaseModel, ConfigDict, GetJsonSchemaHandler, RootModel, TypeAdapter, model_serializer
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    GetJsonSchemaHandler,
+    RootModel,
+    TypeAdapter,
+    ValidatorFunctionWrapHandler,
+    model_serializer,
+    model_validator,
+)
 from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import CoreSchema, PydanticUndefinedType
 
@@ -27,6 +36,7 @@ __all__ = (
     "FrozenModel",
     "FrozenWrappedValueModel",
     "LeanModel",
+    "NestedWireModel",
     "NoExtrasModel",
     "WrappedValueModel",
 )
@@ -216,6 +226,18 @@ class LeanModel(NoExtrasModel):
 
     @model_serializer(mode="wrap")
     def _wrap_serializer(self, wrapped) -> Any:
+        return self._elide_defaults(wrapped(self))
+
+    def _elide_defaults(self, dumped: dict[str, Any]) -> dict[str, Any]:
+        """Drop from *dumped* every entry whose value equals its field's default.
+
+        Split out of :meth:`_wrap_serializer` so a subclass that reshapes the wire form --
+        :class:`NestedWireModel` -- reuses the elision instead of re-deriving it. For a plain
+        :class:`LeanModel` this *is* what :meth:`_wrap_serializer` returns.
+
+        :param dumped: the fields as pydantic's own serializer produced them.
+        :return: *dumped* without the entries equal to their field's default.
+        """
         from numpy import array_equal, ndarray
 
         def is_eq(attribute_value, default_value):
@@ -229,7 +251,7 @@ class LeanModel(NoExtrasModel):
                 case _:
                     return attribute_value == default_value
 
-        return {k: v for k, v in wrapped(self).items() if not is_eq(getattr(self, k), self._default_value_of(k))}
+        return {k: v for k, v in dumped.items() if not is_eq(getattr(self, k), self._default_value_of(k))}
 
     @classmethod
     def __get_pydantic_json_schema__(cls, core_schema: CoreSchema, handler: GetJsonSchemaHandler) -> JsonSchemaValue:
@@ -278,6 +300,217 @@ class LeanModel(NoExtrasModel):
     def _default_value_of(cls, field_name: str) -> Any:
         fields = cls._non_discriminator_fields()
         return fields[field_name].get_default(call_default_factory=True) if field_name in fields else None
+
+
+class NestedWireModel(LeanModel):
+    """A :class:`LeanModel` whose wire form is ``{tag: payload}`` rather than a flat object.
+
+    A plain :class:`LeanModel` publishes its discriminator as a sibling of the data --
+    ``{"op_type": "play", "channel": "q0_drive", ...}``. A ``NestedWireModel`` lifts it to the key
+    of a single-entry object instead -- ``{"play": {"channel": "q0_drive", ...}}`` -- so the sole
+    key answers "what is this?", and the payload it points at is a closed record of real fields
+    only, with the discriminator no longer occupying a slot in the same namespace as the data.
+
+    This is **opt-in, and inert until configured.** A subclass that leaves
+    :attr:`_wire_tag_source_` unset -- or names a field whose tag cannot be read statically, as an
+    abstract base whose ``op_type`` is not yet a concrete literal does -- behaves exactly like
+    :class:`LeanModel`, in both directions and in both schema modes.
+
+    Two tagging rules are supported, chosen by :attr:`_wire_payload_key_`:
+
+    ``_wire_payload_key_ = None``
+        The tag is the tag-source field's **value**, and it is not repeated inside the payload.
+        The field must be annotated with a single-valued :obj:`~typing.Literal` string, which is
+        what makes the tag statically known -- the JSON schema has to *name* the key, so a tag
+        that only exists at runtime is no use. Operations use this rule: ``op_type:
+        Literal["play"]`` gives ``{"play": {...}}``.
+
+    ``_wire_payload_key_ = "op"``
+        The tag is the tag-source field's **name**, and its value is kept inside the payload under
+        that key. Expression operator nodes use this rule: ``unary_op: Literal["-", "+"]`` gives
+        ``{"unary_op": {"op": "-", "rhs": ...}}``, because operator *values* overlap between node
+        types -- ``"-"`` is both unary and binary -- so only the field name tells them apart.
+
+    An empty payload serializes as the bare tag string, ``"barrier"`` rather than
+    ``{"barrier": {}}``: the object carries nothing the key does not already carry. That form is
+    given only to a class that can *statically* reach an empty payload, meaning every field other
+    than the tag source has a default. A class with a required field never grows the alternate
+    form, neither in its serializer nor in its schema.
+
+    Note:
+        The validator accepts the nested form, and the bare tag string where that applies.
+        Anything else -- keyword construction from Python, an already-built instance -- passes
+        through untouched, so ``Play(channel=..., pulse=...)`` keeps working; pydantic routes
+        ``__init__`` through this same validator, so a stricter rule here would outlaw ordinary
+        construction. Rejecting the superseded *flat wire form* is therefore not done here: it is
+        the job of the discriminated union that selects this class, which reads the sole key and
+        finds no tag in a flat object.
+
+    """
+
+    _wire_tag_source_: ClassVar[str] = ""
+    """The field the tag is read from. Empty means "not configured", and the model stays flat."""
+
+    _wire_payload_key_: ClassVar[str | None] = None
+    """The inner key the tag source's value is kept under, or :obj:`None` to drop it from the payload.
+
+    :obj:`None` also selects the tagging rule: the tag is then the field's *value* rather than its
+    *name*. See the class docstring.
+    """
+
+    @classmethod
+    @cache
+    def _wire_tag(cls) -> str | None:
+        """The sole key this model's wire object carries, if it is statically determined.
+
+        :return: The tag, or :obj:`None` if this class is not configured for the nested form --
+            in which case every hook below falls back to :class:`LeanModel`'s behaviour.
+        """
+        source = cls._wire_tag_source_
+        if not source or source not in cls.model_fields:
+            return None
+        if cls._wire_payload_key_ is not None:
+            return source
+
+        lit: Any = cls.model_fields[source].annotation
+        if isinstance(lit, type(Literal[Any])) and len(args := get_args(lit)) == 1 and isinstance(args[0], str):
+            return args[0]
+        return None
+
+    @classmethod
+    @cache
+    def _wire_payload_can_be_empty(cls) -> bool:
+        """Whether an instance of this class can reach an empty payload, and so take the bare-tag form.
+
+        Read off the field declarations, not off any one instance: the bare-tag form is part of
+        this class's schema or it is not, and a class with a required field must never grow it.
+        A class keeping the tag source inside the payload always has at least that key, so it can
+        never be empty.
+
+        :return: :obj:`True` if every field other than the tag source has a default.
+        """
+        if cls._wire_payload_key_ is not None:
+            return False
+        source = cls._wire_tag_source_
+        return all(not field.is_required() for name, field in cls.model_fields.items() if name != source)
+
+    @classmethod
+    def _flatten_payload(cls, payload: Mapping[str, Any]) -> dict[str, Any]:
+        """Turn a wire payload into the flat field mapping pydantic already knows how to validate.
+
+        :param payload: The object the tag pointed at.
+        :return: The same entries, with the tag source restored as an ordinary field.
+        """
+        source = cls._wire_tag_source_
+        payload_key = cls._wire_payload_key_
+        if payload_key is None:
+            return {source: cls._wire_tag(), **payload}
+        if payload_key not in payload:
+            return dict(payload)
+        return {source: payload[payload_key], **{k: v for k, v in payload.items() if k != payload_key}}
+
+    @model_serializer(mode="wrap")
+    def _wrap_serializer(self, wrapped) -> Any:
+        payload = self._elide_defaults(wrapped(self))
+        tag = self._wire_tag()
+        if tag is None:
+            return payload
+
+        source = self._wire_tag_source_
+        tag_value = payload.pop(source) if source in payload else getattr(self, source)
+        if (payload_key := self._wire_payload_key_) is not None:
+            return {tag: {payload_key: tag_value, **payload}}
+        if not payload and self._wire_payload_can_be_empty():
+            return tag
+        return {tag: payload}
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def _unwrap_validator(cls, data: Any, handler: ValidatorFunctionWrapHandler) -> Any:
+        """Flatten the ``{tag: payload}`` wire form back into the field set pydantic validates.
+
+        Input that is not this class's wire form is handed to *handler* untouched -- see the note
+        in the class docstring for why that is deliberate rather than lax.
+
+        :param data: The value being validated.
+        :param handler: The inner validator, called with the flattened field mapping.
+        :return: The validated model.
+        """
+        tag = cls._wire_tag()
+        if tag is None:
+            return handler(data)
+
+        if isinstance(data, str):
+            if data == tag and cls._wire_payload_can_be_empty():
+                return handler({cls._wire_tag_source_: tag})
+            return handler(data)
+
+        if isinstance(data, Mapping) and len(data) == 1 and next(iter(data)) == tag:
+            payload = data[tag]
+            if isinstance(payload, Mapping) and cls._wire_tag_source_ not in payload:
+                return handler(cls._flatten_payload(payload))
+
+        return handler(data)
+
+    @classmethod
+    def __get_pydantic_json_schema__(cls, core_schema: CoreSchema, handler: GetJsonSchemaHandler) -> JsonSchemaValue:
+        """Wrap the flat object schema :class:`LeanModel` builds in the single-key wire object.
+
+        This runs identically in both schema modes: it reshapes whatever
+        :meth:`LeanModel.__get_pydantic_json_schema__` returned, and that method has already made
+        the two modes agree. Symmetry therefore holds by construction rather than by a second,
+        parallel derivation that could drift from the first.
+
+        :param core_schema: The core schema the JSON schema is generated from.
+        :param handler: The handler producing the default JSON schema.
+        :return: The single-key object schema, or the flat one if this class is not configured.
+        """
+        flat = super().__get_pydantic_json_schema__(core_schema, handler)
+        tag = cls._wire_tag()
+        return flat if tag is None else cls._nested_json_schema(flat, tag)
+
+    @classmethod
+    def _nested_json_schema(cls, flat: JsonSchemaValue, tag: str) -> JsonSchemaValue:
+        """Reshape the flat object schema *flat* into the ``{tag: payload}`` wire object.
+
+        ``title`` and ``description`` move to the outer schema, which is the one published under
+        the model's name; the payload underneath keeps the field ``properties``, the ``required``
+        list and the ``additionalProperties: false`` that make it a closed record. The tag source
+        leaves ``properties`` altogether when the tag is its value, and is renamed to
+        :attr:`_wire_payload_key_` when the tag is its name.
+
+        :param flat: The object schema the model would publish without the wrap.
+        :param tag: The sole key of the wire object.
+        :return: The wrapped schema.
+        """
+        inner = dict(flat)
+        outer: JsonSchemaValue = {key: inner.pop(key) for key in ("title", "description") if key in inner}
+
+        source = cls._wire_tag_source_
+        was_required = source in inner.get("required", ())
+        properties = dict(inner.get("properties", {}))
+        required = [name for name in inner.get("required", ()) if name != source]
+        tag_schema = properties.pop(source, None)
+        if (payload_key := cls._wire_payload_key_) is not None and tag_schema is not None:
+            properties = {payload_key: tag_schema, **properties}
+            if was_required:
+                required.insert(0, payload_key)
+
+        for key, value in (("properties", properties), ("required", required)):
+            if value:
+                inner[key] = value
+            else:
+                inner.pop(key, None)
+
+        wrapped: JsonSchemaValue = {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {tag: inner},
+            "required": [tag],
+        }
+        if cls._wire_payload_can_be_empty():
+            return {**outer, "anyOf": [wrapped, {"const": tag, "type": "string"}]}
+        return {**outer, **wrapped}
 
 
 class FrozenWrappedValueModel(WrappedValueModel):
