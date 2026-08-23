@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Equal1 Pulse Models API",
-    "version": "0.8.0",
+    "version": "0.8.1.post12+git.fc357ef9.dirty",
     "description": "OpenAPI schema for Equal1 Pulse library models. This schema defines all the Pydantic models used for pulse sequencing, channel operations, control flow, and data operations."
   },
   "components": {
@@ -53,7 +53,7 @@
                 "$ref": "#/components/schemas/Duration"
               },
               {
-                "$ref": "#/components/schemas/SymbolRef"
+                "$ref": "#/components/schemas/ValueRef"
               }
             ],
             "title": "Duration"
@@ -64,7 +64,7 @@
                 "$ref": "#/components/schemas/Amplitude"
               },
               {
-                "$ref": "#/components/schemas/SymbolRef"
+                "$ref": "#/components/schemas/ValueRef"
               }
             ],
             "title": "Amplitude"
@@ -116,22 +116,25 @@
         "additionalProperties": false,
         "description": "Synchronize channels.\n\nThe barrier operation causes channels to wait until all channels have reached the barrier.",
         "properties": {
-          "op_type": {
-            "const": "barrier",
-            "default": "barrier",
-            "title": "Op Type",
-            "type": "string"
-          },
-          "channels": {
-            "items": {
-              "$ref": "#/components/schemas/ChannelTarget"
+          "barrier": {
+            "additionalProperties": false,
+            "properties": {
+              "channels": {
+                "items": {
+                  "$ref": "#/components/schemas/ChannelTarget"
+                },
+                "title": "Channels",
+                "type": "array"
+              }
             },
-            "title": "Channels",
-            "type": "array"
+            "required": [
+              "channels"
+            ],
+            "type": "object"
           }
         },
         "required": [
-          "channels"
+          "barrier"
         ],
         "title": "Barrier",
         "type": "object"
@@ -143,22 +146,77 @@
         "title": "BaseUnit",
         "type": "object"
       },
-      "ChannelOp": {
-        "discriminator": {
-          "mapping": {
-            "barrier": "#/components/schemas/Barrier",
-            "dc_comp": "#/components/schemas/CompensateDC",
-            "play": "#/components/schemas/Play",
-            "record": "#/components/schemas/Record",
-            "set_frequency": "#/components/schemas/SetFrequency",
-            "set_phase": "#/components/schemas/SetPhase",
-            "shift_frequency": "#/components/schemas/ShiftFrequency",
-            "shift_phase": "#/components/schemas/ShiftPhase",
-            "trace": "#/components/schemas/Trace",
-            "wait": "#/components/schemas/Wait"
-          },
-          "propertyName": "op_type"
+      "BinaryExpr": {
+        "additionalProperties": false,
+        "description": "An arithmetic operation on two operands.",
+        "properties": {
+          "binary_op": {
+            "additionalProperties": false,
+            "properties": {
+              "op": {
+                "enum": [
+                  "+",
+                  "-",
+                  "*",
+                  "/",
+                  "%"
+                ],
+                "title": "Binary Op",
+                "type": "string"
+              },
+              "lhs": {
+                "$ref": "#/components/schemas/Expression"
+              },
+              "rhs": {
+                "$ref": "#/components/schemas/Expression"
+              }
+            },
+            "required": [
+              "op",
+              "lhs",
+              "rhs"
+            ],
+            "type": "object"
+          }
         },
+        "required": [
+          "binary_op"
+        ],
+        "title": "BinaryExpr",
+        "type": "object"
+      },
+      "CallExpr": {
+        "additionalProperties": false,
+        "description": "A call to one of the named functions in :data:`ExpressionFunction`.",
+        "properties": {
+          "function": {
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "$ref": "#/components/schemas/ExpressionFunction"
+              },
+              "args": {
+                "items": {
+                  "$ref": "#/components/schemas/Expression"
+                },
+                "title": "Args",
+                "type": "array"
+              }
+            },
+            "required": [
+              "name",
+              "args"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "function"
+        ],
+        "title": "CallExpr",
+        "type": "object"
+      },
+      "ChannelOp": {
         "oneOf": [
           {
             "$ref": "#/components/schemas/Play"
@@ -247,6 +305,46 @@
         "title": "ChannelsOpBase",
         "type": "object"
       },
+      "CompareExpr": {
+        "additionalProperties": false,
+        "description": "A comparison of two operands, yielding a boolean.\n\nSeparate from :class:`BinaryExpr` because its result kind is categorically different: a\ncomparison is a valid :attr:`~.control_flow.ConditionalBase.var` where an arithmetic node is not.",
+        "properties": {
+          "compare_op": {
+            "additionalProperties": false,
+            "properties": {
+              "op": {
+                "enum": [
+                  "<",
+                  "<=",
+                  ">",
+                  ">=",
+                  "==",
+                  "!="
+                ],
+                "title": "Compare Op",
+                "type": "string"
+              },
+              "lhs": {
+                "$ref": "#/components/schemas/Expression"
+              },
+              "rhs": {
+                "$ref": "#/components/schemas/Expression"
+              }
+            },
+            "required": [
+              "op",
+              "lhs",
+              "rhs"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "compare_op"
+        ],
+        "title": "CompareExpr",
+        "type": "object"
+      },
       "ComparisonMode": {
         "description": "Comparison modes for discrimination operations.",
         "enum": [
@@ -262,78 +360,81 @@
         "additionalProperties": false,
         "description": "Apply DC offset compensation to the channel.\n\nA square wave of specified duration is played on the channel. The amplitude of the wave is calculated to\nresult in a zero average value when integrated over the duration since the laste reset.\n\nIf ``null``/:obj:`None` duration is specified, the accumulated value is reset to zero, without\nplaying a compensation pulse.\n\nIf ``max_amp`` is specified, the amplitude of the compensation pulse is limited to that value.\nIf the amplitude is calculated to be higher, the pulse area is subtracted from the accumulated value,\nleaving the possibility to compensate the rest in the following operations.\n\nIf ``rise_time`` and ``fall_time`` are specified, they define the duration of linear ramps\nat the beginning and end of the compensation pulse. The ramps are included in the area calculation.\nThe rise and fall times are also included in the total duration of the compensation pulse.",
         "properties": {
-          "op_type": {
-            "const": "dc_comp",
-            "default": "dc_comp",
-            "title": "Op Type",
-            "type": "string"
-          },
-          "channel": {
-            "$ref": "#/components/schemas/ChannelTarget"
-          },
-          "duration": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/Duration"
+          "dc_comp": {
+            "additionalProperties": false,
+            "properties": {
+              "channel": {
+                "$ref": "#/components/schemas/ChannelTarget"
               },
-              {
-                "$ref": "#/components/schemas/SymbolRef"
+              "duration": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Duration"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ValueRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Duration"
               },
-              {
-                "type": "null"
+              "max_amp": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Magnitude"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ValueRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Max Amp"
+              },
+              "rise_time": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Duration"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ValueRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Rise Time"
+              },
+              "fall_time": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Duration"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ValueRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Fall Time"
               }
+            },
+            "required": [
+              "channel",
+              "duration"
             ],
-            "title": "Duration"
-          },
-          "max_amp": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/Magnitude"
-              },
-              {
-                "$ref": "#/components/schemas/SymbolRef"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Max Amp"
-          },
-          "rise_time": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/Duration"
-              },
-              {
-                "$ref": "#/components/schemas/SymbolRef"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Rise Time"
-          },
-          "fall_time": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/Duration"
-              },
-              {
-                "$ref": "#/components/schemas/SymbolRef"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Fall Time"
+            "type": "object"
           }
         },
         "required": [
-          "channel",
-          "duration"
+          "dc_comp"
         ],
         "title": "CompensateDC",
         "type": "object"
@@ -413,24 +514,27 @@
       },
       "Conditional": {
         "additionalProperties": false,
-        "description": "Represents a conditional sequence of operations.\n\n:ivar op_type: Operation type, always \"if\"\n:ivar var: The variable reference for the condition.\n:ivar body: The sequence of operations to execute if the condition is met",
+        "description": "Represents a conditional sequence of operations.\n\n:ivar op_type: Operation type, always \"if\" -- the sole key of its wire object\n:ivar var: The predicate for the condition.\n:ivar body: The sequence of operations to execute if the condition is met",
         "properties": {
-          "op_type": {
-            "const": "if",
-            "default": "if",
-            "title": "Op Type",
-            "type": "string"
-          },
-          "var": {
-            "$ref": "#/components/schemas/SymbolRef"
-          },
-          "body": {
-            "$ref": "#/components/schemas/OpSequence"
+          "if": {
+            "additionalProperties": false,
+            "properties": {
+              "var": {
+                "$ref": "#/components/schemas/ValueRef"
+              },
+              "body": {
+                "$ref": "#/components/schemas/OpSequence"
+              }
+            },
+            "required": [
+              "var",
+              "body"
+            ],
+            "type": "object"
           }
         },
         "required": [
-          "var",
-          "body"
+          "if"
         ],
         "title": "Conditional",
         "type": "object"
@@ -487,7 +591,7 @@
                 "$ref": "#/components/schemas/Phase"
               },
               {
-                "$ref": "#/components/schemas/SymbolRef"
+                "$ref": "#/components/schemas/ValueRef"
               },
               {
                 "type": "null"
@@ -502,7 +606,7 @@
                 "type": "number"
               },
               {
-                "$ref": "#/components/schemas/SymbolRef"
+                "$ref": "#/components/schemas/ValueRef"
               }
             ],
             "default": 1,
@@ -514,7 +618,7 @@
                 "type": "number"
               },
               {
-                "$ref": "#/components/schemas/SymbolRef"
+                "$ref": "#/components/schemas/ValueRef"
               }
             ],
             "default": 1,
@@ -525,22 +629,11 @@
         "type": "object"
       },
       "DiscriminableOp": {
-        "anyOf": [
+        "oneOf": [
           {
             "$ref": "#/components/schemas/ChannelOp"
           },
           {
-            "discriminator": {
-              "mapping": {
-                "discriminate": "#/components/schemas/Discriminate",
-                "extern_decl": "#/components/schemas/ExternalDecl",
-                "param_decl": "#/components/schemas/ParameterDecl",
-                "pulse_decl": "#/components/schemas/PulseDecl",
-                "store": "#/components/schemas/Store",
-                "var_decl": "#/components/schemas/VariableDecl"
-              },
-              "propertyName": "op_type"
-            },
             "oneOf": [
               {
                 "$ref": "#/components/schemas/VariableDecl"
@@ -577,22 +670,11 @@
         ]
       },
       "DiscriminableSchedulableOp": {
-        "anyOf": [
+        "oneOf": [
           {
             "$ref": "#/components/schemas/ChannelOp"
           },
           {
-            "discriminator": {
-              "mapping": {
-                "discriminate": "#/components/schemas/Discriminate",
-                "extern_decl": "#/components/schemas/ExternalDecl",
-                "param_decl": "#/components/schemas/ParameterDecl",
-                "pulse_decl": "#/components/schemas/PulseDecl",
-                "store": "#/components/schemas/Store",
-                "var_decl": "#/components/schemas/VariableDecl"
-              },
-              "propertyName": "op_type"
-            },
             "oneOf": [
               {
                 "$ref": "#/components/schemas/VariableDecl"
@@ -629,56 +711,59 @@
         "additionalProperties": false,
         "description": "Discriminate operation to convert complex data to boolean based on threshold comparison.",
         "properties": {
-          "op_type": {
-            "const": "discriminate",
-            "default": "discriminate",
-            "title": "Op Type",
-            "type": "string"
-          },
-          "target": {
-            "$ref": "#/components/schemas/VariableRef"
-          },
-          "source": {
-            "$ref": "#/components/schemas/VariableRef"
-          },
-          "threshold": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/Threshold"
+          "discriminate": {
+            "additionalProperties": false,
+            "properties": {
+              "target": {
+                "$ref": "#/components/schemas/VarName"
               },
-              {
-                "$ref": "#/components/schemas/SymbolRef"
-              }
-            ],
-            "title": "Threshold"
-          },
-          "rotation": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/Phase"
+              "source": {
+                "$ref": "#/components/schemas/VarName"
               },
-              {
-                "$ref": "#/components/schemas/SymbolRef"
+              "threshold": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Threshold"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ValueRef"
+                  }
+                ],
+                "title": "Threshold"
+              },
+              "rotation": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Phase"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ValueRef"
+                  }
+                ],
+                "default": {
+                  "deg": 0
+                },
+                "title": "Rotation"
+              },
+              "compare": {
+                "$ref": "#/components/schemas/ComparisonMode",
+                "default": ">="
+              },
+              "project": {
+                "$ref": "#/components/schemas/ComplexToRealProjectionMode",
+                "default": "real"
               }
-            ],
-            "default": {
-              "deg": 0
             },
-            "title": "Rotation"
-          },
-          "compare": {
-            "$ref": "#/components/schemas/ComparisonMode",
-            "default": ">="
-          },
-          "project": {
-            "$ref": "#/components/schemas/ComplexToRealProjectionMode",
-            "default": "real"
+            "required": [
+              "target",
+              "source",
+              "threshold"
+            ],
+            "type": "object"
           }
         },
         "required": [
-          "target",
-          "source",
-          "threshold"
+          "discriminate"
         ],
         "title": "Discriminate",
         "type": "object"
@@ -701,82 +786,127 @@
         ],
         "title": "Duration"
       },
+      "Expression": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/LiteralExpr"
+          },
+          {
+            "$ref": "#/components/schemas/SymbolExpr"
+          },
+          {
+            "$ref": "#/components/schemas/UnaryExpr"
+          },
+          {
+            "$ref": "#/components/schemas/BinaryExpr"
+          },
+          {
+            "$ref": "#/components/schemas/CompareExpr"
+          },
+          {
+            "$ref": "#/components/schemas/NotExpr"
+          },
+          {
+            "$ref": "#/components/schemas/LogicalExpr"
+          },
+          {
+            "$ref": "#/components/schemas/CallExpr"
+          }
+        ]
+      },
+      "ExpressionFunction": {
+        "enum": [
+          "min",
+          "max",
+          "abs",
+          "sqrt",
+          "sin",
+          "cos",
+          "tan",
+          "exp",
+          "log"
+        ],
+        "type": "string"
+      },
       "ExternalBlock": {
         "additionalProperties": false,
         "description": "An opaque, channel-reserving block of externally defined contents.\n\nIt is simultaneously: the way to reference an externally defined program (a calibrated gate, a\nvendor routine, a hand-written OpenPulse ``defcal``); the scoping construct needed to *consume*\nOpenQASM ``box``; and the mechanism that makes a multi-channel operation atomic against the\nsurrounding scheduler.\n\nSemantics:\n\n1. **Reservation.** The block occupies every channel in :attr:`channels` for its whole extent.\n   No operation elsewhere in the program may be scheduled on any of those channels within that\n   extent.\n2. **Synchronisation.** Entry and exit are synchronisation points across :attr:`channels`: the\n   block starts at the latest availability of all of them and all of them become free\n   simultaneously at its end. (Same rule as OpenQASM ``box`` resource participation and\n   ``defcal`` entry alignment.)\n3. **Non-interference.** Channels *not* listed are unaffected and may be driven concurrently.\n4. **Opacity / optimisation barrier.** Contents are not described by this IR. Operations may\n   not be moved into or out of the block. Nothing may be assumed about what happens on the\n   reserved channels inside it.\n5. **Timed vs flex.**\n\n   - ``duration=D`` -- hard total-duration constraint. It is an error if the referenced\n     program's natural duration exceeds ``D``. Slack placement inside the block is the\n     program's business.\n   - ``duration=None`` -- flex. Duration is the referenced program's natural duration,\n     resolved by whatever holds the program definitions. Directly analogous to OpenQASM's\n     untimed ``box`` and to ``durationof``.\n6. **Empty** :attr:`program`. ``program=None`` with a :attr:`duration` is a pure reservation --\n   \"these channels are busy for this long, do not touch them.\" Useful for modelling externally\n   driven intervals.\n\nRegarding :attr:`params`:\n\n4. If ``duration=None`` (flex) **and** any :attr:`params` value is a :class:`~.reference_types.VariableRef`\n   whose value is only known at run time, the block's duration is not resolvable at compile\n   time. OpenQASM has the same rule for ``defcal``: the body must have a definite duration\n   regardless of its parameters. Either the external program guarantees a parameter-independent\n   duration, or the block must carry an explicit :attr:`duration`. This is enforced as a\n   validation rule with a clear error, not a runtime surprise.\n5. The IR does not know the referenced program's signature -- opacity is the point. Arity and\n   type checking of :attr:`params`/:attr:`results`/:attr:`channels` belongs to whatever resolves\n   :attr:`program`. The IR validates only what it can see: that :attr:`results` variables are\n   declared, that :attr:`channels` values are valid channel targets -- a channel name, or an\n   :class:`~.reference_types.ExternalRef` when the calibration store owns the name -- and\n   rule 4 above.",
         "properties": {
-          "op_type": {
-            "const": "external_block",
-            "default": "external_block",
-            "title": "Op Type",
-            "type": "string"
-          },
-          "program": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/FullyQualifiedIdentifier"
+          "external_block": {
+            "additionalProperties": false,
+            "properties": {
+              "program": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/FullyQualifiedIdentifier"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
-              {
-                "type": "null"
+              "channels": {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/ChannelTarget"
+                },
+                "title": "Channels",
+                "type": "object"
+              },
+              "params": {
+                "anyOf": [
+                  {
+                    "additionalProperties": {
+                      "$ref": "#/components/schemas/ExternalParamValue"
+                    },
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Params"
+              },
+              "results": {
+                "anyOf": [
+                  {
+                    "additionalProperties": {
+                      "$ref": "#/components/schemas/VarName"
+                    },
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Results"
+              },
+              "duration": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Duration"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ValueRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Duration"
               }
-            ],
-            "default": null
-          },
-          "channels": {
-            "additionalProperties": {
-              "$ref": "#/components/schemas/ChannelTarget"
             },
-            "title": "Channels",
+            "required": [
+              "channels"
+            ],
             "type": "object"
-          },
-          "params": {
-            "anyOf": [
-              {
-                "additionalProperties": {
-                  "$ref": "#/components/schemas/ExternalParamValue"
-                },
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Params"
-          },
-          "results": {
-            "anyOf": [
-              {
-                "additionalProperties": {
-                  "$ref": "#/components/schemas/VariableRef"
-                },
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Results"
-          },
-          "duration": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/Duration"
-              },
-              {
-                "$ref": "#/components/schemas/SymbolRef"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Duration"
           }
         },
         "required": [
-          "channels"
+          "external_block"
         ],
         "title": "ExternalBlock",
         "type": "object"
@@ -785,71 +915,74 @@
         "additionalProperties": false,
         "description": "External constant declaration operation.\n\nAn external constant is a symbol resolved outside the program: its value is looked up per\nsubmission in a calibration store by name, rather than supplied directly by the caller. It is\nreferenced with ``ext()``.\n\nExternal declarations are scoped to the surrounding context and its children.",
         "properties": {
-          "op_type": {
-            "const": "extern_decl",
-            "default": "extern_decl",
-            "title": "Op Type",
-            "type": "string"
-          },
-          "dtype": {
-            "$ref": "#/components/schemas/VariableDTypeType"
-          },
-          "shape": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "integer"
-                },
-                "type": "array"
+          "extern_decl": {
+            "additionalProperties": false,
+            "properties": {
+              "dtype": {
+                "$ref": "#/components/schemas/VariableDTypeType"
               },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Shape"
-          },
-          "unit": {
-            "anyOf": [
-              {
-                "type": "string"
+              "shape": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "integer"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Shape"
               },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Unit"
-          },
-          "name": {
-            "$ref": "#/components/schemas/ExternalSymbolStr"
-          },
-          "default": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/SymbolValue"
+              "unit": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Unit"
               },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null
-          },
-          "limits": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ValueLimits"
+              "name": {
+                "$ref": "#/components/schemas/ExternalSymbolStr"
               },
-              {
-                "type": "null"
+              "default": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/SymbolValue"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "limits": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ValueLimits"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               }
+            },
+            "required": [
+              "dtype",
+              "name"
             ],
-            "default": null
+            "type": "object"
           }
         },
         "required": [
-          "dtype",
-          "name"
+          "extern_decl"
         ],
         "title": "ExternalDecl",
         "type": "object"
@@ -861,6 +994,9 @@
           },
           {
             "$ref": "#/components/schemas/Voltage"
+          },
+          {
+            "$ref": "#/components/schemas/ComplexVoltage"
           },
           {
             "$ref": "#/components/schemas/Frequency"
@@ -879,6 +1015,9 @@
           },
           {
             "$ref": "#/components/schemas/PulseType"
+          },
+          {
+            "$ref": "#/components/schemas/Expression"
           },
           {
             "type": "boolean"
@@ -913,7 +1052,7 @@
                 "$ref": "#/components/schemas/Duration"
               },
               {
-                "$ref": "#/components/schemas/SymbolRef"
+                "$ref": "#/components/schemas/ValueRef"
               }
             ],
             "title": "Duration"
@@ -924,7 +1063,7 @@
                 "$ref": "#/components/schemas/Amplitude"
               },
               {
-                "$ref": "#/components/schemas/SymbolRef"
+                "$ref": "#/components/schemas/ValueRef"
               }
             ],
             "title": "Amplitude"
@@ -957,6 +1096,7 @@
         "type": "object"
       },
       "ExternalRef": {
+        "additionalProperties": false,
         "description": "Reference to a constant that is resolved outside the program, spelled ``{\"ext\": \"q0.f01\"}``.\n\nExternal symbols must be declared in the surrounding context or one of its parents. Their value\nis supplied per submission by the framework running the program, so a serialized program can be\nre-submitted against fresh values without being rebuilt.",
         "properties": {
           "ext": {
@@ -1111,50 +1251,53 @@
       },
       "Iteration": {
         "additionalProperties": false,
-        "description": "Represents an iteration over a sequence of operations.\n\n:ivar op_type: Operation type, always \"for\"\n:ivar var: The variable reference for the iterated value.\n:ivar items: The range or array over which to iterate.\n:ivar body: The sequence of operations to execute in each iteration",
+        "description": "Represents an iteration over a sequence of operations.\n\n:ivar op_type: Operation type, always \"for\" -- the sole key of its wire object\n:ivar var: The variable reference for the iterated value.\n:ivar items: The range or array over which to iterate.\n:ivar body: The sequence of operations to execute in each iteration",
         "properties": {
-          "op_type": {
-            "const": "for",
-            "default": "for",
-            "title": "Op Type",
-            "type": "string"
-          },
-          "var": {
-            "anyOf": [
-              {
-                "items": {
-                  "$ref": "#/components/schemas/VariableRef"
-                },
-                "type": "array"
+          "for": {
+            "additionalProperties": false,
+            "properties": {
+              "var": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "$ref": "#/components/schemas/VarName"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "$ref": "#/components/schemas/VarName"
+                  }
+                ],
+                "title": "Var"
               },
-              {
-                "$ref": "#/components/schemas/VariableRef"
-              }
-            ],
-            "title": "Var"
-          },
-          "items": {
-            "anyOf": [
-              {
-                "items": {
-                  "$ref": "#/components/schemas/IterableSequence"
-                },
-                "type": "array"
+              "items": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "$ref": "#/components/schemas/IterableSequence"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "$ref": "#/components/schemas/IterableSequence"
+                  }
+                ],
+                "title": "Items"
               },
-              {
-                "$ref": "#/components/schemas/IterableSequence"
+              "body": {
+                "$ref": "#/components/schemas/OpSequence"
               }
+            },
+            "required": [
+              "var",
+              "items",
+              "body"
             ],
-            "title": "Items"
-          },
-          "body": {
-            "$ref": "#/components/schemas/OpSequence"
+            "type": "object"
           }
         },
         "required": [
-          "var",
-          "items",
-          "body"
+          "for"
         ],
         "title": "Iteration",
         "type": "object"
@@ -1225,6 +1368,56 @@
           "num"
         ],
         "title": "LinSpace",
+        "type": "object"
+      },
+      "LiteralExpr": {
+        "additionalProperties": false,
+        "description": "A concrete value appearing in an expression.\n\n``value`` is :data:`~.data_ops.SymbolValue` -- the same union that types a declaration's\n``default``, so there is one notion of \"a concrete value\" across the IR.",
+        "properties": {
+          "value": {
+            "$ref": "#/components/schemas/SymbolValue"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "title": "LiteralExpr",
+        "type": "object"
+      },
+      "LogicalExpr": {
+        "additionalProperties": false,
+        "description": "A boolean connective over two operands.\n\n``and``/``or`` only -- ``not`` is :class:`NotExpr`. For n-ary ``and``/``or``, nest the\nexpressions (e.g., ``and(and(a, b), c)``).",
+        "properties": {
+          "logical_op": {
+            "additionalProperties": false,
+            "properties": {
+              "op": {
+                "enum": [
+                  "and",
+                  "or"
+                ],
+                "title": "Logical Op",
+                "type": "string"
+              },
+              "lhs": {
+                "$ref": "#/components/schemas/Expression"
+              },
+              "rhs": {
+                "$ref": "#/components/schemas/Expression"
+              }
+            },
+            "required": [
+              "op",
+              "lhs",
+              "rhs"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "logical_op"
+        ],
+        "title": "LogicalExpr",
         "type": "object"
       },
       "Magnitude": {
@@ -1342,6 +1535,29 @@
         "title": "Nanoseconds",
         "type": "object"
       },
+      "NotExpr": {
+        "additionalProperties": false,
+        "description": "Boolean negation of a single operand.\n\nSplit out from :class:`LogicalExpr` by arity, the same way :class:`UnaryExpr` is split from\n:class:`BinaryExpr`: ``not`` is the only unary boolean connective, so it gets its own node\ninstead of an optional ``lhs`` on a node shared with the binary ones.",
+        "properties": {
+          "not_op": {
+            "additionalProperties": false,
+            "properties": {
+              "rhs": {
+                "$ref": "#/components/schemas/Expression"
+              }
+            },
+            "required": [
+              "rhs"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "not_op"
+        ],
+        "title": "NotExpr",
+        "type": "object"
+      },
       "NumpyComplexArray1D": {
         "items": {
           "items": {
@@ -1400,71 +1616,74 @@
         "additionalProperties": false,
         "description": "Parameter declaration operation.\n\nA parameter is a symbol whose value is supplied by the caller when the program is submitted,\nrather than computed inside the program. Everything else about it is a variable: it is\nreferenced with ``var()``, it obeys the same lexical scoping, and it may be read anywhere a\nvariable may be read. ``default`` makes it optional at submission time.\n\nParameter declarations are scoped to the surrounding context and its children.",
         "properties": {
-          "op_type": {
-            "const": "param_decl",
-            "default": "param_decl",
-            "title": "Op Type",
-            "type": "string"
-          },
-          "dtype": {
-            "$ref": "#/components/schemas/VariableDTypeType"
-          },
-          "shape": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "integer"
-                },
-                "type": "array"
+          "param_decl": {
+            "additionalProperties": false,
+            "properties": {
+              "dtype": {
+                "$ref": "#/components/schemas/VariableDTypeType"
               },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Shape"
-          },
-          "unit": {
-            "anyOf": [
-              {
-                "type": "string"
+              "shape": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "integer"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Shape"
               },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Unit"
-          },
-          "name": {
-            "$ref": "#/components/schemas/IdentifierStr"
-          },
-          "default": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/SymbolValue"
+              "unit": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Unit"
               },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null
-          },
-          "limits": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ValueLimits"
+              "name": {
+                "$ref": "#/components/schemas/IdentifierStr"
               },
-              {
-                "type": "null"
+              "default": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/SymbolValue"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "limits": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ValueLimits"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               }
+            },
+            "required": [
+              "dtype",
+              "name"
             ],
-            "default": null
+            "type": "object"
           }
         },
         "required": [
-          "dtype",
-          "name"
+          "param_decl"
         ],
         "title": "ParameterDecl",
         "type": "object"
@@ -1491,59 +1710,62 @@
         "additionalProperties": false,
         "description": "Play a pulse on a channel.",
         "properties": {
-          "op_type": {
-            "const": "play",
-            "default": "play",
-            "title": "Op Type",
-            "type": "string"
-          },
-          "channel": {
-            "$ref": "#/components/schemas/ChannelTarget"
-          },
-          "pulse": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/PulseType"
+          "play": {
+            "additionalProperties": false,
+            "properties": {
+              "channel": {
+                "$ref": "#/components/schemas/ChannelTarget"
               },
-              {
-                "$ref": "#/components/schemas/PulseRef"
+              "pulse": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/PulseType"
+                  },
+                  {
+                    "$ref": "#/components/schemas/PulseRef"
+                  }
+                ],
+                "title": "Pulse"
+              },
+              "scale_amp": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ValueRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Scale Amp"
+              },
+              "cond": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ValueRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               }
+            },
+            "required": [
+              "channel",
+              "pulse"
             ],
-            "title": "Pulse"
-          },
-          "scale_amp": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string"
-              },
-              {
-                "$ref": "#/components/schemas/SymbolRef"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Scale Amp"
-          },
-          "cond": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/SymbolRef"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null
+            "type": "object"
           }
         },
         "required": [
-          "channel",
-          "pulse"
+          "play"
         ],
         "title": "Play",
         "type": "object"
@@ -1552,28 +1774,32 @@
         "additionalProperties": false,
         "description": "Pulse declaration operation.\n\nPulses must be declared before they can be referred to.\nPulse declarations are scoped to the surrounding context and its children.",
         "properties": {
-          "op_type": {
-            "const": "pulse_decl",
-            "default": "pulse_decl",
-            "title": "Op Type",
-            "type": "string"
-          },
-          "name": {
-            "title": "Name",
-            "type": "string"
-          },
-          "pulse": {
-            "$ref": "#/components/schemas/PulseType"
+          "pulse_decl": {
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "pulse": {
+                "$ref": "#/components/schemas/PulseType"
+              }
+            },
+            "required": [
+              "name",
+              "pulse"
+            ],
+            "type": "object"
           }
         },
         "required": [
-          "name",
-          "pulse"
+          "pulse_decl"
         ],
         "title": "PulseDecl",
         "type": "object"
       },
       "PulseRef": {
+        "additionalProperties": false,
         "description": "Reference to a pulse, spelled ``{\"pulse_name\": \"pi_pulse\"}``.\n\nPulses must be declared in the surrounding context or one of its parents.",
         "properties": {
           "pulse_name": {
@@ -1685,61 +1911,64 @@
         "additionalProperties": false,
         "description": "Acquire scalar data from the channel with integration.\n\nThe integration type can be either \"full\" or \"demod\".\nFull integration is a simple accumulation of the signal.\nDemod integration is a complex multiplication of the signal with the channel's\nfrequency and phase followed by accumulation.\n\nThe result of the integration is saved into a scalar (complex) variable.\n\nFurther processing may be applied to the result, such as projection to real/imaginary parts,\nsee :class:`Discriminate`.",
         "properties": {
-          "op_type": {
-            "const": "record",
-            "default": "record",
-            "title": "Op Type",
-            "type": "string"
-          },
-          "channel": {
-            "$ref": "#/components/schemas/ChannelTarget"
-          },
-          "var": {
-            "$ref": "#/components/schemas/VariableRef"
-          },
-          "duration": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/Duration"
+          "record": {
+            "additionalProperties": false,
+            "properties": {
+              "channel": {
+                "$ref": "#/components/schemas/ChannelTarget"
               },
-              {
-                "$ref": "#/components/schemas/SymbolRef"
+              "var": {
+                "$ref": "#/components/schemas/VarName"
+              },
+              "duration": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Duration"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ValueRef"
+                  }
+                ],
+                "title": "Duration"
+              },
+              "integration": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/FullIntegration"
+                  },
+                  {
+                    "$ref": "#/components/schemas/DemodIntegration"
+                  }
+                ],
+                "title": "Integration"
+              },
+              "time_of_flight": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Duration"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ValueRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Time Of Flight"
               }
+            },
+            "required": [
+              "channel",
+              "var",
+              "duration",
+              "integration"
             ],
-            "title": "Duration"
-          },
-          "integration": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/FullIntegration"
-              },
-              {
-                "$ref": "#/components/schemas/DemodIntegration"
-              }
-            ],
-            "title": "Integration"
-          },
-          "time_of_flight": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/Duration"
-              },
-              {
-                "$ref": "#/components/schemas/SymbolRef"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Time Of Flight"
+            "type": "object"
           }
         },
         "required": [
-          "channel",
-          "var",
-          "duration",
-          "integration"
+          "record"
         ],
         "title": "Record",
         "type": "object"
@@ -1777,33 +2006,36 @@
       },
       "Repetition": {
         "additionalProperties": false,
-        "description": "Represents a repeated sequence of operations.\n\n:ivar op_type: Operation type, always \"repeat\"\n:ivar count: Number of times to repeat the sequence\n:ivar body: The sequence of operations to repeat",
+        "description": "Represents a repeated sequence of operations.\n\n:ivar op_type: Operation type, always \"repeat\" -- the sole key of its wire object\n:ivar count: Number of times to repeat the sequence\n:ivar body: The sequence of operations to repeat",
         "properties": {
-          "op_type": {
-            "const": "repeat",
-            "default": "repeat",
-            "title": "Op Type",
-            "type": "string"
-          },
-          "count": {
-            "anyOf": [
-              {
-                "minimum": 0,
-                "type": "integer"
+          "repeat": {
+            "additionalProperties": false,
+            "properties": {
+              "count": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ValueRef"
+                  }
+                ],
+                "title": "Count"
               },
-              {
-                "$ref": "#/components/schemas/SymbolRef"
+              "body": {
+                "$ref": "#/components/schemas/OpSequence"
               }
+            },
+            "required": [
+              "count",
+              "body"
             ],
-            "title": "Count"
-          },
-          "body": {
-            "$ref": "#/components/schemas/OpSequence"
+            "type": "object"
           }
         },
         "required": [
-          "count",
-          "body"
+          "repeat"
         ],
         "title": "Repetition",
         "type": "object"
@@ -1812,22 +2044,25 @@
         "additionalProperties": false,
         "description": "A class representing a conditional embedded in a schedule.",
         "properties": {
-          "op_type": {
-            "const": "if",
-            "default": "if",
-            "title": "Op Type",
-            "type": "string"
-          },
-          "var": {
-            "$ref": "#/components/schemas/SymbolRef"
-          },
-          "body": {
-            "$ref": "#/components/schemas/Schedule"
+          "if": {
+            "additionalProperties": false,
+            "properties": {
+              "var": {
+                "$ref": "#/components/schemas/ValueRef"
+              },
+              "body": {
+                "$ref": "#/components/schemas/Schedule"
+              }
+            },
+            "required": [
+              "var",
+              "body"
+            ],
+            "type": "object"
           }
         },
         "required": [
-          "var",
-          "body"
+          "if"
         ],
         "title": "SchedConditional",
         "type": "object",
@@ -1839,48 +2074,51 @@
         "additionalProperties": false,
         "description": "A class representing an iterated schedule in a schedule.",
         "properties": {
-          "op_type": {
-            "const": "for",
-            "default": "for",
-            "title": "Op Type",
-            "type": "string"
-          },
-          "var": {
-            "anyOf": [
-              {
-                "items": {
-                  "$ref": "#/components/schemas/VariableRef"
-                },
-                "type": "array"
+          "for": {
+            "additionalProperties": false,
+            "properties": {
+              "var": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "$ref": "#/components/schemas/VarName"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "$ref": "#/components/schemas/VarName"
+                  }
+                ],
+                "title": "Var"
               },
-              {
-                "$ref": "#/components/schemas/VariableRef"
-              }
-            ],
-            "title": "Var"
-          },
-          "items": {
-            "anyOf": [
-              {
-                "items": {
-                  "$ref": "#/components/schemas/IterableSequence"
-                },
-                "type": "array"
+              "items": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "$ref": "#/components/schemas/IterableSequence"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "$ref": "#/components/schemas/IterableSequence"
+                  }
+                ],
+                "title": "Items"
               },
-              {
-                "$ref": "#/components/schemas/IterableSequence"
+              "body": {
+                "$ref": "#/components/schemas/Schedule"
               }
+            },
+            "required": [
+              "var",
+              "items",
+              "body"
             ],
-            "title": "Items"
-          },
-          "body": {
-            "$ref": "#/components/schemas/Schedule"
+            "type": "object"
           }
         },
         "required": [
-          "var",
-          "items",
-          "body"
+          "for"
         ],
         "title": "SchedIteration",
         "type": "object",
@@ -1892,31 +2130,34 @@
         "additionalProperties": false,
         "description": "A class representing repeated schedule embedded in a schedule.",
         "properties": {
-          "op_type": {
-            "const": "repeat",
-            "default": "repeat",
-            "title": "Op Type",
-            "type": "string"
-          },
-          "count": {
-            "anyOf": [
-              {
-                "minimum": 0,
-                "type": "integer"
+          "repeat": {
+            "additionalProperties": false,
+            "properties": {
+              "count": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ValueRef"
+                  }
+                ],
+                "title": "Count"
               },
-              {
-                "$ref": "#/components/schemas/SymbolRef"
+              "body": {
+                "$ref": "#/components/schemas/Schedule"
               }
+            },
+            "required": [
+              "count",
+              "body"
             ],
-            "title": "Count"
-          },
-          "body": {
-            "$ref": "#/components/schemas/Schedule"
+            "type": "object"
           }
         },
         "required": [
-          "count",
-          "body"
+          "repeat"
         ],
         "title": "SchedRepetition",
         "type": "object",
@@ -2038,30 +2279,33 @@
         "additionalProperties": false,
         "description": "Set the frequency of a channel.",
         "properties": {
-          "op_type": {
-            "const": "set_frequency",
-            "default": "set_frequency",
-            "title": "Op Type",
-            "type": "string"
-          },
-          "channel": {
-            "$ref": "#/components/schemas/ChannelTarget"
-          },
-          "frequency": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/Frequency"
+          "set_frequency": {
+            "additionalProperties": false,
+            "properties": {
+              "channel": {
+                "$ref": "#/components/schemas/ChannelTarget"
               },
-              {
-                "$ref": "#/components/schemas/SymbolRef"
+              "frequency": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Frequency"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ValueRef"
+                  }
+                ],
+                "title": "Frequency"
               }
+            },
+            "required": [
+              "channel",
+              "frequency"
             ],
-            "title": "Frequency"
+            "type": "object"
           }
         },
         "required": [
-          "channel",
-          "frequency"
+          "set_frequency"
         ],
         "title": "SetFrequency",
         "type": "object"
@@ -2070,30 +2314,33 @@
         "additionalProperties": false,
         "description": "Set the phase of a channel.",
         "properties": {
-          "op_type": {
-            "const": "set_phase",
-            "default": "set_phase",
-            "title": "Op Type",
-            "type": "string"
-          },
-          "channel": {
-            "$ref": "#/components/schemas/ChannelTarget"
-          },
-          "phase": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/Phase"
+          "set_phase": {
+            "additionalProperties": false,
+            "properties": {
+              "channel": {
+                "$ref": "#/components/schemas/ChannelTarget"
               },
-              {
-                "$ref": "#/components/schemas/SymbolRef"
+              "phase": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Phase"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ValueRef"
+                  }
+                ],
+                "title": "Phase"
               }
+            },
+            "required": [
+              "channel",
+              "phase"
             ],
-            "title": "Phase"
+            "type": "object"
           }
         },
         "required": [
-          "channel",
-          "phase"
+          "set_phase"
         ],
         "title": "SetPhase",
         "type": "object"
@@ -2102,30 +2349,33 @@
         "additionalProperties": false,
         "description": "Add a frequency shift to the channel frequency.",
         "properties": {
-          "op_type": {
-            "const": "shift_frequency",
-            "default": "shift_frequency",
-            "title": "Op Type",
-            "type": "string"
-          },
-          "channel": {
-            "$ref": "#/components/schemas/ChannelTarget"
-          },
-          "frequency": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/Frequency"
+          "shift_frequency": {
+            "additionalProperties": false,
+            "properties": {
+              "channel": {
+                "$ref": "#/components/schemas/ChannelTarget"
               },
-              {
-                "$ref": "#/components/schemas/SymbolRef"
+              "frequency": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Frequency"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ValueRef"
+                  }
+                ],
+                "title": "Frequency"
               }
+            },
+            "required": [
+              "channel",
+              "frequency"
             ],
-            "title": "Frequency"
+            "type": "object"
           }
         },
         "required": [
-          "channel",
-          "frequency"
+          "shift_frequency"
         ],
         "title": "ShiftFrequency",
         "type": "object"
@@ -2134,30 +2384,33 @@
         "additionalProperties": false,
         "description": "Add a phase shift to the channel phase.",
         "properties": {
-          "op_type": {
-            "const": "shift_phase",
-            "default": "shift_phase",
-            "title": "Op Type",
-            "type": "string"
-          },
-          "channel": {
-            "$ref": "#/components/schemas/ChannelTarget"
-          },
-          "phase": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/Phase"
+          "shift_phase": {
+            "additionalProperties": false,
+            "properties": {
+              "channel": {
+                "$ref": "#/components/schemas/ChannelTarget"
               },
-              {
-                "$ref": "#/components/schemas/SymbolRef"
+              "phase": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Phase"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ValueRef"
+                  }
+                ],
+                "title": "Phase"
               }
+            },
+            "required": [
+              "channel",
+              "phase"
             ],
-            "title": "Phase"
+            "type": "object"
           }
         },
         "required": [
-          "channel",
-          "phase"
+          "shift_phase"
         ],
         "title": "ShiftPhase",
         "type": "object"
@@ -2178,7 +2431,7 @@
                 "$ref": "#/components/schemas/Duration"
               },
               {
-                "$ref": "#/components/schemas/SymbolRef"
+                "$ref": "#/components/schemas/ValueRef"
               }
             ],
             "title": "Duration"
@@ -2189,7 +2442,7 @@
                 "$ref": "#/components/schemas/Amplitude"
               },
               {
-                "$ref": "#/components/schemas/SymbolRef"
+                "$ref": "#/components/schemas/ValueRef"
               }
             ],
             "title": "Amplitude"
@@ -2200,7 +2453,7 @@
                 "$ref": "#/components/schemas/Frequency"
               },
               {
-                "$ref": "#/components/schemas/SymbolRef"
+                "$ref": "#/components/schemas/ValueRef"
               }
             ],
             "title": "Frequency"
@@ -2211,7 +2464,7 @@
                 "$ref": "#/components/schemas/Frequency"
               },
               {
-                "$ref": "#/components/schemas/SymbolRef"
+                "$ref": "#/components/schemas/ValueRef"
               },
               {
                 "type": "null"
@@ -2245,7 +2498,7 @@
                 "$ref": "#/components/schemas/Duration"
               },
               {
-                "$ref": "#/components/schemas/SymbolRef"
+                "$ref": "#/components/schemas/ValueRef"
               }
             ],
             "title": "Duration"
@@ -2256,7 +2509,7 @@
                 "$ref": "#/components/schemas/Amplitude"
               },
               {
-                "$ref": "#/components/schemas/SymbolRef"
+                "$ref": "#/components/schemas/ValueRef"
               }
             ],
             "title": "Amplitude"
@@ -2267,7 +2520,7 @@
                 "$ref": "#/components/schemas/Duration"
               },
               {
-                "$ref": "#/components/schemas/SymbolRef"
+                "$ref": "#/components/schemas/ValueRef"
               },
               {
                 "type": "null"
@@ -2282,7 +2535,7 @@
                 "$ref": "#/components/schemas/Duration"
               },
               {
-                "$ref": "#/components/schemas/SymbolRef"
+                "$ref": "#/components/schemas/ValueRef"
               },
               {
                 "type": "null"
@@ -2303,27 +2556,30 @@
         "additionalProperties": false,
         "description": "Store operation to save variable data for later retrieval.",
         "properties": {
-          "op_type": {
-            "const": "store",
-            "default": "store",
-            "title": "Op Type",
-            "type": "string"
-          },
-          "key": {
-            "title": "Key",
-            "type": "string"
-          },
-          "source": {
-            "$ref": "#/components/schemas/VariableRef"
-          },
-          "mode": {
-            "$ref": "#/components/schemas/StoreMode"
+          "store": {
+            "additionalProperties": false,
+            "properties": {
+              "key": {
+                "title": "Key",
+                "type": "string"
+              },
+              "source": {
+                "$ref": "#/components/schemas/VarName"
+              },
+              "mode": {
+                "$ref": "#/components/schemas/StoreMode"
+              }
+            },
+            "required": [
+              "key",
+              "source",
+              "mode"
+            ],
+            "type": "object"
           }
         },
         "required": [
-          "key",
-          "source",
-          "mode"
+          "store"
         ],
         "title": "Store",
         "type": "object"
@@ -2338,6 +2594,20 @@
         ],
         "title": "StoreMode",
         "type": "string"
+      },
+      "SymbolExpr": {
+        "additionalProperties": false,
+        "description": "A reference to a declared symbol appearing in an expression.\n\n``symbol`` is :data:`~.reference_types.SymbolRef`, so a variable, a parameter and an external\nconstant are all spelled the same way here.",
+        "properties": {
+          "symbol": {
+            "$ref": "#/components/schemas/SymbolRef"
+          }
+        },
+        "required": [
+          "symbol"
+        ],
+        "title": "SymbolExpr",
+        "type": "object"
       },
       "SymbolRef": {
         "oneOf": [
@@ -2356,6 +2626,9 @@
           },
           {
             "$ref": "#/components/schemas/Voltage"
+          },
+          {
+            "$ref": "#/components/schemas/ComplexVoltage"
           },
           {
             "$ref": "#/components/schemas/Frequency"
@@ -2411,64 +2684,67 @@
         "additionalProperties": false,
         "description": "Acquire trace data from the channel with integration.\n\nSimilar to :class:`Record`, but the result is saved into an array variable,\nand it essentially a repeated, continuous record operation.\n\nThe duration is the total time of the trace, the number of records\nis determined by the length of the array variable.\n\nFurther processing may be applied to the result, such as projection to real/imaginary parts,\nsee :class:`Discriminate`.",
         "properties": {
-          "op_type": {
-            "const": "trace",
-            "default": "trace",
-            "title": "Op Type",
-            "type": "string"
-          },
-          "channel": {
-            "$ref": "#/components/schemas/ChannelTarget"
-          },
-          "var": {
-            "$ref": "#/components/schemas/VariableRef"
-          },
-          "duration": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/Duration"
+          "trace": {
+            "additionalProperties": false,
+            "properties": {
+              "channel": {
+                "$ref": "#/components/schemas/ChannelTarget"
               },
-              {
-                "$ref": "#/components/schemas/SymbolRef"
+              "var": {
+                "$ref": "#/components/schemas/VarName"
+              },
+              "duration": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Duration"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ValueRef"
+                  }
+                ],
+                "title": "Duration"
+              },
+              "integration": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/FullIntegration"
+                  },
+                  {
+                    "$ref": "#/components/schemas/DemodIntegration"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Integration"
+              },
+              "time_of_flight": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Duration"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ValueRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Time Of Flight"
               }
+            },
+            "required": [
+              "channel",
+              "var",
+              "duration"
             ],
-            "title": "Duration"
-          },
-          "integration": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/FullIntegration"
-              },
-              {
-                "$ref": "#/components/schemas/DemodIntegration"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Integration"
-          },
-          "time_of_flight": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/Duration"
-              },
-              {
-                "$ref": "#/components/schemas/SymbolRef"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Time Of Flight"
+            "type": "object"
           }
         },
         "required": [
-          "channel",
-          "var",
-          "duration"
+          "trace"
         ],
         "title": "Trace",
         "type": "object"
@@ -2493,6 +2769,35 @@
           "turns"
         ],
         "title": "Turns",
+        "type": "object"
+      },
+      "UnaryExpr": {
+        "additionalProperties": false,
+        "description": "Negation of a single operand.\n\nNegation is the only unary operator: ``abs`` is :class:`CallExpr` with ``function=\"abs\"``, where\nevery other named mathematical operation lives.",
+        "properties": {
+          "unary_op": {
+            "additionalProperties": false,
+            "properties": {
+              "op": {
+                "const": "-",
+                "title": "Unary Op",
+                "type": "string"
+              },
+              "rhs": {
+                "$ref": "#/components/schemas/Expression"
+              }
+            },
+            "required": [
+              "op",
+              "rhs"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "unary_op"
+        ],
+        "title": "UnaryExpr",
         "type": "object"
       },
       "ValueLimits": {
@@ -2540,6 +2845,19 @@
         "title": "ValueLimits",
         "type": "object"
       },
+      "ValueRef": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/SymbolRef"
+          },
+          {
+            "$ref": "#/components/schemas/Expression"
+          }
+        ]
+      },
+      "VarName": {
+        "type": "string"
+      },
       "VariableDTypeType": {
         "enum": [
           "bool",
@@ -2553,54 +2871,58 @@
         "additionalProperties": false,
         "description": "Variable declaration operation.\n\nVariables must be declared before they can be referred to.\n\nVariable declarations are scoped to the surrounding context and its children.",
         "properties": {
-          "op_type": {
-            "const": "var_decl",
-            "default": "var_decl",
-            "title": "Op Type",
-            "type": "string"
-          },
-          "dtype": {
-            "$ref": "#/components/schemas/VariableDTypeType"
-          },
-          "shape": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "integer"
-                },
-                "type": "array"
+          "var_decl": {
+            "additionalProperties": false,
+            "properties": {
+              "dtype": {
+                "$ref": "#/components/schemas/VariableDTypeType"
               },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Shape"
-          },
-          "unit": {
-            "anyOf": [
-              {
-                "type": "string"
+              "shape": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "integer"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Shape"
               },
-              {
-                "type": "null"
+              "unit": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Unit"
+              },
+              "name": {
+                "$ref": "#/components/schemas/IdentifierStr"
               }
+            },
+            "required": [
+              "dtype",
+              "name"
             ],
-            "default": null,
-            "title": "Unit"
-          },
-          "name": {
-            "$ref": "#/components/schemas/IdentifierStr"
+            "type": "object"
           }
         },
         "required": [
-          "dtype",
-          "name"
+          "var_decl"
         ],
         "title": "VariableDecl",
         "type": "object"
       },
       "VariableRef": {
+        "additionalProperties": false,
         "description": "Reference to a variable, spelled ``{\"var\": \"amp\"}``.\n\nVariables must be declared in the surrounding context or one of its parents.",
         "properties": {
           "var": {
@@ -2651,34 +2973,37 @@
         "additionalProperties": false,
         "description": "Add wait of duration on channel(s).\n\nThe wait operations are scheduled to start as soon as possible on each channel.\n\nThe relative timing between channels is not guaranteed.\n\n``Wait`` is the more primitive counterpart of OpenQASM's multi-resource ``delay``, which\nconflates a barrier with a delay. The composite decomposes exactly:\n\n.. code-block:: text\n\n    import:   delay[d] a, b;   ->   barrier(a, b) ; wait(a, b, d)\n    export:   wait(a, b, d)    ->   delay[d] a;  delay[d] b;\n\nThe import identity holds because after ``barrier(a, b)`` both channels' cursors are equal, so\nan independent per-channel wait lands both ends at ``max(...) + d`` -- precisely the OpenQASM\nsemantics. The export identity holds because a single-resource ``delay`` advances only its own\ncursor.",
         "properties": {
-          "op_type": {
-            "const": "wait",
-            "default": "wait",
-            "title": "Op Type",
-            "type": "string"
-          },
-          "channels": {
-            "items": {
-              "$ref": "#/components/schemas/ChannelTarget"
-            },
-            "title": "Channels",
-            "type": "array"
-          },
-          "duration": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/Duration"
+          "wait": {
+            "additionalProperties": false,
+            "properties": {
+              "channels": {
+                "items": {
+                  "$ref": "#/components/schemas/ChannelTarget"
+                },
+                "title": "Channels",
+                "type": "array"
               },
-              {
-                "$ref": "#/components/schemas/SymbolRef"
+              "duration": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Duration"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ValueRef"
+                  }
+                ],
+                "title": "Duration"
               }
+            },
+            "required": [
+              "channels",
+              "duration"
             ],
-            "title": "Duration"
+            "type": "object"
           }
         },
         "required": [
-          "channels",
-          "duration"
+          "wait"
         ],
         "title": "Wait",
         "type": "object"
@@ -2698,6 +3023,10 @@
     {
       "name": "basic-types",
       "description": "Basic types like Amplitude, Duration, Frequency, etc."
+    },
+    {
+      "name": "expressions",
+      "description": "Expression nodes for building computed values"
     },
     {
       "name": "pulse-types",

@@ -52,6 +52,70 @@ This is why a model's `*Like` type aliases (:data:`~eq1_pulse.models.basic_types
 signatures, under ``TYPE_CHECKING``: they describe what a *constructor call* accepts, not what
 ``model_validate`` accepts from the wire.
 
+Wire format
+-----------
+
+Two conventions coexist in the wire form, and code that builds or reads a document by hand needs to
+know which one applies where.
+
+**Operations nest.** Every operation serializes as a single-key object whose sole key names the
+operation, e.g. :class:`~eq1_pulse.models.channel_ops.Play`:
+
+.. code-block:: json
+
+    {
+      "play": {
+        "channel": "qubit",
+        "pulse": {
+          "pulse_type": "square",
+          "duration": {"ns": 100},
+          "amplitude": {"mV": 50}
+        }
+      }
+    }
+
+**Pulses and integrations stay flat.** :obj:`~eq1_pulse.models.pulse_types.PulseType` and the
+integration types keep their discriminator field (``pulse_type`` / ``integration_type``) inline
+alongside their other fields instead of nesting under a key:
+
+.. code-block:: json
+
+    {"pulse_type": "square", "duration": {"ns": 100}, "amplitude": {"mV": 50}}
+
+.. code-block:: json
+
+    {"integration_type": "full"}
+
+**Expression operator nodes nest, with the operator under** ``op``. A
+:class:`~eq1_pulse.models.expressions.BinaryExpr` and its sibling operator nodes serialize the same
+way operations do -- keyed by field name -- with the operator symbol carried in an ``op`` field:
+
+.. code-block:: json
+
+    {"binary_op": {"op": "+", "lhs": {"...": "..."}, "rhs": {"...": "..."}}}
+
+``LiteralExpr`` and ``SymbolExpr`` do not opt into this nesting and keep their flat form.
+
+**A bare variable name stays bare.** Fields typed :obj:`~eq1_pulse.models.reference_types.VarName`
+-- ``Discriminate.target``/``source``, ``Record.var``, ``IterationBase.var`` among them -- hold the
+identifier directly:
+
+.. code-block:: json
+
+    {"for": {"var": "amp", "items": {"...": "..."}, "body": ["..."]}}
+
+Everywhere else a variable reference appears in a union position alongside a literal value or an
+external reference -- for example a pulse's ``amplitude`` -- it is a
+:class:`~eq1_pulse.models.reference_types.VariableRef` and keeps its own tag:
+
+.. code-block:: json
+
+    {"amplitude": {"var": "amp"}}
+
+The field name and the tag both happen to read ``var`` here, which is exactly the case to watch for:
+``"var": "amp"`` (bare, field is ``VarName``) and ``{"var": "amp"}`` (tagged, field holds a
+``VariableRef``) are not interchangeable, and only one is valid at a given field.
+
 Building Sequences
 -------------------
 
@@ -931,90 +995,102 @@ JSON Output
 
     [
       {
-        "op_type": "var_decl",
-        "name": "amp",
-        "dtype": "float",
-        "unit": "mV"
+        "var_decl": {
+          "dtype": "float",
+          "unit": "mV",
+          "name": "amp"
+        }
       },
       {
-        "op_type": "var_decl",
-        "name": "raw",
-        "dtype": "complex",
-        "unit": "mV"
+        "var_decl": {
+          "dtype": "complex",
+          "unit": "mV",
+          "name": "raw"
+        }
       },
       {
-        "op_type": "var_decl",
-        "name": "state",
-        "dtype": "bool"
+        "var_decl": {
+          "dtype": "bool",
+          "name": "state"
+        }
       },
       {
-        "op_type": "for",
-        "var": {"var": "amp"},
-        "items": {
-          "start": 0.0,
-          "stop": 100.0,
-          "num": 50
-        },
-        "body": [
-          {
-            "op_type": "play",
-            "channel": "qubit",
-            "pulse": {
-              "pulse_type": "square",
-              "duration": {
-                "ns": 100
-              },
-              "amplitude": {"var": "amp"}
-            }
+        "for": {
+          "var": "amp",
+          "items": {
+            "start": 0.0,
+            "stop": 100.0,
+            "num": 50
           },
-          {
-            "op_type": "play",
-            "channel": "readout",
-            "pulse": {
-              "pulse_type": "square",
-              "duration": {
-                "us": 1
-              },
-              "amplitude": {
-                "mV": 30
+          "body": [
+            {
+              "play": {
+                "channel": "qubit",
+                "pulse": {
+                  "pulse_type": "square",
+                  "duration": {
+                    "ns": 100
+                  },
+                  "amplitude": {
+                    "var": "amp"
+                  }
+                }
+              }
+            },
+            {
+              "play": {
+                "channel": "readout",
+                "pulse": {
+                  "pulse_type": "square",
+                  "duration": {
+                    "us": 1
+                  },
+                  "amplitude": {
+                    "mV": 30
+                  }
+                }
+              }
+            },
+            {
+              "record": {
+                "channel": "readout",
+                "var": "raw",
+                "duration": {
+                  "us": 1
+                },
+                "integration": {
+                  "integration_type": "demod"
+                }
+              }
+            },
+            {
+              "discriminate": {
+                "target": "state",
+                "source": "raw",
+                "threshold": {
+                  "mV": 0.5
+                }
+              }
+            },
+            {
+              "store": {
+                "key": "rabi_amplitude",
+                "source": "state",
+                "mode": "average"
+              }
+            },
+            {
+              "wait": {
+                "channels": [
+                  "qubit"
+                ],
+                "duration": {
+                  "us": 10
+                }
               }
             }
-          },
-          {
-            "op_type": "record",
-            "channel": "readout",
-            "var": {"var": "raw"},
-            "duration": {
-              "us": 1
-            },
-            "integration": {
-              "integration_type": "full"
-            }
-          },
-          {
-            "op_type": "discriminate",
-            "target": {"var": "state"},
-            "source": {"var": "raw"},
-            "threshold": {
-              "mV": 0.5
-            }
-          },
-          {
-            "op_type": "store",
-            "key": "rabi_amplitude",
-            "source": {"var": "state"},
-            "mode": "average"
-          },
-          {
-            "op_type": "wait",
-            "channels": [
-              "qubit"
-            ],
-            "duration": {
-              "us": 10
-            }
-          }
-        ]
+          ]
+        }
       }
     ]
 

@@ -97,9 +97,10 @@ When you run an example, you'll see output like:
     Created sequence with 1 operations
     [
       {
-        "op_type": "for",
-        "var": {"var": "amp"},
-        ...
+        "for": {
+          "var": "amp",
+          ...
+        }
       }
     ]
 
@@ -124,14 +125,15 @@ A sequence contains an ordered list of operations.
 .. code-block:: json
 
     {
-      "op_type": "for",
-      "var": {"var": "amp"},
-      "items": {
-        "start": 0,
-        "stop": 100,
-        "num": 50
-      },
-      "body": { /*...*/ }
+      "for": {
+        "var": "amp",
+        "items": {
+          "start": 0,
+          "stop": 100,
+          "num": 50
+        },
+        "body": { /*...*/ }
+      }
     }
 
 Loops sweep over parameter ranges.
@@ -141,12 +143,13 @@ Loops sweep over parameter ranges.
 .. code-block:: json
 
     {
-      "op_type": "play",
-      "channel": "qubit",
-      "pulse": {
-        "pulse_type": "square",
-        "duration": {"ns": 100},
-        "amplitude": {"V": [0.05, 0]}
+      "play": {
+        "channel": "qubit",
+        "pulse": {
+          "pulse_type": "square",
+          "duration": {"ns": 100},
+          "amplitude": {"mV": 50}
+        }
       }
     }
 
