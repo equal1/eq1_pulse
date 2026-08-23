@@ -1,16 +1,15 @@
 """The ``{tag: payload}`` wire form :class:`NestedWireModel` layers on top of :class:`LeanModel`.
 
-Every model exercised here is a throwaway declared in this file. Nothing under
-``eq1_pulse.models`` opts into :class:`NestedWireModel` yet, and that is deliberate: the machinery
-has to be provably *additive* before anything is moved onto it. So these tests reach it only
-through models of their own, and :func:`test_lean_model_output_is_untouched` pins down the other
-half of the claim -- that a plain :class:`LeanModel` serializes exactly as it did before.
+Every model exercised here is a throwaway declared in this file, so the machinery is tested
+independently of whichever real models happen to be on it. :func:`test_lean_model_output_is_untouched`
+pins the other half of the claim -- that a plain :class:`LeanModel` serializes exactly as it did
+before :class:`NestedWireModel` existed.
 """
 
 from typing import Any, ClassVar, Literal
 
 import pytest
-from pydantic import Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, model_serializer
 
 from eq1_pulse.models.base_models import LeanModel, NestedWireModel
 
@@ -317,3 +316,80 @@ def test_lean_model_output_is_untouched():
     assert schema == PlainLean.model_json_schema(mode="serialization")
     assert set(schema["properties"]) == {"op_type", "channel", "scale"}
     assert schema["required"] == ["channel"]
+
+
+class SelfReferential(NestedWireModel):
+    """A node whose operand field points back at its own type, as expression nodes do.
+
+    This is the shape that trips the pydantic-core defect
+    :func:`test_pydantic_still_double_invokes_a_recursive_wrap_serializer` pins.
+    """
+
+    _wire_tag_source_: ClassVar[str] = "binary_op"
+    _wire_tag_from_: ClassVar[Literal["value", "name"]] = "name"
+    _wire_payload_key_: ClassVar[str | None] = "op"
+
+    binary_op: Literal["+", "-"]
+    rhs: "SelfReferential | int"
+
+
+class SelfReferentialHolder(LeanModel):
+    """Reaches a :class:`SelfReferential` through a field, which is what triggers the defect."""
+
+    node: SelfReferential
+
+
+SelfReferential.model_rebuild()
+SelfReferentialHolder.model_rebuild()
+
+
+def test_pydantic_still_double_invokes_a_recursive_wrap_serializer():
+    """Pin the upstream defect :class:`NestedWireModel`'s re-entrancy guard works around.
+
+    When a model with a ``@model_serializer(mode="wrap")`` is *both* self-referential and reached
+    through another model's field, pydantic-core invokes the serializer twice on the same instance,
+    the second time over the first's output -- pydantic#11812 and pydantic#11563.
+
+    **This test failing is good news.** It means the upstream defect is fixed, and the guard in
+    :meth:`NestedWireModel._wrap_serializer` -- along with the ``_wire_serializing`` context
+    variable it reads -- can be deleted. Do not "fix" this test by loosening the assertion.
+    """
+    calls: list[str] = []
+
+    class Node(BaseModel):
+        name: str
+        child: "Node | None" = None
+
+        @model_serializer(mode="wrap")
+        def _serialize(self, wrapped):
+            calls.append(self.name)
+            return {"wrapped": wrapped(self)}
+
+    class Holder(BaseModel):
+        node: Node
+
+    Node.model_rebuild()
+    Holder.model_rebuild()
+
+    Holder(node=Node(name="a")).model_dump()
+    assert calls == ["a", "a"], (
+        "pydantic no longer double-invokes a recursive wrap serializer -- delete "
+        "NestedWireModel's re-entrancy guard and the _wire_serializing ContextVar"
+    )
+
+
+def test_a_self_referential_node_is_wrapped_exactly_once():
+    """The guard's payload: one wrap per node, however the node is reached.
+
+    Without it the outermost node comes back double-wrapped -- ``{"binary_op": {"op": {"op": ...}}}``
+    for a node that keeps its operator, and an empty ``{"binary_op": {}}`` for one that drops it.
+    """
+    node = SelfReferential(binary_op="+", rhs=SelfReferential(binary_op="-", rhs=1))
+
+    standalone = node.model_dump()
+    through_a_field = SelfReferentialHolder(node=node).model_dump()["node"]
+
+    expected = {"binary_op": {"op": "+", "rhs": {"binary_op": {"op": "-", "rhs": 1}}}}
+    assert standalone == expected
+    assert through_a_field == expected, "reached through a field, the node was wrapped twice"
+    assert SelfReferential.model_validate(expected) == node
