@@ -14,7 +14,7 @@ from pydantic import model_validator
 from .basic_types import Duration, OpBase
 from .identifier_str import FullyQualifiedIdentifier
 from .pulse_types import ExternalParamValue
-from .reference_types import ChannelTarget, VariableRef
+from .reference_types import ChannelTarget, VariableRef, VarName
 
 if TYPE_CHECKING:
     from .basic_types import DurationLike
@@ -93,7 +93,7 @@ class ExternalBlock(OpBase):
     params: dict[str, ExternalParamValue] | None = None
     """Input arguments passed to the referenced program."""
 
-    results: dict[str, VariableRef] | None = None
+    results: dict[str, VarName] | None = None
     """Output bindings: variables the referenced program writes into."""
 
     duration: Duration | ValueRef | None = None

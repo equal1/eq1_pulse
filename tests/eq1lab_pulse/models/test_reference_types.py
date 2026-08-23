@@ -10,7 +10,9 @@ from typing import Annotated, Any
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
+from eq1_pulse.models.expressions import SymbolExpr, ValueRef
 from eq1_pulse.models.identifier_str import str_is_external_symbol
+from eq1_pulse.models.pulse_types import ExternalParamValue
 from eq1_pulse.models.reference_types import (
     ChannelRef,
     ChannelTarget,
@@ -20,6 +22,7 @@ from eq1_pulse.models.reference_types import (
     ReferenceDiscriminator,
     SymbolRef,
     VariableRef,
+    VarName,
 )
 
 TAGGED_REFERENCES: list[tuple[type[Reference], str, str]] = [
@@ -174,3 +177,45 @@ def test_the_discriminator_reads_its_tags_off_the_members():
 def test_the_discriminator_needs_a_union():
     with pytest.raises(TypeError, match="union of reference models"):
         TypeAdapter(Annotated[VariableRef, ReferenceDiscriminator()])
+
+
+def test_var_name_is_bare_and_the_unions_stay_tagged():
+    """The two spellings of a variable, and the line between them.
+
+    A field typed exactly :class:`VariableRef` carries ``"iq"``; a union of references carries
+    ``{"var": "iq"}``. The tag is not decoration in the union positions: an :class:`ExternalRef` is
+    also spelled as a name, and ``ExternalParamValue`` has a plain :obj:`str` member whose value is
+    the string itself, so a bare ``"iq"`` there is not decidable. Do not "fix" one to match the
+    other.
+    """
+    bare: TypeAdapter[Any] = TypeAdapter(VarName)
+    assert bare.validate_json('"iq"') == VariableRef("iq")
+    assert bare.dump_python(VariableRef("iq")) == "iq"
+    assert bare.dump_json(VariableRef("iq")) == b'"iq"'
+    with pytest.raises(ValidationError):
+        bare.validate_json('{"var": "iq"}')
+
+    for union in (SymbolRef, ValueRef, ExternalParamValue):
+        tagged: TypeAdapter[Any] = TypeAdapter(union)
+        assert tagged.validate_json('{"var": "iq"}') == VariableRef("iq")
+        assert tagged.dump_python(VariableRef("iq")) == {"var": "iq"}
+
+    assert SymbolExpr(symbol=VariableRef("iq")).model_dump() == {"symbol": {"var": "iq"}}
+
+
+def test_var_name_publishes_the_same_string_in_both_schema_modes():
+    """The Python-side widening is authoring sugar and must not reach the schema.
+
+    :obj:`VarName` accepts a :class:`VariableRef` and a ``{"var": ...}`` dict in Python so that
+    authoring code and the builder keep working. Were that widening visible, the validation schema
+    would describe an input the serialization schema never produces -- the asymmetry the ledger in
+    ``test_schema_symmetry.py`` exists to catch.
+    """
+    adapter: TypeAdapter[Any] = TypeAdapter(VarName)
+    validation = adapter.json_schema(mode="validation")
+    serialization = adapter.json_schema(mode="serialization")
+    assert validation == serialization
+    assert validation == {"type": "string"}
+
+    assert adapter.validate_python(VariableRef("iq")) == VariableRef("iq")
+    assert adapter.validate_python({"var": "iq"}) == VariableRef("iq")

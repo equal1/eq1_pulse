@@ -49,8 +49,8 @@ def test_data_ops_rebuild_sweep():
     op: Any = TypeAdapter(DataOp).validate_python(
         {
             "discriminate": {
-                "target": {"var": "result"},
-                "source": {"var": "data"},
+                "target": "result",
+                "source": "data",
                 "threshold": _EXPR_DOCUMENT,
             }
         }

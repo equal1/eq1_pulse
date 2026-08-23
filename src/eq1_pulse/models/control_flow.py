@@ -14,7 +14,7 @@ from pydantic import (
 
 from .basic_types import LinSpace, OpBase, Range
 from .nd_array import NumpyComplexArray1D, NumpyFloatArray1D, NumpyIntArray1D
-from .reference_types import ExternalRef, VariableRef
+from .reference_types import ExternalRef, VariableRef, VarName
 
 __all__ = "ConditionalBase", "IterationBase", "RepetitionBase"
 
@@ -99,7 +99,7 @@ class IterationBase[BodyT](OpBase):
 
     op_type: Literal["for"] = "for"
     """The discriminator field for the operation type. Always "for"."""
-    var: list[VariableRef] | VariableRef
+    var: list[VarName] | VarName
     """The variable reference(s) for the iterated value(s).
 
     It can be a single variable reference or a list of variable references

@@ -160,7 +160,7 @@ def test_record_with_demod_validation():
     record_dict = {
         "record": {
             "channel": "ch1",
-            "var": {"var": "result"},
+            "var": "result",
             "duration": {"s": 100e-9},
             "integration": {"integration_type": "demod", "phase": {"deg": 45}},
         }
@@ -197,7 +197,7 @@ def test_trace_with_full_integration_validation():
     trace_dict = {
         "trace": {
             "channel": "ch1",
-            "var": {"var": "trace_data"},
+            "var": "trace_data",
             "duration": {"s": 1e-6},
             "integration": {"integration_type": "full"},
         }

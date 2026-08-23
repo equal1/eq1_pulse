@@ -228,7 +228,7 @@ def test_iteration_multiple_variables_validation():
     iter_obj: OpSequenceItem = TypeAdapter(OpSequenceItem).validate_python(
         {
             "for": {
-                "var": [{"var": "i"}, {"var": "j"}, {"var": "k"}, {"var": "s"}],
+                "var": ["i", "j", "k", "s"],
                 "items": [
                     [0, 1, 2],
                     {"start": 3, "stop": 5, "step": 1},
@@ -253,7 +253,7 @@ def test_iteration_multiple_variables_validate_json():
     iter_obj: OpSequenceItem = TypeAdapter(OpSequenceItem).validate_json(
         r"""{
             "for": {
-                "var": [{"var": "i"}, {"var": "j"}, {"var": "k"}, {"var": "s"}],
+                "var": ["i", "j", "k", "s"],
                 "items": [
                     [0, 1, 2],
                     {"start": 3, "stop": 5, "step": 1},
@@ -284,7 +284,7 @@ def test_iteration_multiple_variables_serialize_json():
     serialized = iter_obj.model_dump_json()
     assert serialized == (
         '{"for":{'
-        + '"var":[{"var":"i"},{"var":"j"},{"var":"k"},{"var":"s"}],'
+        + '"var":["i","j","k","s"],'
         + '"items":['
         + '[0,1,2],{"start":3,"stop":5,"step":1},'
         + '{"start":10,"stop":20,"num":3},'

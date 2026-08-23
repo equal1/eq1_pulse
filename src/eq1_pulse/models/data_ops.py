@@ -27,7 +27,7 @@ from .basic_types import (
 from .complex import complex_from_tuple
 from .identifier_str import ExternalSymbolStr, IdentifierStr
 from .pulse_types import PulseType
-from .reference_types import VariableRef
+from .reference_types import VarName
 
 if TYPE_CHECKING:
     from .basic_types import (
@@ -317,9 +317,9 @@ class Discriminate(DataOpBase):
 
     op_type: Literal["discriminate"] = "discriminate"
     """The type discriminator, always "discriminate"."""
-    target: VariableRef
+    target: VarName
     """The target variable to store the discrimination result."""
-    source: VariableRef
+    source: VarName
     """The source variable containing the data to discriminate."""
     threshold: Threshold | ValueRef
     """The threshold value for discrimination."""
@@ -366,7 +366,7 @@ class Store(DataOpBase):
     """The type discriminator, always "store"."""
     key: str
     """The key to identify the stored data."""
-    source: VariableRef
+    source: VarName
     """The source variable to store."""
     mode: StoreMode
     """The storage mode to use."""

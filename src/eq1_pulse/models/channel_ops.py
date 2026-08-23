@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal, overload
 from .base_models import LeanModel
 from .basic_types import Duration, Frequency, Magnitude, OpBase, OperationDiscriminator, Phase
 from .pulse_types import PulseType
-from .reference_types import ChannelTarget, PulseRef, VariableRef
+from .reference_types import ChannelTarget, PulseRef, VariableRef, VarName
 
 if TYPE_CHECKING:
     from .basic_types import DurationLike, FrequencyLike, MagnitudeLike, PhaseLike
@@ -240,7 +240,7 @@ class Record(ChannelOpBase):
 
     op_type: Literal["record"] = "record"
     """The type discriminator, always "record"."""
-    var: VariableRef
+    var: VarName
     """The variable to store the acquisition result."""
     duration: Duration | ValueRef
     """The duration of the acquisition."""
@@ -279,7 +279,7 @@ class Trace(ChannelOpBase):
 
     op_type: Literal["trace"] = "trace"
     """The type discriminator, always "trace"."""
-    var: VariableRef
+    var: VarName
     """The array variable to store the trace data."""
     duration: Duration | ValueRef
     """The total duration of the trace acquisition."""

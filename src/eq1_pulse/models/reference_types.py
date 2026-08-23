@@ -13,6 +13,19 @@ The fourth, :class:`ChannelRef`, is the bare string ``"q0_drive"``. It is a
 name to publish and is therefore bare by construction. The carve-out is argued on issue #10:
 ``channel`` and ``channels`` are closed, single-purpose fields in which a string can mean nothing
 else, and a channel reference is the most frequent value in a program.
+
+:class:`VariableRef` has *two* wire forms, chosen by position rather than by type, which is why the
+carve-out lives in an annotation -- :obj:`VarName` -- rather than in the class:
+
+* In a field typed exactly :class:`VariableRef` it is the bare name ``"iq"``. The field name already
+  says the value is a variable, so ``{"var": {"var": "iq"}}`` spells the tag twice. This is the
+  same argument as :class:`ChannelRef`'s, and the fields are the same kind of closed,
+  single-purpose slot: ``Record.var``, ``Iteration.var``, ``Store.source`` and their four siblings.
+* In a union of references -- :obj:`SymbolRef`, ``ValueRef``, ``ExternalParamValue``,
+  :attr:`~eq1_pulse.models.expressions.SymbolExpr.symbol` -- it keeps ``{"var": "iq"}``. There a
+  bare string is not unambiguous: it would have to be told apart from :class:`ExternalRef`, whose
+  wire form is also a name, and from ``ExternalParamValue``'s plain :obj:`str` member, whose value
+  is the string itself. The tag is what makes the union decidable.
 """
 
 from __future__ import annotations
@@ -20,12 +33,14 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Annotated, Any, Final, TypedDict, Union, get_args
 
-from pydantic import BaseModel, Discriminator, GetCoreSchemaHandler, RootModel, Tag
+from pydantic import BaseModel, Discriminator, GetCoreSchemaHandler, GetJsonSchemaHandler, RootModel, Tag
+from pydantic_core import core_schema
 
 from .base_models import NoExtrasModel
 from .identifier_str import ExternalSymbolStr, IdentifierStr
 
 if TYPE_CHECKING:
+    from pydantic.json_schema import JsonSchemaValue
     from pydantic_core import CoreSchema
 
 __all__ = (
@@ -40,6 +55,7 @@ __all__ = (
     "ReferenceDiscriminator",
     "SymbolRef",
     "SymbolRefLike",
+    "VarName",
     "VariableRef",
     "VariableRefLike",
 )
@@ -246,6 +262,67 @@ type VariableRefLike = VariableRef | VarRefDict
 A bare string is not one of them: an identifier-shaped string is a string. The builder still
 promotes one to a variable reference -- see :func:`~eq1_pulse.builder._coerce.as_symbol_ref` --
 but that is a builder convenience and its signatures say so.
+"""
+
+
+def _bare_variable_name(value: VariableRef) -> str:
+    """Serialize a bare variable reference as the name it carries.
+
+    :param value: The reference held by a :obj:`VarName` field.
+    :return: The variable name, which is that field's whole wire form.
+    """
+    return value.var
+
+
+class _BareVariableRef:
+    """Annotation marker spelling a :class:`VariableRef` field as the bare variable name.
+
+    Applied through :obj:`VarName`; never written at a field directly.
+
+    A field typed exactly :class:`VariableRef` already says its value is a variable, so the
+    ``{"var": ...}`` tag inside it repeats the field name and nothing else: ``{"var": {"var": "iq"}}``
+    where ``"iq"`` says the same. Union positions keep the tag; see the module docstring for why.
+
+    The JSON side accepts the name and nothing else, so the accepted wire form is exactly the one
+    the schema publishes. The Python side additionally accepts a :class:`VariableRef` instance and a
+    :class:`VarRefDict`, which is what authoring code and the builder pass. That widening is kept
+    out of :meth:`__get_pydantic_json_schema__`, which reports a string in *both* schema modes --
+    otherwise the validation schema would describe an input shape the serialization schema never
+    produces.
+    """
+
+    def __get_pydantic_core_schema__(self, source_type: Any, handler: GetCoreSchemaHandler) -> CoreSchema:
+        """Build the bare-name schema for the annotated :class:`VariableRef` field.
+
+        :param source_type: The annotated type, :class:`VariableRef`.
+        :param handler: The handler generating core schemas, reused for the tagged object form.
+        :return: A core schema reading a name in JSON, and a name, instance or dict in Python.
+        """
+        from_name = core_schema.no_info_after_validator_function(VariableRef, handler.generate_schema(IdentifierStr))
+        return core_schema.json_or_python_schema(
+            json_schema=from_name,
+            python_schema=core_schema.union_schema([from_name, handler(source_type)]),
+            serialization=core_schema.plain_serializer_function_ser_schema(
+                _bare_variable_name, return_schema=core_schema.str_schema()
+            ),
+        )
+
+    def __get_pydantic_json_schema__(self, schema: CoreSchema, handler: GetJsonSchemaHandler) -> JsonSchemaValue:
+        """Report the annotated field as a bare string.
+
+        :param schema: The core schema built above, whose Python side is wider than the wire form.
+        :param handler: The handler generating JSON schemas; unused, as the wire form is a string.
+        :return: The JSON schema of a variable name, identical in the validation and serialization
+            modes because it is built from neither.
+        """
+        return {"type": "string"}
+
+
+type VarName = Annotated[VariableRef, _BareVariableRef()]
+"""A :class:`VariableRef` field whose wire form is the bare variable name ``"iq"``.
+
+Use it wherever a field is typed exactly :class:`VariableRef` -- never inside a union of references,
+where the tag is what tells the members apart.
 """
 
 
