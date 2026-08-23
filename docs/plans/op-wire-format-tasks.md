@@ -41,7 +41,7 @@ task rather than being split.
 
 ---
 
-## Task 1 — `NestedWireModel` machinery
+## Task 1 — `NestedWireModel` machinery — **DONE** (`9cd1a68`, `51dd72b`)
 
 **Plan sections:** §3.1, §3.2
 **Files:** `src/eq1_pulse/models/base_models.py`, `tests/eq1lab_pulse/models/test_base_models.py` (new)
@@ -59,8 +59,8 @@ Cover in tests, against throwaway models defined in the test file, not real ones
 - round-trip: `validate(dump(x)) == x` and `dump(validate(d)) == d`
 - the D3 empty-payload case: a model whose non-tag fields all have defaults dumps to the bare tag
   string and validates back from it; a model with a required field does **not** grow that form
-- both schema modes agree, and the wrapped schema keeps `title`, `description` and
-  `additionalProperties: false` on the inner object
+- both schema modes agree; `title`/`description` sit on the outer schema (per plan §4's worked
+  example) and `additionalProperties: false` on both levels
 - an extra key alongside the tag is rejected; a two-key object is rejected
 
 **Done when** QA is green and the new tests fail if the wrap is removed.
@@ -104,9 +104,10 @@ object — check `experimental/test_schedule.py` covers that.
 **Files:** `models/expressions.py`, `models/pulse_types.py`, `tests/eq1lab_pulse/models/test_expressions.py`,
 `tests/eq1lab_pulse/test_builder_expressions.py`
 
-1. The six nodes in the §3.4 table opt into `NestedWireModel` with the `_wire_payload_key_` each
-   row names — `"op"` for the four operator nodes, `"name"` for `CallExpr`, `None` for `NotExpr`
-   (its operator is single-valued and is not repeated inside).
+1. The six nodes in the §3.4 table opt into `NestedWireModel`, copying all three ClassVars from
+   that row verbatim. Every one of them sets `_wire_tag_from_ = "name"` — expression nodes are
+   tagged by field name, never by operator value, because `"-"` is both unary and binary. Do not
+   change `NestedWireModel` itself; §3.4's four combinations are all reachable as it stands.
 2. `LiteralExpr` and `SymbolExpr` do **not** opt in. Their wire form is unchanged.
 3. Tighten `expression_tag_of` from "the first known key present" to "the sole key, if known".
    Keep it returning `None` for anything else — `_external_param_value_tag` in `pulse_types.py`

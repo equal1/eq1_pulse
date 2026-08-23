@@ -1,6 +1,7 @@
 # Plan: nested operation wire format
 
-**Status:** drafted — all eight framing questions closed (§2)
+**Status:** in flight — all eight framing questions closed (§2); Task 1 landed (`9cd1a68`,
+`51dd72b`) and §3.1/§3.2 below are corrected to the API as built
 **Date:** 2026-08-23
 **Predecessors:** builds directly on the `{tag: value}` reference forms established by
 [#10](https://github.com/equal1/eq1_pulse/issues/10) and on the expression nodes added by
@@ -107,9 +108,21 @@ Add to `base_models.py`:
 class NestedWireModel(LeanModel):
     """A LeanModel whose wire form is ``{tag: payload}`` rather than a flat object."""
 
-    _wire_tag_source_: ClassVar[str]                  # the field the tag is read from
-    _wire_payload_key_: ClassVar[str | None] = None   # inner key for the tag source's value, if kept
+    _wire_tag_source_: ClassVar[str] = ""                          # field the tag is read from; "" = inert
+    _wire_tag_from_: ClassVar[Literal["value", "name"]] = "value"  # tag is that field's value, or its name
+    _wire_payload_key_: ClassVar[str | None] = None                # inner key for the value, or None to drop
 ```
+
+**Three knobs, not two.** The draft tied "the tag is the field's *name*" to "`_wire_payload_key_`
+is set", which made `NotExpr`'s form in §3.4 — tagged by name, single-valued operator dropped —
+inexpressible. Where the tag comes from and whether the tag source survives into the payload are
+separate questions; all four combinations are reachable.
+
+`_wire_tag_source_` defaults to `""`, meaning *not configured*: such a class, and one whose tag
+source is not a single-valued `Literal` (an abstract base like `OpBase`, whose `op_type` is `Any`),
+behaves exactly like `LeanModel` in both directions and both schema modes. So `OpBase` itself keeps
+a flat schema while all 20 concrete ops nest — which is invisible, since `OpBase` is already in the
+generator's `excluded_base_classes`.
 
 with three hooks:
 
@@ -119,16 +132,35 @@ with three hooks:
 | `@model_validator(mode="wrap")`  | Accepts `{tag: payload}` (and the bare `tag` string for the D3 classes), flattens it back to the field set pydantic already knows how to validate.                                                                                              |
 | `__get_pydantic_json_schema__`   | Takes the flat object schema `LeanModel` already rebuilds, removes the tag field from `properties`/`required`, and wraps it in a single-key object schema. Identical in both modes, so schema symmetry holds.                                   |
 
-`OpBase(NestedWireModel, FrozenModel)` sets `_wire_tag_source_ = "op_type"` and leaves
-`_wire_payload_key_` at `None` — the tag *is* the field's value, and it is not repeated inside.
-All 20 operations inherit it with no per-class edit.
+`OpBase(NestedWireModel, FrozenModel)` sets `_wire_tag_source_ = "op_type"` and leaves the other
+two at their defaults — the tag *is* the field's value, and it is not repeated inside. All 20
+operations inherit it with no per-class edit.
+
+Three further facts established by building it, each of which changes what a later task may assume:
+
+1. **D5 is not enforced in the model validator, and must not be.** Pydantic routes `__init__`
+   through the wrap validator, so `Play(channel=…, pulse=…)` and
+   `model_validate({"op_type": "play", …})` arrive as the same dict — a rule strict enough to
+   reject the flat wire form would also outlaw ordinary keyword construction, which D6 requires to
+   keep working. The validator therefore passes anything that is not the nested form through
+   untouched, and **D5 rejection lands entirely on the §3.3 union discriminators**, which is where
+   §2's `union_tag_not_found` rationale already put it. Task 2 must not try to tighten the model
+   validator. Consequence to accept: `Play.model_validate_json('{"op_type": "play", …}')` still
+   succeeds. Every union site rejects it; a direct single-model validate does not.
+2. **`model_dump()`'s declared return type is `dict[str, Any]`, and D3's bare-tag form returns
+   `str`.** No current op can reach an empty payload, so nothing hits this today, but a future
+   empty-capable class will need its callers to widen the annotation.
+3. **The serializer must be named `_wrap_serializer`, overriding `LeanModel`'s by name.** A
+   differently-named `@model_serializer` in a subclass silently replaces the parent's rather than
+   erroring. `LeanModel`'s elision now lives in a reusable `_elide_defaults` so the override can
+   call it instead of duplicating it.
 
 ### 3.2 The two tagging rules, and why they differ
 
-| Family      | Tag is the field's…    | Why                                                                                                                                                                                                                                        |
-| ----------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| operations  | **value** (`"play"`)   | Every op shares the field *name* `op_type`, so only the value distinguishes them.                                                                                                                                                            |
-| expressions | **name** (`binary_op`) | Values overlap — `"-"` is both `UnaryExpr` and `BinaryExpr` — so only the name distinguishes them. This is already how `_EXPRESSION_TAGS` works; the change is where the operator value goes, not what the tag is.                             |
+| Family      | `_wire_tag_from_` | Tag is…                | Why                                                                                                                                                                                                              |
+| ----------- | ----------------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| operations  | `"value"`         | **value** (`"play"`)   | Every op shares the field *name* `op_type`, so only the value distinguishes them.                                                                                                                                  |
+| expressions | `"name"`          | **name** (`binary_op`) | Values overlap — `"-"` is both `UnaryExpr` and `BinaryExpr` — so only the name distinguishes them. This is already how `_EXPRESSION_TAGS` works; the change is where the operator value goes, not what the tag is.  |
 
 ### 3.3 Discriminators to rewrite
 
@@ -147,16 +179,21 @@ change beyond that tightening, since `pulse_type` (D1) still resolves before it.
 
 ### 3.4 Expression nodes
 
-| Node          | Before                                      | After                                               | Note                                 |
-| ------------- | ------------------------------------------- | --------------------------------------------------- | ------------------------------------ |
-| `LiteralExpr` | `{"value": {"ns": 20}}`                     | *unchanged*                                         | one field; already the flat form     |
-| `SymbolExpr`  | `{"symbol": {"var": "t"}}`                  | *unchanged*                                         | one field; D4 does not reach it (§2) |
-| `UnaryExpr`   | `{"unary_op": "-", "rhs": …}`               | `{"unary_op": {"op": "-", "rhs": …}}`               | `_wire_payload_key_ = "op"`          |
-| `BinaryExpr`  | `{"binary_op": "+", "lhs": …, "rhs": …}`    | `{"binary_op": {"op": "+", "lhs": …, "rhs": …}}`    | `_wire_payload_key_ = "op"`          |
-| `CompareExpr` | `{"compare_op": "<", "lhs": …, "rhs": …}`   | `{"compare_op": {"op": "<", "lhs": …, "rhs": …}}`   | `_wire_payload_key_ = "op"`          |
-| `LogicalExpr` | `{"logical_op": "and", "lhs": …, "rhs": …}` | `{"logical_op": {"op": "and", "lhs": …, "rhs": …}}` | `_wire_payload_key_ = "op"`          |
-| `NotExpr`     | `{"not_op": "not", "rhs": …}`               | `{"not_op": {"rhs": …}}`                            | single-valued operator; not repeated |
-| `CallExpr`    | `{"function": "min", "args": […]}`          | `{"function": {"name": "min", "args": […]}}`        | `_wire_payload_key_ = "name"`        |
+| Node          | Before                                      | After                                               | `_wire_tag_source_` | `_wire_tag_from_` | `_wire_payload_key_` |
+| ------------- | ------------------------------------------- | --------------------------------------------------- | ------------------- | ----------------- | -------------------- |
+| `LiteralExpr` | `{"value": {"ns": 20}}`                     | *unchanged* — one field, already the flat form      | —                   | —                 | —                    |
+| `SymbolExpr`  | `{"symbol": {"var": "t"}}`                  | *unchanged* — one field; D4 does not reach it (§2)  | —                   | —                 | —                    |
+| `UnaryExpr`   | `{"unary_op": "-", "rhs": …}`               | `{"unary_op": {"op": "-", "rhs": …}}`               | `"unary_op"`        | `"name"`          | `"op"`               |
+| `BinaryExpr`  | `{"binary_op": "+", "lhs": …, "rhs": …}`    | `{"binary_op": {"op": "+", "lhs": …, "rhs": …}}`    | `"binary_op"`       | `"name"`          | `"op"`               |
+| `CompareExpr` | `{"compare_op": "<", "lhs": …, "rhs": …}`   | `{"compare_op": {"op": "<", "lhs": …, "rhs": …}}`   | `"compare_op"`      | `"name"`          | `"op"`               |
+| `LogicalExpr` | `{"logical_op": "and", "lhs": …, "rhs": …}` | `{"logical_op": {"op": "and", "lhs": …, "rhs": …}}` | `"logical_op"`      | `"name"`          | `"op"`               |
+| `NotExpr`     | `{"not_op": "not", "rhs": …}`               | `{"not_op": {"rhs": …}}`                            | `"not_op"`          | `"name"`          | `None`               |
+| `CallExpr`    | `{"function": "min", "args": […]}`          | `{"function": {"name": "min", "args": […]}}`        | `"function"`        | `"name"`          | `"name"`             |
+
+`NotExpr` is the row that forced the three-knob split in §3.1: it is tagged by the field *name*
+like its siblings, but its operator has one possible value and so is dropped rather than repeated.
+`_wire_tag_source_value()` recovers it on the way back in, from the field's sole `Literal`
+argument — never from the tag, which for the name rule is the field name and not a valid value.
 
 `MAX_EXPRESSION_DEPTH` stays at 32. It caps *Python* nesting, which `_expression_depth` measures
 and which does not change; the serialized JSON gains one level per operator node, so a maximal tree
