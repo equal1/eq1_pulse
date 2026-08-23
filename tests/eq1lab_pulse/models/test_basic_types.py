@@ -4,6 +4,7 @@
 import cmath
 import math
 from cmath import pi as π
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
@@ -2116,3 +2117,37 @@ def test_phase_matmul_string_different_angles():
         assert result.V == approx(expected)
         assert result.real.V == approx(expected.real)
         assert result.imag.V == approx(expected.imag)
+
+
+def test_a_bare_operation_tag_is_selected_at_an_operation_union():
+    """An empty-payload operation is spelled as its bare tag, and must be readable back.
+
+    :class:`~eq1_pulse.models.base_models.NestedWireModel` emits ``"sync"`` rather than
+    ``{"sync": {}}`` for an operation whose payload is empty, and publishes that alternative in the
+    schema. Reporting no tag for a string would make the one form the serializer emits unselectable
+    at every union an operation can be reached by. No shipped operation has an all-defaulted
+    payload today, which is exactly why this is pinned on a throwaway one.
+    """
+    from typing import Annotated, Literal
+
+    from pydantic import Field, TypeAdapter
+
+    from eq1_pulse.models.basic_types import OpBase, OperationDiscriminator, op_tag_of
+
+    class Sync(OpBase):
+        op_type: Literal["sync"] = "sync"
+        channels: list[str] = Field(default_factory=list)
+
+    class Halt(OpBase):
+        op_type: Literal["halt"] = "halt"
+        reason: str
+
+    assert op_tag_of("sync") == "sync"
+    # Annotated because pydantic declares model_dump() as dict[str, Any], which the bare tag is not.
+    dumped: Any = Sync().model_dump()
+    assert dumped == "sync"
+
+    adapter: TypeAdapter[Any] = TypeAdapter(list[Annotated[Sync | Halt, OperationDiscriminator()]])
+    document = ["sync", {"halt": {"reason": "done"}}]
+    assert adapter.validate_python(document) == [Sync(), Halt(reason="done")]
+    assert adapter.dump_python([Sync(), Halt(reason="done")]) == document

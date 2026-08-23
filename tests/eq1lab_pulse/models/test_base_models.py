@@ -291,6 +291,34 @@ def test_the_tag_source_is_renamed_rather_than_dropped_when_the_tag_is_its_name(
     assert payload["properties"]["op"]["enum"] == ["-", "+"]
 
 
+def test_the_renamed_tag_source_is_not_titled_after_the_field_it_left():
+    """A property renamed to :attr:`_wire_payload_key_` must not keep the old field's auto-title.
+
+    Pydantic titles a property after the field it was generated from, so carrying that title
+    through the rename publishes ``{"op": {..., "title": "Unary Op"}}`` -- a client generator
+    driven off the document then names the member after a field the wire form does not have.
+    """
+    payload = TaggedByName.model_json_schema()["properties"]["unary_op"]
+    assert payload["properties"]["op"]["title"] == "Op"
+
+
+def test_a_deliberate_title_survives_the_rename():
+    """Only pydantic's own name-derived title is re-derived; one the model chose says more."""
+
+    class Titled(NestedWireModel):
+        """A renamed tag source whose title was set deliberately rather than derived."""
+
+        _wire_tag_source_: ClassVar[str] = "unary_op"
+        _wire_tag_from_: ClassVar[Literal["value", "name"]] = "name"
+        _wire_payload_key_: ClassVar[str | None] = "op"
+
+        unary_op: Literal["-"] = Field(title="The operator symbol")
+        rhs: int
+
+    payload = Titled.model_json_schema()["properties"]["unary_op"]
+    assert payload["properties"]["op"]["title"] == "The operator symbol"
+
+
 def test_the_bare_tag_form_appears_in_the_schema_only_where_it_applies():
     """The alternate form is part of a class's schema exactly when D3 gives it one."""
     empty_capable = TaggedByValueAllDefaults.model_json_schema()
@@ -404,3 +432,35 @@ def test_a_self_referential_node_is_wrapped_exactly_once():
     assert standalone == expected
     assert through_a_field == expected, "reached through a field, the node was wrapped twice"
     assert SelfReferential.model_validate(expected) == node
+
+
+class NameTaggedAllDefaults(NestedWireModel):
+    """Tagged by *name*, with the operator dropped and every other field defaulted.
+
+    The one shape that reaches D3's bare-tag form through the ``"name"`` rule rather than the
+    ``"value"`` one, and the shape that separates the tag from the tag source's value: the tag is
+    ``"not_op"`` while the field must come back as ``"not"``.
+    """
+
+    _wire_tag_source_: ClassVar[str] = "not_op"
+    _wire_tag_from_: ClassVar[Literal["value", "name"]] = "name"
+
+    not_op: Literal["not"] = "not"
+    rhs: int = 0
+
+
+def test_a_name_tagged_bare_tag_restores_the_operator_not_the_tag():
+    """The bare tag names the *field*, so the value it stands for is the field's sole literal.
+
+    Restoring the tag itself would write ``not_op="not_op"`` and fail the literal -- the bare-tag
+    form would serialize but never validate back, which is not a wire form at all.
+    """
+    assert NameTaggedAllDefaults._wire_payload_can_be_empty()
+    # Annotated because pydantic declares model_dump() as dict[str, Any], which the bare tag is not.
+    dumped: Any = NameTaggedAllDefaults().model_dump()
+    assert dumped == "not_op"
+
+    restored = NameTaggedAllDefaults.model_validate("not_op")
+    assert restored.not_op == "not"
+    assert restored == NameTaggedAllDefaults()
+    assert NameTaggedAllDefaults.model_validate_json('"not_op"') == NameTaggedAllDefaults()

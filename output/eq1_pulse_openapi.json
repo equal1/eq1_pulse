@@ -161,7 +161,7 @@
                   "/",
                   "%"
                 ],
-                "title": "Binary Op",
+                "title": "Op",
                 "type": "string"
               },
               "lhs": {
@@ -321,7 +321,7 @@
                   "==",
                   "!="
                 ],
-                "title": "Compare Op",
+                "title": "Op",
                 "type": "string"
               },
               "lhs": {
@@ -1396,7 +1396,7 @@
                   "and",
                   "or"
                 ],
-                "title": "Logical Op",
+                "title": "Op",
                 "type": "string"
               },
               "lhs": {
@@ -2780,7 +2780,7 @@
             "properties": {
               "op": {
                 "const": "-",
-                "title": "Unary Op",
+                "title": "Op",
                 "type": "string"
               },
               "rhs": {
@@ -2856,7 +2856,7 @@
         ]
       },
       "VarName": {
-        "type": "string"
+        "$ref": "#/components/schemas/IdentifierStr"
       },
       "VariableDTypeType": {
         "enum": [

@@ -215,7 +215,9 @@ def test_var_name_publishes_the_same_string_in_both_schema_modes():
     validation = adapter.json_schema(mode="validation")
     serialization = adapter.json_schema(mode="serialization")
     assert validation == serialization
-    assert validation == {"type": "string"}
+    # Referenced rather than spelled out, so a constraint added to IdentifierStr reaches every
+    # position that accepts a name instead of being understated here as a bare string.
+    assert validation == {"$defs": {"IdentifierStr": {"type": "string"}}, "$ref": "#/$defs/IdentifierStr"}
 
     assert adapter.validate_python(VariableRef("iq")) == VariableRef("iq")
     assert adapter.validate_python({"var": "iq"}) == VariableRef("iq")

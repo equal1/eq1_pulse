@@ -31,7 +31,7 @@ carve-out lives in an annotation -- :obj:`VarName` -- rather than in the class:
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Annotated, Any, Final, TypedDict, Union, get_args
+from typing import TYPE_CHECKING, Annotated, Any, Final, TypedDict, Union, cast, get_args
 
 from pydantic import BaseModel, Discriminator, GetCoreSchemaHandler, GetJsonSchemaHandler, RootModel, Tag
 from pydantic_core import core_schema
@@ -308,14 +308,25 @@ class _BareVariableRef:
         )
 
     def __get_pydantic_json_schema__(self, schema: CoreSchema, handler: GetJsonSchemaHandler) -> JsonSchemaValue:
-        """Report the annotated field as a bare string.
+        """Report the annotated field as the name it carries on the wire.
+
+        Derived from the JSON side built above -- :obj:`IdentifierStr` -- rather than spelled out
+        as ``{"type": "string"}``: the two say the same thing today, but a constraint added to
+        :obj:`IdentifierStr` belongs in every position that accepts one, and a literal here would
+        keep publishing an unconstrained string while claiming to describe a name.
+
+        The Python side is deliberately not consulted. It widens to a :class:`VariableRef` and a
+        ``{"var": ...}`` dict as authoring sugar, and neither is a form the serializer ever emits.
 
         :param schema: The core schema built above, whose Python side is wider than the wire form.
-        :param handler: The handler generating JSON schemas; unused, as the wire form is a string.
+        :param handler: The handler generating JSON schemas, applied to that JSON side.
         :return: The JSON schema of a variable name, identical in the validation and serialization
-            modes because it is built from neither.
+            modes because both are built from the one JSON side.
         """
-        return {"type": "string"}
+        # Narrowed rather than indexed: ``CoreSchema`` is a union of TypedDicts, and only the
+        # ``json_or_python_schema`` built directly above -- the one this hook is ever handed --
+        # carries a JSON side to read.
+        return handler(cast("core_schema.JsonOrPythonSchema", schema)["json_schema"])
 
 
 type VarName = Annotated[VariableRef, _BareVariableRef()]

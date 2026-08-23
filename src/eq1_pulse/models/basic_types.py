@@ -956,9 +956,17 @@ def op_tag_of(value: Any) -> str | None:
     a JSON array. Reporting no tag for an array lets that plain union fall through to
     :class:`~.sequence.OpSequence` rather than rejecting the array as a malformed operation.
 
-    :param value: A mapping (raw input), an :class:`OpBase` instance, or anything else.
+    An operation whose payload is empty is spelled as the bare tag string -- ``"barrier"`` rather
+    than ``{"barrier": {}}`` -- by :class:`~.base_models.NestedWireModel`, and its schema publishes
+    that alternative, so a string is tagged by *being* the tag. Without this the one form the
+    serializer emits could not be selected back at any union.
+
+    :param value: A mapping or a bare tag (raw input), an :class:`OpBase` instance, or anything
+        else.
     :return: The discriminating key, or :obj:`None` if *value* carries none.
     """
+    if isinstance(value, str):
+        return value
     if isinstance(value, Mapping):
         return next(iter(value)) if len(value) == 1 else None
     if isinstance(value, OpBase):

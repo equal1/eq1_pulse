@@ -99,7 +99,7 @@ components:
               - '*'
               - /
               - '%'
-              title: Binary Op
+              title: Op
               type: string
             lhs:
               $ref: '#/components/schemas/Expression'
@@ -200,7 +200,7 @@ components:
               - '>='
               - ==
               - '!='
-              title: Compare Op
+              title: Op
               type: string
             lhs:
               $ref: '#/components/schemas/Expression'
@@ -804,7 +804,7 @@ components:
               enum:
               - and
               - or
-              title: Logical Op
+              title: Op
               type: string
             lhs:
               $ref: '#/components/schemas/Expression'
@@ -1619,7 +1619,7 @@ components:
           properties:
             op:
               const: '-'
-              title: Unary Op
+              title: Op
               type: string
             rhs:
               $ref: '#/components/schemas/Expression'
@@ -1660,7 +1660,7 @@ components:
       - $ref: '#/components/schemas/SymbolRef'
       - $ref: '#/components/schemas/Expression'
     VarName:
-      type: string
+      $ref: '#/components/schemas/IdentifierStr'
     VariableDTypeType:
       enum:
       - bool

@@ -23,7 +23,7 @@ from pydantic import (
     model_serializer,
     model_validator,
 )
-from pydantic.json_schema import JsonSchemaValue
+from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import CoreSchema, PydanticUndefinedType
 
 from .arithmetic import get_unit_value_field_name_and_type, parse_unit_suffixed_value
@@ -458,7 +458,10 @@ class NestedWireModel(LeanModel):
         source = cls._wire_tag_source_
         payload_key = cls._wire_payload_key_
         if payload_key is None:
-            return {source: cls._wire_tag_source_value(), **payload}
+            source_value = cls._wire_tag_source_value()
+            # A value that cannot be read statically is left out rather than written as None, so
+            # the field's own default applies -- which is what :meth:`_wire_tag_source_value` says.
+            return dict(payload) if source_value is None else {source: source_value, **payload}
         if payload_key not in payload:
             return dict(payload)
         return {source: payload[payload_key], **{k: v for k, v in payload.items() if k != payload_key}}
@@ -510,7 +513,9 @@ class NestedWireModel(LeanModel):
 
         if isinstance(data, str):
             if data == tag and cls._wire_payload_can_be_empty():
-                return handler({cls._wire_tag_source_: tag})
+                # Restored through the same path the object form takes: when the tag is the field
+                # *name* the tag source's value is its sole literal, not the tag itself.
+                return handler(cls._flatten_payload({}))
             return handler(data)
 
         if isinstance(data, Mapping) and len(data) == 1 and next(iter(data)) == tag:
@@ -560,7 +565,7 @@ class NestedWireModel(LeanModel):
         required = [name for name in inner.get("required", ()) if name != source]
         tag_schema = properties.pop(source, None)
         if (payload_key := cls._wire_payload_key_) is not None and tag_schema is not None:
-            properties = {payload_key: tag_schema, **properties}
+            properties = {payload_key: cls._retitled(tag_schema, source, payload_key), **properties}
             if was_required:
                 required.insert(0, payload_key)
 
@@ -579,6 +584,26 @@ class NestedWireModel(LeanModel):
         if cls._wire_payload_can_be_empty():
             return {**outer, "anyOf": [wrapped, {"const": tag, "type": "string"}]}
         return {**outer, **wrapped}
+
+    @staticmethod
+    def _retitled(tag_schema: JsonSchemaValue, source: str, payload_key: str) -> JsonSchemaValue:
+        """Re-derive the ``title`` pydantic generated for a tag source published under another key.
+
+        Pydantic titles a property after the field it was generated from, so a tag source renamed
+        to :attr:`_wire_payload_key_` would otherwise announce itself under a field name the wire
+        form does not have -- ``{"op": {"const": "-", "title": "Unary Op"}}`` -- and a client
+        generator driven off the published document would name that member after it. A title the
+        model set deliberately says something the field name does not, and is left alone.
+
+        :param tag_schema: The tag source's property schema.
+        :param source: The field that schema was generated for.
+        :param payload_key: The key it is published under instead.
+        :return: The same schema, titled after *payload_key* if the title was pydantic's own.
+        """
+        titles = GenerateJsonSchema()
+        if tag_schema.get("title") != titles.get_title_from_name(source):
+            return tag_schema
+        return {**tag_schema, "title": titles.get_title_from_name(payload_key)}
 
 
 class FrozenWrappedValueModel(WrappedValueModel):

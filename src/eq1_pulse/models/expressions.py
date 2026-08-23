@@ -310,9 +310,15 @@ def expression_tag_of(value: Any) -> str | None:
     tag. Returning :obj:`None` in both cases is load-bearing: :func:`~.pulse_types._external_param_value_tag`
     depends on it to fall through to its unit and reference branches.
 
-    :param value: A mapping (raw input) or an :class:`ExprBase` instance
+    A node whose payload is empty is spelled as the bare tag string by
+    :class:`~.base_models.NestedWireModel`, so a string naming a node key is tagged by *being* that
+    key; any other string -- a unit-suffixed quantity, a channel name -- still carries no tag.
+
+    :param value: A mapping or a bare tag (raw input), or an :class:`ExprBase` instance
     :return: The discriminating key, or :obj:`None` if *value* is neither
     """
+    if isinstance(value, str):
+        return value if value in _EXPRESSION_TAGS.values() else None
     if isinstance(value, Mapping):
         if len(value) == 1:
             key = next(iter(value))
