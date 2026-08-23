@@ -87,7 +87,7 @@ restatement of the choice.
 | **D2** | **Expression operator nodes nest; single-payload nodes stay flat.** | An operator node has an operator *and* operands, which is the same shape an operation has. `LiteralExpr` and `SymbolExpr` have exactly one field each, so nesting them would produce `{"value": {"value": ...}}` — the very redundancy D4 removes. See §3.4 for the per-node table.                                                                                                                                                     |
 | **D3** | **An empty payload serializes as the bare tag string.**             | `{"barrier": {}}` carries no information the key does not already carry. **No operation can reach this today** — all 20 have at least one required field, and `LeanModel` elides only fields equal to a *default*, never required ones. So this is a forward-looking rule, and §3.1 applies it only to classes that can statically reach an empty payload, leaving every current op's schema untouched.                                 |
 | **D4** | **A field typed exactly `VariableRef` carries the bare name.**      | `{"var": {"var": "iq"}}` is the redundancy. Applies to `Record.var`, `Trace.var`, `Iteration.var`, `Discriminate.target`/`.source`, `Store.source`, `ExternalBlock.results` values. Union positions (`Conditional.var: ValueRef`, `SymbolExpr.symbol: SymbolRef`) keep `{"var": ...}`, because there a bare string would have to be told apart from `ExternalRef` and from `ExternalParamValue`'s plain `str` member.                    |
-| **D5** | **Hard cut. The flat form is not accepted on input.**               | Accepting both would make the accepted-input shape wider than the schema describes — precisely the asymmetry `test_no_model_differs_between_validation_and_serialization_schema` exists to catch, and precisely what #10's "one wire form, in both directions" commits to. Old documents fail with a `union_tag_not_found` naming the valid keys.                                                                                       |
+| **D5** | **Hard cut. The flat form is not accepted on input.**               | Accepting both would make the accepted-input shape wider than the schema describes — precisely the asymmetry `test_no_model_differs_between_validation_and_serialization_schema` exists to catch, and precisely what #10's "one wire form, in both directions" commits to. Old documents fail with a `union_tag_not_found`. Note the error does **not** list the valid keys: for a callable discriminator pydantic says only `Unable to extract tag using discriminator op_tag_of()`. Tags are named only in `union_tag_invalid`, i.e. when a single-key object carries an unrecognised key.                                                                                       |
 | **D6** | **`op_type` stays a Python field.**                                 | `op.op_type == "play"` keeps working; the builder, `_state.py` and the tests keep their existing spellings. `OpBase` lifts the field to the outer key on the way out and puts it back on the way in. The alternative — a class-level tag registry — buys cleaner class bodies at the price of touching every construction site.                                                                                                          |
 
 ---
@@ -173,9 +173,25 @@ Four unions move from `Discriminator("op_type")` to a callable reading the sole 
 | `DiscriminableOp`            | `models/sequence.py:50`              |
 | `DiscriminableSchedulableOp` | `models/experimental/schedule.py:80` |
 
-`expression_tag_of` already is a callable; it tightens from "the first known key present" to "the
-sole key, if known". `_external_param_value_tag` in `pulse_types.py` delegates to it and needs no
-change beyond that tightening, since `pulse_type` (D1) still resolves before it.
+**A bare `Discriminator(op_tag_of)` is not implementable at these four sites**, and Task 2 found
+this the hard way. Pydantic requires every *member* of a callable-discriminated union to carry a
+`Tag`, and two of the four unions contain member unions — `DiscriminableOp` holds `ChannelOp` (10
+tags) and `DataOp` (6). The **string** discriminator recursed into those; a callable one raises
+`PydanticUserError: 'Tag' not provided for choice`.
+
+So the callable is wrapped in an annotation marker, `OperationDiscriminator`, following the repo's
+two existing precedents (`UnitDiscriminator` in `units.py`, `ReferenceDiscriminator` in
+`reference_types.py`). It walks each member's annotation, attaches one `Tag` per operation that
+member reaches, and builds `Annotated[Union[*members], Discriminator(op_tag_of)]`. A nested union
+member gets several tags all pointing at it — which is what the string discriminator produced
+before, so `ChannelOp` stays a named `$ref` in `DiscriminableOp`'s `oneOf` instead of the union
+flattening to 22 leaf refs. All of this lives in `basic_types.py` beside `OpBase`.
+
+`expression_tag_of` (Task 3) needs none of that: the `Expression` union's members are all concrete
+node classes with no nested unions, so it stays a bare callable `Discriminator`. It tightens from
+"the first known key present" to "the sole key, if known". `_external_param_value_tag` in
+`pulse_types.py` delegates to it and needs no change beyond that tightening, since `pulse_type`
+(D1) still resolves before it.
 
 ### 3.4 Expression nodes
 
@@ -265,7 +281,7 @@ plan alone accounts for. That is expected and should not be trimmed by hand.
 | Area                                                                    | Extent                                                                                                                                                                          |
 | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `models/base_models.py`                                                 | New `NestedWireModel`; `LeanModel` untouched in behaviour                                                                                                                           |
-| `models/basic_types.py`                                                 | `OpBase` gains the opt-in                                                                                                                                                           |
+| `models/basic_types.py`                                                 | `OpBase` gains the opt-in, plus `op_tag_of`, `_operation_wire_tags` and `OperationDiscriminator` (3 new exports)                                                                     |
 | `models/expressions.py`                                                 | 6 nodes opt in; `expression_tag_of` tightens                                                                                                                                        |
 | `models/{channel_ops,data_ops,sequence}.py`, `experimental/schedule.py` | 4 union discriminators                                                                                                                                                              |
 | `models/{channel_ops,control_flow,data_ops,external_block}.py`          | 7 `VarName` field sites                                                                                                                                                             |
@@ -284,8 +300,18 @@ plan alone accounts for. That is expected and should not be trimmed by hand.
    `discriminator: {propertyName: "op_type", mapping: {...}}`. OpenAPI 3.1 requires `propertyName`
    to name a *sibling* property, which the nested form does not have, so the union degrades to a
    plain `oneOf`. SDK generators still produce a union; they lose the constant-time tag dispatch
-   and fall back to trying members. Pulse and integration unions keep their `discriminator` (D1).
+   and fall back to trying members. `PulseType` keeps its `discriminator`.
+
+   **There is no integration union.** `IntegrationType` is a base class, and `Record.integration` /
+   `Trace.integration` are plain inline `FullIntegration | DemodIntegration` annotations that never
+   carried a `discriminator` keyword to begin with. D1's "integration family" is really just those
+   two inline annotations; they keep their flat `{"integration_type": "full"}` form, which is all
+   D1 asked for.
 2. **Two wire conventions coexist** — nested for operations, flat for pulses and integrations
    (D1). Anything documenting the wire format has to say so rather than state one rule.
 3. **Every stored program is invalidated** (D5). If any exist outside this repo, they need a
    one-shot converter; that converter is not part of this plan.
+4. **`FrozenLeanModel` is now dead.** `OpBase` was its only user and became
+   `NestedWireModel, FrozenModel` in Task 2. The class is still defined and exported in
+   `base_models.py` and still listed in `openapi_generator.excluded_base_classes`. Left alone
+   deliberately rather than pruned mid-flight; Task 5 may remove it.

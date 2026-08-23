@@ -67,7 +67,7 @@ Cover in tests, against throwaway models defined in the test file, not real ones
 
 ---
 
-## Task 2 — Operations nest
+## Task 2 — Operations nest — **DONE** (`2abee58`)
 
 **Plan sections:** §0, §3.1, §3.3, §5
 **Files:** `models/basic_types.py` (`OpBase`), `models/channel_ops.py`, `models/data_ops.py`,
@@ -111,7 +111,10 @@ object — check `experimental/test_schedule.py` covers that.
 2. `LiteralExpr` and `SymbolExpr` do **not** opt in. Their wire form is unchanged.
 3. Tighten `expression_tag_of` from "the first known key present" to "the sole key, if known".
    Keep it returning `None` for anything else — `_external_param_value_tag` in `pulse_types.py`
-   depends on that to fall through to the unit and reference branches.
+   depends on that to fall through to the unit and reference branches. Unlike the four operation
+   unions, `Expression` stays a **bare** `Discriminator(expression_tag_of)`: its members are all
+   concrete node classes, so it needs none of `OperationDiscriminator`'s per-member `Tag` walking.
+   See plan §3.3.
 4. Update the `expressions.py` module docstring: it currently argues the design in terms of the
    flat keys (`compare_op` / `not_op` / `logical_op` versus `unary_op` / `binary_op`). The argument
    survives verbatim — the tag is still the field name (§3.2) — but the examples must show the
