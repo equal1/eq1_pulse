@@ -26,17 +26,20 @@ from typing import (
     Literal,
     NamedTuple,
     Self,
+    TypeAliasType,
     TypedDict,
     TypeGuard,
+    Union,
     get_args,
     overload,
 )
 
 import numpy as np
-from pydantic import Field, model_validator
+from pydantic import Discriminator, Field, GetCoreSchemaHandler, Tag, model_validator
+from pydantic_core import CoreSchema
 
 from .arithmetic import get_unit_value_field_name_and_type
-from .base_models import FrozenLeanModel, FrozenModel, FrozenWrappedValueModel, LeanModel, WrappedValueModel
+from .base_models import FrozenModel, FrozenWrappedValueModel, LeanModel, NestedWireModel, WrappedValueModel
 from .complex import complex_from_tuple
 from .units import (
     ComplexMillivolts,
@@ -67,11 +70,13 @@ __all__ = (
     "LinSpace",
     "Magnitude",
     "OpBase",
+    "OperationDiscriminator",
     "Phase",
     "Range",
     "Threshold",
     "Time",
     "Voltage",
+    "op_tag_of",
 )
 
 
@@ -911,18 +916,118 @@ def dimension_tag_of(value: Any) -> str | None:
     return None
 
 
-class OpBase(FrozenLeanModel):
+class OpBase(NestedWireModel, FrozenModel):
     """Base class for all operation models.
 
     The ``op_type`` field should be a literal string representing the operation type,
-    overridden in subclasses.
+    overridden in subclasses. It names the operation rather than sitting beside its data: every
+    concrete operation's wire form is the single-key object ``{op_type: payload}`` --
+    ``{"play": {"channel": "q0_drive", "pulse": {...}}}`` -- lifted there by
+    :class:`~.base_models.NestedWireModel`, which the whole family inherits with no per-operation
+    opt-in. The Python field stays, so ``op.op_type == "play"`` and keyword construction are
+    untouched.
+
+    :class:`OpBase` itself keeps the flat form. Its ``op_type`` is not yet a single-valued literal,
+    so there is no tag to lift statically, which is exactly the "not configured" case
+    :class:`~.base_models.NestedWireModel` leaves alone -- invisible in the generated document,
+    since this class is never referenced by a union.
     """
 
     if TYPE_CHECKING:
 
         def __init__(self, *args, **kwargs): ...
 
+    _wire_tag_source_: ClassVar[str] = "op_type"
+    """The tag is this field's *value*, and is not repeated inside the payload."""
+
     op_type: Any  # str
+
+
+def op_tag_of(value: Any) -> str | None:
+    """Return the wire key that discriminates *value* as an operation, or :obj:`None`.
+
+    An operation's sole key *is* its type, so a mapping is tagged by that key and by nothing else.
+    A mapping carrying any other number of keys has no tag, and that is what makes the superseded
+    flat form -- ``{"op_type": "play", "channel": ...}`` -- fail at every union an operation can be
+    selected by, as one ``union_tag_not_found`` rather than one error per operation tried.
+
+    Returning :obj:`None` for everything else is load-bearing beyond error quality:
+    :data:`~.sequence.OpSequenceItem` is ``DiscriminableOp | OpSequence``, and a nested sequence is
+    a JSON array. Reporting no tag for an array lets that plain union fall through to
+    :class:`~.sequence.OpSequence` rather than rejecting the array as a malformed operation.
+
+    :param value: A mapping (raw input), an :class:`OpBase` instance, or anything else.
+    :return: The discriminating key, or :obj:`None` if *value* carries none.
+    """
+    if isinstance(value, Mapping):
+        return next(iter(value)) if len(value) == 1 else None
+    if isinstance(value, OpBase):
+        return type(value)._wire_tag()
+    return None
+
+
+def _operation_wire_tags(annotation: Any) -> tuple[str, ...]:
+    """The wire tags every operation reachable through *annotation* is spelled with.
+
+    An operation contributes its own tag; a union -- or an alias for one, which is how
+    :data:`~.channel_ops.ChannelOp` reaches :data:`~.sequence.DiscriminableOp` -- contributes the
+    tags of everything in it. Nothing is skipped silently: a member that is neither is a mistake
+    that would otherwise drop out of the union unnoticed.
+
+    :param annotation: An operation model, or a union of them however aliased or annotated.
+    :return: The tags, in declaration order.
+    :raises TypeError: If *annotation* is neither an operation nor a union of them, or names an
+        operation whose tag is not statically known.
+    """
+    if isinstance(annotation, TypeAliasType):
+        return _operation_wire_tags(annotation.__value__)
+    if hasattr(annotation, "__metadata__"):
+        return _operation_wire_tags(get_args(annotation)[0])
+    if isinstance(annotation, type) and issubclass(annotation, OpBase):
+        if (tag := annotation._wire_tag()) is None:
+            raise TypeError(f"{annotation.__name__} has no statically known wire tag to discriminate it by")
+        return (tag,)
+    if members := get_args(annotation):
+        return tuple(tag for member in members for tag in _operation_wire_tags(member))
+
+    raise TypeError(f"{annotation!r} is neither an operation nor a union of operations")
+
+
+class OperationDiscriminator:
+    """Annotation marker turning a union of operations into a union tagged by wire key.
+
+    Written once and applied to each union of operations::
+
+        type ChannelOp = Annotated[Play | Wait | ..., OperationDiscriminator()]
+
+    A member is tagged by the sole key its wire object carries -- the value of its ``op_type``
+    literal, which :class:`~.base_models.NestedWireModel` lifts to that key -- so a new operation
+    is tagged by declaring it, with nothing here to keep in step. A member that is itself a union
+    of operations, as :data:`~.channel_ops.ChannelOp` is inside
+    :data:`~.sequence.DiscriminableOp`, contributes one tag per operation it reaches while staying
+    one named schema, which is what :obj:`~pydantic.Discriminator`'s string form did for the same
+    nesting.
+
+    The tag function is :func:`op_tag_of`, shared by every operation union rather than rebuilt per
+    union: the tags are globally unique across operations, so there is no per-union binding to make
+    the way :class:`~.units.UnitDiscriminator` needs one.
+    """
+
+    def __get_pydantic_core_schema__(self, source_type: Any, handler: GetCoreSchemaHandler) -> CoreSchema:
+        """Build the tagged union's core schema from *source_type*'s members.
+
+        :param source_type: The union of operation models this annotates.
+        :param handler: The handler generating core schemas, reused for the rebuilt annotation.
+        :return: The core schema of the equivalent :class:`~pydantic.Discriminator`-keyed union.
+        :raises TypeError: If applied to anything but a union -- there is nothing to discriminate.
+        """
+        if not (operations := get_args(source_type)):
+            raise TypeError(f"{type(self).__name__} annotates a union of operation models, not {source_type!r}")
+
+        members = tuple(
+            Annotated[operation, Tag(tag)] for operation in operations for tag in _operation_wire_tags(operation)
+        )
+        return handler.generate_schema(Annotated[Union[*members], Discriminator(op_tag_of)])
 
 
 class _StartStopInterval(FrozenModel):

@@ -9,10 +9,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Annotated, Any, Literal, overload
 
-from pydantic import Discriminator
-
 from .base_models import LeanModel
-from .basic_types import Duration, Frequency, Magnitude, OpBase, Phase
+from .basic_types import Duration, Frequency, Magnitude, OpBase, OperationDiscriminator, Phase
 from .pulse_types import PulseType
 from .reference_types import ChannelTarget, PulseRef, VariableRef
 
@@ -351,13 +349,14 @@ class CompensateDC(ChannelOpBase):
 
 type ChannelOp = Annotated[
     Play | Wait | Barrier | SetFrequency | ShiftFrequency | SetPhase | ShiftPhase | Record | Trace | CompensateDC,
-    Discriminator("op_type"),
+    OperationDiscriminator(),
 ]
 """Channel operation type.
 
 This is a closed set of channel operations that can be used in a sequence.
-All operations have a discriminator field ``op_type`` that is used to distinguish between them.
- """
+Each one is spelled as the single-key object ``{op_type: payload}`` -- ``{"play": {...}}`` -- and
+:class:`~.basic_types.OperationDiscriminator` selects the member by that sole key.
+"""
 
 # Deferred: this module is reachable (via `pulse_types`) before `expressions` has finished defining
 # `ValueRef`, so importing it at the top would recurse back through that edge. By the time this

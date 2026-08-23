@@ -156,10 +156,10 @@ class TestRangeConversion:
 
         # Should serialize without errors
         json_data = seq.model_dump()
-        assert json_data[1]["op_type"] == "for"
-        assert json_data[1]["items"]["start"] == 0
-        assert json_data[1]["items"]["stop"] == 8
-        assert json_data[1]["items"]["step"] == 2
+        assert set(json_data[1]) == {"for"}
+        assert json_data[1]["for"]["items"]["start"] == 0
+        assert json_data[1]["for"]["items"]["stop"] == 8
+        assert json_data[1]["for"]["items"]["step"] == 2
 
     def test_non_range_iterables_unchanged(self):
         """Test that non-range iterables are not modified (though model may convert them internally)."""

@@ -126,14 +126,49 @@ def test_nested_sequences():
     serialized = outer_seq.model_dump_json()
 
     assert serialized == (
-        r'[{"op_type":"repeat","count":2,"body":'
-        + r'[{"op_type":"play","channel":"ch1","pulse":{'
-        + r'"pulse_type":"square","duration":{"ns":100},"amplitude":{"V":1.0}}}]},'
-        + r'{"op_type":"play","channel":"ch2","pulse":{'
-        + r'"pulse_type":"square","duration":{"ns":100},"amplitude":{"V":2.0}}}]'
+        r'[{"repeat":{"count":2,"body":'
+        + r'[{"play":{"channel":"ch1","pulse":{'
+        + r'"pulse_type":"square","duration":{"ns":100},"amplitude":{"V":1.0}}}}]}},'
+        + r'{"play":{"channel":"ch2","pulse":{'
+        + r'"pulse_type":"square","duration":{"ns":100},"amplitude":{"V":2.0}}}}]'
     )
     deserialized = OpSequence.model_validate_json(serialized)
     assert deserialized == outer_seq
+
+
+def test_nested_sequence_inside_a_body_still_validates():
+    """A body may hold a bare nested sequence beside operations, and the array is not mistagged.
+
+    :obj:`OpSequenceItem` is ``DiscriminableOp | OpSequence`` with no tag of its own: an operation
+    is a single-key object, a nested sequence is an array. The array reaches :class:`OpSequence`
+    only because :func:`~eq1_pulse.models.basic_types.op_tag_of` reports *no* tag for it, letting
+    the plain union fall through instead of rejecting it as a malformed operation. Checked inside a
+    body, where the enclosing operation is itself selected by tag.
+    """
+    pulse = {"pulse_type": "square", "duration": {"ns": 100}, "amplitude": {"V": 1.0}}
+    play = {"play": {"channel": "ch1", "pulse": pulse}}
+    document = [{"repeat": {"count": 2, "body": [[play], {"barrier": {"channels": ["ch1"]}}]}}]
+
+    sequence = OpSequence.model_validate(document)
+    repetition = sequence.items[0]
+    assert isinstance(repetition, Repetition)
+    assert isinstance(repetition.body.items[0], OpSequence)
+    assert isinstance(repetition.body.items[0].items[0], Play)
+    assert sequence.model_dump() == document
+
+
+def test_the_flat_operation_form_is_not_accepted():
+    """The superseded ``{"op_type": ...}`` object has no tag, so no union selects an operation for it.
+
+    One ``union_tag_not_found`` from the operation side of :obj:`OpSequenceItem`, and one
+    ``list_type`` from the sequence side -- not one error per operation.
+    """
+    pulse = {"pulse_type": "square", "duration": {"ns": 100}, "amplitude": {"V": 1.0}}
+    flat = {"op_type": "play", "channel": "ch1", "pulse": pulse}
+    with pytest.raises(ValidationError) as excinfo:
+        TypeAdapter(OpSequenceItem).validate_python(flat)
+
+    assert [error["type"] for error in excinfo.value.errors()] == ["union_tag_not_found", "list_type"]
 
 
 def test_sequence_validation():
@@ -192,15 +227,16 @@ def test_iteration_multiple_variables_construction():
 def test_iteration_multiple_variables_validation():
     iter_obj: OpSequenceItem = TypeAdapter(OpSequenceItem).validate_python(
         {
-            "op_type": "for",
-            "var": [{"var": "i"}, {"var": "j"}, {"var": "k"}, {"var": "s"}],
-            "items": [
-                [0, 1, 2],
-                {"start": 3, "stop": 5, "step": 1},
-                {"start": 10, "stop": 20, "num": 3},
-                ["a", "b", "c"],
-            ],
-            "body": [],
+            "for": {
+                "var": [{"var": "i"}, {"var": "j"}, {"var": "k"}, {"var": "s"}],
+                "items": [
+                    [0, 1, 2],
+                    {"start": 3, "stop": 5, "step": 1},
+                    {"start": 10, "stop": 20, "num": 3},
+                    ["a", "b", "c"],
+                ],
+                "body": [],
+            }
         }
     )
     assert isinstance(iter_obj, Iteration)
@@ -216,15 +252,16 @@ def test_iteration_multiple_variables_validation():
 def test_iteration_multiple_variables_validate_json():
     iter_obj: OpSequenceItem = TypeAdapter(OpSequenceItem).validate_json(
         r"""{
-            "op_type": "for",
-            "var": [{"var": "i"}, {"var": "j"}, {"var": "k"}, {"var": "s"}],
-            "items": [
-                [0, 1, 2],
-                {"start": 3, "stop": 5, "step": 1},
-                {"start": 10, "stop": 20, "num": 3},
-                ["a", "b", "c"]
-            ],
-            "body": []
+            "for": {
+                "var": [{"var": "i"}, {"var": "j"}, {"var": "k"}, {"var": "s"}],
+                "items": [
+                    [0, 1, 2],
+                    {"start": 3, "stop": 5, "step": 1},
+                    {"start": 10, "stop": 20, "num": 3},
+                    ["a", "b", "c"]
+                ],
+                "body": []
+            }
         }"""
     )
     assert isinstance(iter_obj, Iteration)
@@ -246,13 +283,13 @@ def test_iteration_multiple_variables_serialize_json():
     )
     serialized = iter_obj.model_dump_json()
     assert serialized == (
-        '{"op_type":"for",'
+        '{"for":{'
         + '"var":[{"var":"i"},{"var":"j"},{"var":"k"},{"var":"s"}],'
         + '"items":['
         + '[0,1,2],{"start":3,"stop":5,"step":1},'
         + '{"start":10,"stop":20,"num":3},'
         + '["a","b","c"]'
-        + '],"body":[]}'
+        + '],"body":[]}}'
     )
 
 

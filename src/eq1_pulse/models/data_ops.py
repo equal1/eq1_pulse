@@ -15,6 +15,7 @@ from .basic_types import (
     ComplexVoltage,
     Frequency,
     OpBase,
+    OperationDiscriminator,
     Phase,
     Threshold,
     Time,
@@ -384,13 +385,13 @@ class Store(DataOpBase):
 
 
 DataOp = Annotated[
-    VariableDecl | ParameterDecl | ExternalDecl | PulseDecl | Discriminate | Store, Discriminator("op_type")
+    VariableDecl | ParameterDecl | ExternalDecl | PulseDecl | Discriminate | Store, OperationDiscriminator()
 ]
 """Data operation type.
 
 This is a closed set of data operations that can be used in a sequence of operations.
-All data operation types have a common discriminator field `op_type` (inherited from `OpBase`)
-that is used to distinguish between them.
+Each one is spelled as the single-key object ``{op_type: payload}`` -- ``{"var_decl": {...}}`` --
+and :class:`~.basic_types.OperationDiscriminator` selects the member by that sole key.
 """
 
 # Deferred: `expressions` imports `SymbolValue` from this module, so importing it back at module

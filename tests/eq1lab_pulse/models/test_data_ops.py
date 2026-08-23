@@ -143,10 +143,7 @@ def test_store_creation(store: Store):
 
 def test_variable_decl_serialization_unchanged():
     assert VariableDecl(name="x", dtype="float", unit="mV").model_dump() == {
-        "op_type": "var_decl",
-        "name": "x",
-        "dtype": "float",
-        "unit": "mV",
+        "var_decl": {"name": "x", "dtype": "float", "unit": "mV"}
     }
 
 
@@ -154,14 +151,14 @@ def test_variable_decl_without_optional_fields():
     decl = VariableDecl(name="x", dtype="int")
     assert decl.shape is None
     assert decl.unit is None
-    assert decl.model_dump() == {"op_type": "var_decl", "name": "x", "dtype": "int"}
+    assert decl.model_dump() == {"var_decl": {"name": "x", "dtype": "int"}}
 
 
 def test_parameter_decl_without_optional_fields():
     decl = ParameterDecl(name="amp", dtype="float")
     assert decl.default is None
     assert decl.limits is None
-    assert decl.model_dump() == {"op_type": "param_decl", "name": "amp", "dtype": "float"}
+    assert decl.model_dump() == {"param_decl": {"name": "amp", "dtype": "float"}}
 
 
 def test_parameter_decl_with_optional_fields():
@@ -191,7 +188,7 @@ def test_external_decl_without_optional_fields():
     decl = ExternalDecl(name="q0.f01", dtype="float")
     assert decl.default is None
     assert decl.limits is None
-    assert decl.model_dump() == {"op_type": "extern_decl", "name": "q0.f01", "dtype": "float"}
+    assert decl.model_dump() == {"extern_decl": {"name": "q0.f01", "dtype": "float"}}
 
 
 def test_external_decl_with_optional_fields():
@@ -287,11 +284,7 @@ def test_value_limits_default_elision():
 
 
 def test_parameter_decl_limits_elided_when_none():
-    assert ParameterDecl(name="amp", dtype="float").model_dump() == {
-        "op_type": "param_decl",
-        "name": "amp",
-        "dtype": "float",
-    }
+    assert ParameterDecl(name="amp", dtype="float").model_dump() == {"param_decl": {"name": "amp", "dtype": "float"}}
 
 
 @pytest.mark.parametrize(

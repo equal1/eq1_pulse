@@ -119,17 +119,23 @@ def test_schedule_conditional_list():
         {
             "name": "if_block",
             "op": {
-                "op_type": "if",
-                "var": {"var": "x"},
-                "body": [
-                    {
-                        "op": {
-                            "op_type": "play",
-                            "channel": "chan1",
-                            "pulse": {"pulse_type": "square", "duration": {"ns": 100}, "amplitude": {"V": 1.0}},
-                        },
-                    }
-                ],
+                "if": {
+                    "var": {"var": "x"},
+                    "body": [
+                        {
+                            "op": {
+                                "play": {
+                                    "channel": "chan1",
+                                    "pulse": {
+                                        "pulse_type": "square",
+                                        "duration": {"ns": 100},
+                                        "amplitude": {"V": 1.0},
+                                    },
+                                }
+                            },
+                        }
+                    ],
+                }
             },
         },
     ]
@@ -167,9 +173,10 @@ def test_complex_json_serialization():
                     {
                         "name": "pulse0",
                         "op": {
-                            "op_type": "play",
-                            "channel": "chan1",
-                            "pulse": {"pulse_type": "square", "duration": {"ns": 100}, "amplitude": {"V": 1.0}},
+                            "play": {
+                                "channel": "chan1",
+                                "pulse": {"pulse_type": "square", "duration": {"ns": 100}, "amplitude": {"V": 1.0}},
+                            }
                         },
                     }
                 ],
@@ -177,29 +184,40 @@ def test_complex_json_serialization():
             {
                 "name": "repeat",
                 "op": {
-                    "op_type": "repeat",
-                    "count": 2,
-                    "body": [
-                        {
-                            "name": "pulse1",
-                            "op": {
-                                "op_type": "play",
-                                "channel": "chan1",
-                                "pulse": {"pulse_type": "square", "duration": {"ns": 100}, "amplitude": {"V": 1.0}},
+                    "repeat": {
+                        "count": 2,
+                        "body": [
+                            {
+                                "name": "pulse1",
+                                "op": {
+                                    "play": {
+                                        "channel": "chan1",
+                                        "pulse": {
+                                            "pulse_type": "square",
+                                            "duration": {"ns": 100},
+                                            "amplitude": {"V": 1.0},
+                                        },
+                                    }
+                                },
                             },
-                        },
-                        {
-                            "name": "pulse2",
-                            "rel_time": {"s": 0.0},
-                            "ref_op": "pulse1",
-                            "ref_pt": "start",
-                            "op": {
-                                "op_type": "play",
-                                "channel": "chan2",
-                                "pulse": {"pulse_type": "square", "duration": {"ns": 100}, "amplitude": {"V": 1.0}},
+                            {
+                                "name": "pulse2",
+                                "rel_time": {"s": 0.0},
+                                "ref_op": "pulse1",
+                                "ref_pt": "start",
+                                "op": {
+                                    "play": {
+                                        "channel": "chan2",
+                                        "pulse": {
+                                            "pulse_type": "square",
+                                            "duration": {"ns": 100},
+                                            "amplitude": {"V": 1.0},
+                                        },
+                                    }
+                                },
                             },
-                        },
-                    ],
+                        ],
+                    }
                 },
             },
         ],
@@ -245,9 +263,14 @@ def test_deep_nesting():
                             {
                                 "name": "deepest",
                                 "op": {
-                                    "op_type": "play",
-                                    "channel": "chan2",
-                                    "pulse": {"pulse_type": "square", "duration": {"ns": 100}, "amplitude": {"V": 1.0}},
+                                    "play": {
+                                        "channel": "chan2",
+                                        "pulse": {
+                                            "pulse_type": "square",
+                                            "duration": {"ns": 100},
+                                            "amplitude": {"V": 1.0},
+                                        },
+                                    }
                                 },
                             }
                         ],

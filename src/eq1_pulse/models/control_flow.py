@@ -65,7 +65,7 @@ class SequenceBase[ItemT](RootModel[list[ItemT]]):
 class RepetitionBase[BodyT](OpBase):
     """Represents an abstract repeated sequence of operations.
 
-    :ivar op_type: Operation type, always "repeat"
+    :ivar op_type: Operation type, always "repeat" -- the sole key of its wire object
     :ivar count: Number of times to repeat the sequence
     :ivar body: The sequence of operations to repeat
 
@@ -91,7 +91,7 @@ type IterableSequence = LinSpace | Range | list[str] | NumpyIterableArray
 class IterationBase[BodyT](OpBase):
     """Base class for iteration over a sequence of operations.
 
-    :ivar op_type: Operation type, always "for"
+    :ivar op_type: Operation type, always "for" -- the sole key of its wire object
     :ivar var: The variable reference for the iterated value.
     :ivar items: The linear space, range or array over which to iterate.
     :ivar body: The sequence of operations to execute in each iteration
@@ -137,7 +137,7 @@ class IterationBase[BodyT](OpBase):
 class ConditionalBase[BodyT](OpBase):
     """Base class for conditional sequence of operations.
 
-    :ivar op_type: Operation type, always "if"
+    :ivar op_type: Operation type, always "if" -- the sole key of its wire object
     :ivar var: The predicate for the condition: a symbol, a comparison, or a boolean connective.
     :ivar body: The sequence of operations to execute if the condition is met
     """

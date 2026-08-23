@@ -158,11 +158,12 @@ def test_phase_operations():
 
 def test_record_with_demod_validation():
     record_dict = {
-        "channel": "ch1",
-        "var": {"var": "result"},
-        "duration": {"s": 100e-9},
-        "integration": {"integration_type": "demod", "phase": {"deg": 45}},
-        "op_type": "record",
+        "record": {
+            "channel": "ch1",
+            "var": {"var": "result"},
+            "duration": {"s": 100e-9},
+            "integration": {"integration_type": "demod", "phase": {"deg": 45}},
+        }
     }
     record: Any = TypeAdapter(ChannelOp).validate_python(record_dict)
     assert isinstance(record, Record)
@@ -194,11 +195,12 @@ def test_trace_with_full_integration():
 
 def test_trace_with_full_integration_validation():
     trace_dict = {
-        "channel": "ch1",
-        "var": {"var": "trace_data"},
-        "duration": {"s": 1e-6},
-        "integration": {"integration_type": "full"},
-        "op_type": "trace",
+        "trace": {
+            "channel": "ch1",
+            "var": {"var": "trace_data"},
+            "duration": {"s": 1e-6},
+            "integration": {"integration_type": "full"},
+        }
     }
     trace: Any = TypeAdapter(ChannelOp).validate_python(trace_dict)
     assert isinstance(trace, Trace)

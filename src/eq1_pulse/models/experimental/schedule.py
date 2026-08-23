@@ -16,10 +16,8 @@ from collections.abc import Iterable
 from enum import StrEnum
 from typing import TYPE_CHECKING, Annotated, ClassVar, Literal, TypedDict, Unpack, overload
 
-from pydantic import Discriminator
-
 from ..base_models import FrozenModel, LeanModel
-from ..basic_types import Time
+from ..basic_types import OperationDiscriminator, Time
 from ..channel_ops import ChannelOp
 from ..control_flow import ConditionalBase, IterationBase, RepetitionBase, SequenceBase
 from ..data_ops import DataOp
@@ -78,12 +76,17 @@ class RefPt(StrEnum):
 
 
 type DiscriminableSchedulableOp = Annotated[
-    ChannelOp | DataOp | SchedRepetition | SchedIteration | SchedConditional, Discriminator("op_type")
+    ChannelOp | DataOp | SchedRepetition | SchedIteration | SchedConditional, OperationDiscriminator()
 ]
-"""Schedulable operations that can be discriminated by the "op" field."""
+"""Every schedulable operation, selected by the sole key of its ``{op_type: payload}`` wire object."""
 
 type Schedulable = DiscriminableSchedulableOp | Schedule
-"""A type representing a scheduled operation or a sub-schedule."""
+"""A scheduled operation or a sub-schedule.
+
+Told apart by JSON type, as :data:`~.sequence.OpSequenceItem`'s two members are: an operation is a
+single-key object and a sub-schedule is an array, so :func:`~.basic_types.op_tag_of` reports no tag
+for the array and this plain union falls through to :class:`Schedule`.
+"""
 
 if TYPE_CHECKING:
     type RelTimeLike = RelTime | Literal[0] | TimeDict | str

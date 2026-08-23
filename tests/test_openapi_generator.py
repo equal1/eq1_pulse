@@ -280,10 +280,13 @@ def test_variable_decl_schema_is_unchanged(generated_schemas):
     """Check that ``VariableDecl``'s schema survives its refactor onto ``SymbolDeclBase``.
 
     That base class was introduced for ``ParameterDecl``/``ExternalDecl`` to share; it must not
-    change what ``VariableDecl`` itself publishes.
+    change what ``VariableDecl`` itself publishes -- which is the nested wire object: the sole
+    ``var_decl`` key names the operation and the payload under it is the closed record of its real
+    fields, ``op_type`` no longer among them.
     """
     schema = generated_schemas["VariableDecl"]
-    assert set(schema["properties"]) == {"op_type", "dtype", "shape", "unit", "name"}
+    assert set(schema["properties"]) == {"var_decl"}
+    assert set(schema["properties"]["var_decl"]["properties"]) == {"dtype", "shape", "unit", "name"}
 
 
 def test_no_component_schema_has_an_input_output_suffix(generated_schemas):
@@ -327,7 +330,8 @@ def test_serialization_mode_schema_is_no_longer_empty():
 
     schema = Wait.model_json_schema(mode="serialization")
     assert schema["type"] == "object"
-    assert set(schema["properties"]) == set(Wait.model_fields)
+    assert set(schema["properties"]) == {"wait"}
+    assert set(schema["properties"]["wait"]["properties"]) == set(Wait.model_fields) - {"op_type"}
 
 
 def test_serialized_models_validate_against_the_generated_schema():

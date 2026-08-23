@@ -37,9 +37,7 @@ def test_pulse_types_rebuild_sweep():
 
 def test_channel_ops_rebuild_sweep():
     """Wait.duration -- channel_ops.py's own model_rebuild sweep."""
-    op: Any = TypeAdapter(ChannelOp).validate_python(
-        {"op_type": "wait", "channels": ["ch1"], "duration": _EXPR_DOCUMENT}
-    )
+    op: Any = TypeAdapter(ChannelOp).validate_python({"wait": {"channels": ["ch1"], "duration": _EXPR_DOCUMENT}})
     assert isinstance(op, Wait)
     assert isinstance(op.duration, BinaryExpr)
 
@@ -48,10 +46,11 @@ def test_data_ops_rebuild_sweep():
     """Discriminate.threshold -- data_ops.py's own model_rebuild sweep."""
     op: Any = TypeAdapter(DataOp).validate_python(
         {
-            "op_type": "discriminate",
-            "target": {"var": "result"},
-            "source": {"var": "data"},
-            "threshold": _EXPR_DOCUMENT,
+            "discriminate": {
+                "target": {"var": "result"},
+                "source": {"var": "data"},
+                "threshold": _EXPR_DOCUMENT,
+            }
         }
     )
     assert isinstance(op, Discriminate)
@@ -71,8 +70,8 @@ def test_control_flow_and_sequence_rebuild_sweep():
         "lhs": {"symbol": {"var": "x"}},
         "rhs": {"value": 1},
     }
-    rep: Any = TypeAdapter(DiscriminableOp).validate_python({"op_type": "repeat", "count": _EXPR_DOCUMENT, "body": []})
+    rep: Any = TypeAdapter(DiscriminableOp).validate_python({"repeat": {"count": _EXPR_DOCUMENT, "body": []}})
     assert isinstance(rep.count, BinaryExpr)
 
-    cond: Any = TypeAdapter(OpSequenceItem).validate_python({"op_type": "if", "var": compare_document, "body": []})
+    cond: Any = TypeAdapter(OpSequenceItem).validate_python({"if": {"var": compare_document, "body": []}})
     assert isinstance(cond.var, CompareExpr)

@@ -142,7 +142,7 @@ def test_external_block_json_round_trip():
 
 
 def test_external_block_discriminated_union_dispatch():
-    """Test that ExternalBlock dispatches correctly by op_type in DiscriminableOp."""
+    """Test that ExternalBlock dispatches correctly by its sole wire key in DiscriminableOp."""
     block = ExternalBlock(channels={"drive": "q0"}, duration=Duration(s=1e-6))
     dispatched: Any = TypeAdapter(DiscriminableOp).validate_python(block.model_dump())
     assert isinstance(dispatched, ExternalBlock)
@@ -170,7 +170,7 @@ def test_external_block_channels_accept_an_external_ref():
         duration=Duration(s=1e-6),
     )
     assert block.channels == {"drive": ExternalRef("q0.drive"), "readout": ChannelRef("q0_ro")}
-    assert block.model_dump()["channels"] == {"drive": {"ext": "q0.drive"}, "readout": "q0_ro"}
+    assert block.model_dump()["external_block"]["channels"] == {"drive": {"ext": "q0.drive"}, "readout": "q0_ro"}
     assert ExternalBlock.model_validate_json(block.model_dump_json()) == block
 
 
