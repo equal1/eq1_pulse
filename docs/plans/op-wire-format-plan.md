@@ -87,7 +87,7 @@ restatement of the choice.
 | **D2** | **Expression operator nodes nest; single-payload nodes stay flat.** | An operator node has an operator *and* operands, which is the same shape an operation has. `LiteralExpr` and `SymbolExpr` have exactly one field each, so nesting them would produce `{"value": {"value": ...}}` — the very redundancy D4 removes. See §3.4 for the per-node table.                                                                                                                                                     |
 | **D3** | **An empty payload serializes as the bare tag string.**             | `{"barrier": {}}` carries no information the key does not already carry. **No operation can reach this today** — all 20 have at least one required field, and `LeanModel` elides only fields equal to a *default*, never required ones. So this is a forward-looking rule, and §3.1 applies it only to classes that can statically reach an empty payload, leaving every current op's schema untouched.                                 |
 | **D4** | **A field typed exactly `VariableRef` carries the bare name.**      | `{"var": {"var": "iq"}}` is the redundancy. Applies to `Record.var`, `Trace.var`, `Iteration.var`, `Discriminate.target`/`.source`, `Store.source`, `ExternalBlock.results` values. Union positions (`Conditional.var: ValueRef`, `SymbolExpr.symbol: SymbolRef`) keep `{"var": ...}`, because there a bare string would have to be told apart from `ExternalRef` and from `ExternalParamValue`'s plain `str` member.                    |
-| **D5** | **Hard cut. The flat form is not accepted on input.**               | Accepting both would make the accepted-input shape wider than the schema describes — precisely the asymmetry `test_no_model_differs_between_validation_and_serialization_schema` exists to catch, and precisely what #10's "one wire form, in both directions" commits to. Old documents fail with a `union_tag_not_found`. Note the error does **not** list the valid keys: for a callable discriminator pydantic says only `Unable to extract tag using discriminator op_tag_of()`. Tags are named only in `union_tag_invalid`, i.e. when a single-key object carries an unrecognised key.                                                                                       |
+| **D5** | **Hard cut. The flat form is not accepted on input.**               | Accepting both would make the accepted-input shape wider than the schema describes — precisely the asymmetry `test_no_model_differs_between_validation_and_serialization_schema` exists to catch, and precisely what #10's "one wire form, in both directions" commits to. Old documents fail with a `union_tag_not_found`. Note the error does **not** list the valid keys: for a callable discriminator pydantic says only `Unable to extract tag using discriminator op_tag_of()`. Tags are named only in `union_tag_invalid`, i.e. when a single-key object carries an unrecognised key. **Settled narrower than written:** the cut is enforced by the four §3.3 *union sites*, not by the models. A bare `Play.model_validate({"op_type": ...})` still succeeds. Accepted deliberately — see §3.1 fact 1. |
 | **D6** | **`op_type` stays a Python field.**                                 | `op.op_type == "play"` keeps working; the builder, `_state.py` and the tests keep their existing spellings. `OpBase` lifts the field to the outer key on the way out and puts it back on the way in. The alternative — a class-level tag registry — buys cleaner class bodies at the price of touching every construction site.                                                                                                          |
 
 ---
@@ -145,8 +145,22 @@ Three further facts established by building it, each of which changes what a lat
    keep working. The validator therefore passes anything that is not the nested form through
    untouched, and **D5 rejection lands entirely on the §3.3 union discriminators**, which is where
    §2's `union_tag_not_found` rationale already put it. Task 2 must not try to tighten the model
-   validator. Consequence to accept: `Play.model_validate_json('{"op_type": "play", …}')` still
-   succeeds. Every union site rejects it; a direct single-model validate does not.
+   validator. Consequence: `Play.model_validate_json('{"op_type": "play", …}')` still succeeds.
+   Every union site rejects it; a direct single-model validate does not.
+
+   **This narrowing is accepted, not outstanding.** A "union site" is a field or alias annotated
+   with a discriminated union of operations — `ChannelOp`, `DataOp`, `DiscriminableOp`
+   (→ `OpSequenceItem` → `OpSequence.root`, and so every `body`), and `DiscriminableSchedulableOp`
+   (→ `ScheduledOperation.op`). A program *is* an `OpSequence` or a `Schedule`, so every realistic
+   load path passes through one; the unguarded path is validating a bare operation object on its
+   own, which is not an artifact anyone stores.
+
+   Closing it further is not possible while D6 holds. A `ValidationInfo.mode == "json"` check would
+   reject the flat form from `model_validate_json`, but `json.loads(s)` followed by
+   `model_validate(...)` — the common idiom — arrives in `python` mode, indistinguishable from
+   `Play(**kwargs)`. So the extra strictness would buy a partial guarantee at the price of
+   `model_validate(json.loads(s))` and `model_validate_json(s)` disagreeing on the same bytes,
+   which is a worse thing to explain than the narrowing.
 2. **`model_dump()`'s declared return type is `dict[str, Any]`, and D3's bare-tag form returns
    `str`.** No current op can reach an empty payload, so nothing hits this today, but a future
    empty-capable class will need its callers to widen the annotation.
@@ -330,8 +344,8 @@ plan alone accounts for. That is expected and should not be trimmed by hand.
    D1 asked for.
 2. **Two wire conventions coexist** — nested for operations, flat for pulses and integrations
    (D1). Anything documenting the wire format has to say so rather than state one rule.
-3. **Every stored program is invalidated** (D5). If any exist outside this repo, they need a
-   one-shot converter; that converter is not part of this plan.
+3. **Every stored program is invalidated** (D5) — but there are no client-held stored programs, so
+   no migration and no one-shot converter is needed. Confirmed with the maintainer, 2026-08-23.
 4. **`FrozenLeanModel` is now dead.** `OpBase` was its only user and became
    `NestedWireModel, FrozenModel` in Task 2. The class is still defined and exported in
    `base_models.py` and still listed in `openapi_generator.excluded_base_classes`. Left alone

@@ -173,9 +173,16 @@ needs no change, but confirm it, because `results` is one of the seven sites.
 2. Confirm §6.1: operation unions now carry a plain `oneOf` with no `discriminator` keyword, while
    `PulseType` and the integration union keep theirs. Record that in the plan's §6 if it turns out
    differently.
-3. Run every file in `examples/` and update the wire dumps quoted in the three `.rst` files from
-   actual output, not by hand-editing the old text.
-4. Add a short "wire format" section to `builder_guide.rst` stating both conventions (§6.2) —
+3. **`examples/*.py` need no source edits** — every one builds through the builder API, and no
+   example file contains a flat-form literal (verified by grep). But nine of them *print* wire
+   output via `model_dump`/`model_dump_json`: `builder_example`, `calibrated_rabi`,
+   `discriminate_example`, `expression_ramsey`, `measure_if_example`, `pulse_shapes_example`,
+   `spin_qubit_rabi`, `spin_qubit_t2star`, `zipped_iteration_example`. Run each and eyeball that
+   the printed form is nested.
+4. Regenerate the wire dumps quoted in the three `.rst` files **from that actual output** — do not
+   hand-edit the old text. They hold 27 `op_type` occurrences between them:
+   `examples/basic_usage.rst` (14), `user_guide/builder_guide.rst` (10), `examples/index.rst` (3).
+5. Add a short "wire format" section to `builder_guide.rst` stating both conventions (§6.2) —
    nested for operations, flat for pulses and integrations — so the asymmetry is documented rather
    than discovered.
 
