@@ -1,7 +1,7 @@
 # Plan: nested operation wire format
 
-**Status:** in flight — all eight framing questions closed (§2); Task 1 landed (`9cd1a68`,
-`51dd72b`) and §3.1/§3.2 below are corrected to the API as built
+**Status:** in flight — all eight framing questions closed (§2). Tasks 1–3 landed; §3.1–§3.4
+below are corrected to the API as built. Tasks 4–5 outstanding.
 **Date:** 2026-08-23
 **Predecessors:** builds directly on the `{tag: value}` reference forms established by
 [#10](https://github.com/equal1/eq1_pulse/issues/10) and on the expression nodes added by
@@ -210,6 +210,27 @@ node classes with no nested unions, so it stays a bare callable `Discriminator`.
 like its siblings, but its operator has one possible value and so is dropped rather than repeated.
 `_wire_tag_source_value()` recovers it on the way back in, from the field's sole `Literal`
 argument — never from the tag, which for the name rule is the field name and not a valid value.
+
+**A pydantic-core defect makes this the hazardous task**, and any future self-referential
+`NestedWireModel` will hit it too. When a model carrying a `@model_serializer(mode="wrap")` is
+*both* self-referential and reached through another model's field, pydantic-core (2.13.4) invokes
+the serializer **twice on the same instance**, the second time over the first's output — upstream
+[pydantic#11812](https://github.com/pydantic/pydantic/issues/11812) and
+[pydantic#11563](https://github.com/pydantic/pydantic/issues/11563). It reproduces in six lines of
+plain pydantic with no eq1_pulse code involved.
+
+`Expression` has exactly that shape: `BinaryExpr.lhs: Expression` resolves straight back into
+`BinaryExpr`, with no `RootModel` layer breaking the cycle the way `OpSequence` does for
+operations — which is why Task 2 never saw it. Left unguarded it is silent wrong output, not a
+crash: `{"unary_op": {"op": {"op": "-", …}}}` for a node that keeps its operator, and an empty
+`{"not_op": {}}` for one that drops it.
+
+`NestedWireModel._wrap_serializer` therefore carries a re-entrancy guard — a `ContextVar` holding
+the ids of instances currently mid-serialize; the spurious re-entrant call passes straight through
+to the plain field dump. Legitimate recursion into *distinct* nodes is untouched (different ids),
+and a shared subtree appearing twice is unaffected (the calls are sequential, not nested).
+`test_pydantic_still_double_invokes_a_recursive_wrap_serializer` asserts the defect is still there:
+**that test failing is good news** and means the guard can be deleted.
 
 `MAX_EXPRESSION_DEPTH` stays at 32. It caps *Python* nesting, which `_expression_depth` measures
 and which does not change; the serialized JSON gains one level per operator node, so a maximal tree

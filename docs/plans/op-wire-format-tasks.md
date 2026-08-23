@@ -98,7 +98,7 @@ object — check `experimental/test_schedule.py` covers that.
 
 ---
 
-## Task 3 — Expression operator nodes nest
+## Task 3 — Expression operator nodes nest — **DONE** (`665537f`, `4957350`)
 
 **Plan sections:** §3.2, §3.4
 **Files:** `models/expressions.py`, `models/pulse_types.py`, `tests/eq1lab_pulse/models/test_expressions.py`,
@@ -144,7 +144,10 @@ editing the builder, stop and re-read §3.4.
 3. `VariableRef` itself is untouched — `SymbolRef`, `ValueRef`, `ExternalParamValue` and
    `SymbolExpr.symbol` all keep `{"var": ...}`. Add a test asserting exactly that split, because it
    is the part a later reader will assume is an oversight.
-4. Update the `reference_types.py` module docstring. It currently says `ChannelRef` is *the* bare
+4. Check for flat-form document literals beyond the files named above — Task 3 found
+   `tests/eq1lab_pulse/models/test_valueref_rebuild_sweep.py` embedded some that its own file list
+   had missed. `grep -rn '"var":' tests/` before you declare done.
+5. Update the `reference_types.py` module docstring. It currently says `ChannelRef` is *the* bare
    reference, carved out on #10. That is no longer the whole story: `VariableRef` is bare in
    var-typed fields and tagged in union positions, and the docstring must say why (a union position
    has to tell it from `ExternalRef` and from `ExternalParamValue`'s plain `str`).
