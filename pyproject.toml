@@ -136,8 +136,10 @@ pythonpath = "src"
 # directories (e.g. test_builder.py under tests/ and tests/experimental/); the tree has
 # no __init__.py files, so the default "prepend" import mode cannot tell them apart.
 # The --cov option is used to generate a coverage report for the src directory.
-# We minimize the output for token saving.
-addopts = "-q --cov=src --import-mode=importlib --no-header --no-summary --tb=short --disable-warnings"
+# We minimize the output for token saving -- but never at the cost of diagnosability:
+# --no-summary is deliberately absent, because it suppresses the FAILURES section (so a failing
+# test prints only "F"), the short test summary, and the coverage report --cov exists to produce.
+addopts = "-q --cov=src --import-mode=importlib --no-header --tb=short --disable-warnings"
 testpaths = ["tests"]
 log_cli = false
 log_cli_level = "DEBUG"

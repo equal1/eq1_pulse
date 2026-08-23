@@ -132,7 +132,7 @@ A sequence contains an ordered list of operations.
           "stop": 100,
           "num": 50
         },
-        "body": { /*...*/ }
+        "body": [ /*...*/ ]
       }
     }
 
