@@ -1,5 +1,7 @@
 """Unit tests for the _validate_or_pass_through helper function in builder.core."""
 
+import re
+
 import pytest
 
 from eq1_pulse.builder._expressions import expr
@@ -267,7 +269,7 @@ class TestValidateOrPassThrough:
 
         with build_sequence():
             ext_ref = ExternalRef(ext="q0.f01")
-            with pytest.raises(RuntimeError, match="External symbol 'q0.f01' has not been declared"):
+            with pytest.raises(RuntimeError, match=re.escape("External symbol 'q0.f01' has not been declared")):
                 _validate_or_pass_through(ext_ref, param_name="test", context="test()")
 
     def test_dict_with_ext_key_declared(self):
@@ -286,7 +288,7 @@ class TestValidateOrPassThrough:
         from eq1_pulse.builder import build_sequence
 
         with build_sequence():
-            with pytest.raises(RuntimeError, match="External symbol 'q0.f01' has not been declared"):
+            with pytest.raises(RuntimeError, match=re.escape("External symbol 'q0.f01' has not been declared")):
                 _validate_or_pass_through({"ext": "q0.f01"}, param_name="test", context="test()")
 
     def test_identifier_like_string_never_promoted_to_external_ref(self):
@@ -321,7 +323,7 @@ class TestValidateExplicitVariableRef:
 
         with build_sequence():
             ext_ref = ExternalRef(ext="q0.f01")
-            with pytest.raises(RuntimeError, match="External symbol 'q0.f01' has not been declared"):
+            with pytest.raises(RuntimeError, match=re.escape("External symbol 'q0.f01' has not been declared")):
                 _validate_explicit_variable_ref(ext_ref, param_name="test")
 
     def test_dict_with_ext_key_declared(self):

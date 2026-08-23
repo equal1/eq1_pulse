@@ -6,6 +6,7 @@ unhashable). :class:`TestExprWiredIntoBuilders` at the end covers task 4: builde
 accepting ``Expr``/``Expression`` and checking their leaves.
 """
 
+import re
 from collections.abc import Iterator
 
 import pytest
@@ -271,7 +272,7 @@ class TestExprWiredIntoBuilders:
         # RuntimeError below is verifiably the leaf walker's, not ext()'s.
         undeclared = expr(SymbolExpr(symbol=ExternalRef(ext="q0.f01")))
         with build_sequence():
-            with pytest.raises(RuntimeError, match="External symbol 'q0.f01' has not been declared"):
+            with pytest.raises(RuntimeError, match=re.escape("External symbol 'q0.f01' has not been declared")):
                 wait("ch1", duration=undeclared)
 
     def test_undeclared_leaf_three_levels_deep_raises(self):

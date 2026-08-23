@@ -1,5 +1,7 @@
 """Tests for the builder interface."""
 
+import re
+
 import pytest
 
 from eq1_pulse.builder import (
@@ -527,7 +529,7 @@ class TestParamAndExternDecl:
     def test_ext_on_undeclared_symbol_raises(self):
         """Using ext() on an undeclared external symbol raises RuntimeError."""
         with build_sequence():
-            with pytest.raises(RuntimeError, match="External symbol 'q0.f01' has not been declared"):
+            with pytest.raises(RuntimeError, match=re.escape("External symbol 'q0.f01' has not been declared")):
                 ext("q0.f01")
 
 
