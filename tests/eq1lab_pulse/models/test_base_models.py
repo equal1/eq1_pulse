@@ -45,9 +45,25 @@ class TaggedByName(NestedWireModel):
     """
 
     _wire_tag_source_: ClassVar[str] = "unary_op"
+    _wire_tag_from_: ClassVar[Literal["value", "name"]] = "name"
     _wire_payload_key_: ClassVar[str | None] = "op"
 
     unary_op: Literal["-", "+"]
+    rhs: int
+
+
+class TaggedByNameDropped(NestedWireModel):
+    """Tagged by *name*, with a single-valued operator dropped from the payload.
+
+    The shape ``NotExpr`` needs: only the field name tells the node apart, and its one
+    possible value carries nothing the name does not already carry, so repeating it inside
+    would be the redundancy this wire format exists to remove.
+    """
+
+    _wire_tag_source_: ClassVar[str] = "not_op"
+    _wire_tag_from_: ClassVar[Literal["value", "name"]] = "name"
+
+    not_op: Literal["not"]
     rhs: int
 
 
@@ -96,6 +112,20 @@ def test_tag_is_the_field_value_when_no_payload_key_is_set():
 def test_tag_is_the_field_name_when_a_payload_key_is_set():
     """``_wire_payload_key_ = "op"`` puts the field *name* at the key and its value under ``op``."""
     assert TaggedByName(unary_op="-", rhs=3).model_dump() == {"unary_op": {"op": "-", "rhs": 3}}
+
+
+def test_tag_from_name_can_drop_a_single_valued_operator():
+    """The two knobs are orthogonal: tag from the name, and still drop the value."""
+    assert TaggedByNameDropped(not_op="not", rhs=3).model_dump() == {"not_op": {"rhs": 3}}
+
+
+def test_tag_from_name_with_a_dropped_value_round_trips():
+    """The dropped operator is recovered from the field's sole literal, not from the tag."""
+    document = {"not_op": {"rhs": 3}}
+    restored = TaggedByNameDropped.model_validate(document)
+    assert restored.not_op == "not"
+    assert restored.rhs == 3
+    assert restored.model_dump() == document
 
 
 def test_payload_key_comes_first_in_the_payload():

@@ -316,20 +316,30 @@ class NestedWireModel(LeanModel):
     abstract base whose ``op_type`` is not yet a concrete literal does -- behaves exactly like
     :class:`LeanModel`, in both directions and in both schema modes.
 
-    Two tagging rules are supported, chosen by :attr:`_wire_payload_key_`:
+    Two independent knobs configure the wire form, and they are orthogonal on purpose -- where the
+    tag comes from and whether the tag source survives into the payload are separate questions, and
+    every combination of them is wanted by some model:
 
-    ``_wire_payload_key_ = None``
-        The tag is the tag-source field's **value**, and it is not repeated inside the payload.
-        The field must be annotated with a single-valued :obj:`~typing.Literal` string, which is
-        what makes the tag statically known -- the JSON schema has to *name* the key, so a tag
-        that only exists at runtime is no use. Operations use this rule: ``op_type:
-        Literal["play"]`` gives ``{"play": {...}}``.
+    :attr:`_wire_tag_from_` -- where the tag comes from
+        ``"value"`` takes the tag from the tag-source field's **value**. The field must be
+        annotated with a single-valued :obj:`~typing.Literal` string, which is what makes the tag
+        statically known -- the JSON schema has to *name* the key, so a tag that only exists at
+        runtime is no use. Operations use this: ``op_type: Literal["play"]`` gives
+        ``{"play": {...}}``.
 
-    ``_wire_payload_key_ = "op"``
-        The tag is the tag-source field's **name**, and its value is kept inside the payload under
-        that key. Expression operator nodes use this rule: ``unary_op: Literal["-", "+"]`` gives
-        ``{"unary_op": {"op": "-", "rhs": ...}}``, because operator *values* overlap between node
-        types -- ``"-"`` is both unary and binary -- so only the field name tells them apart.
+        ``"name"`` takes the tag from the field's **name**. Expression nodes use this, because
+        operator *values* overlap between node types -- ``"-"`` is both unary and binary -- so only
+        the field name tells them apart.
+
+    :attr:`_wire_payload_key_` -- whether the tag source's value is kept
+        :obj:`None` drops it; a string keeps it under that key. Dropping is right when the value
+        carries nothing the tag does not already carry, which is the case for a single-valued
+        operator: ``not_op: Literal["not"]`` with ``_wire_tag_from_ = "name"`` gives
+        ``{"not_op": {"rhs": ...}}``, not a redundant ``{"op": "not"}`` inside it.
+
+    So ``unary_op: Literal["-"]`` with ``_wire_tag_from_ = "name"`` and
+    ``_wire_payload_key_ = "op"`` gives ``{"unary_op": {"op": "-", "rhs": ...}}``, while the same
+    field with ``_wire_tag_from_ = "value"`` would give ``{"-": {"rhs": ...}}``.
 
     An empty payload serializes as the bare tag string, ``"barrier"`` rather than
     ``{"barrier": {}}``: the object carries nothing the key does not already carry. That form is
@@ -351,11 +361,14 @@ class NestedWireModel(LeanModel):
     _wire_tag_source_: ClassVar[str] = ""
     """The field the tag is read from. Empty means "not configured", and the model stays flat."""
 
+    _wire_tag_from_: ClassVar[Literal["value", "name"]] = "value"
+    """Whether the tag is the tag-source field's value or its name. See the class docstring."""
+
     _wire_payload_key_: ClassVar[str | None] = None
     """The inner key the tag source's value is kept under, or :obj:`None` to drop it from the payload.
 
-    :obj:`None` also selects the tagging rule: the tag is then the field's *value* rather than its
-    *name*. See the class docstring.
+    Independent of :attr:`_wire_tag_from_`: a node may take its tag from the field name and still
+    drop the value, which is what a single-valued operator wants. See the class docstring.
     """
 
     @classmethod
@@ -369,7 +382,7 @@ class NestedWireModel(LeanModel):
         source = cls._wire_tag_source_
         if not source or source not in cls.model_fields:
             return None
-        if cls._wire_payload_key_ is not None:
+        if cls._wire_tag_from_ == "name":
             return source
 
         lit: Any = cls.model_fields[source].annotation
@@ -395,6 +408,28 @@ class NestedWireModel(LeanModel):
         return all(not field.is_required() for name, field in cls.model_fields.items() if name != source)
 
     @classmethod
+    @cache
+    def _wire_tag_source_value(cls) -> Any:
+        """The value the tag-source field takes, for a payload that does not carry it.
+
+        When the tag *is* that value (:attr:`_wire_tag_from_` ``== "value"``) the tag is the
+        answer. When the tag is the field's *name* instead, the value was dropped from the payload
+        as redundant, and it is recovered from the field's sole :obj:`~typing.Literal` argument --
+        which is the only case in which dropping it is legitimate, since a field with more than one
+        possible value carries information the tag does not.
+
+        :return: The value to restore the tag-source field to, or :obj:`None` if it cannot be read
+            statically, in which case validation falls back to whatever default the field declares.
+        """
+        if cls._wire_tag_from_ == "value":
+            return cls._wire_tag()
+
+        lit: Any = cls.model_fields[cls._wire_tag_source_].annotation
+        if isinstance(lit, type(Literal[Any])) and len(args := get_args(lit)) == 1:
+            return args[0]
+        return None
+
+    @classmethod
     def _flatten_payload(cls, payload: Mapping[str, Any]) -> dict[str, Any]:
         """Turn a wire payload into the flat field mapping pydantic already knows how to validate.
 
@@ -404,7 +439,7 @@ class NestedWireModel(LeanModel):
         source = cls._wire_tag_source_
         payload_key = cls._wire_payload_key_
         if payload_key is None:
-            return {source: cls._wire_tag(), **payload}
+            return {source: cls._wire_tag_source_value(), **payload}
         if payload_key not in payload:
             return dict(payload)
         return {source: payload[payload_key], **{k: v for k, v in payload.items() if k != payload_key}}
