@@ -216,40 +216,6 @@
         "title": "CallExpr",
         "type": "object"
       },
-      "ChannelOp": {
-        "oneOf": [
-          {
-            "$ref": "#/components/schemas/Play"
-          },
-          {
-            "$ref": "#/components/schemas/Wait"
-          },
-          {
-            "$ref": "#/components/schemas/Barrier"
-          },
-          {
-            "$ref": "#/components/schemas/SetFrequency"
-          },
-          {
-            "$ref": "#/components/schemas/ShiftFrequency"
-          },
-          {
-            "$ref": "#/components/schemas/SetPhase"
-          },
-          {
-            "$ref": "#/components/schemas/ShiftPhase"
-          },
-          {
-            "$ref": "#/components/schemas/Record"
-          },
-          {
-            "$ref": "#/components/schemas/Trace"
-          },
-          {
-            "$ref": "#/components/schemas/CompensateDC"
-          }
-        ]
-      },
       "ChannelOpBase": {
         "additionalProperties": false,
         "description": "Base class for operations involving a single channel.",
@@ -631,29 +597,52 @@
       "DiscriminableOp": {
         "oneOf": [
           {
-            "$ref": "#/components/schemas/ChannelOp"
+            "$ref": "#/components/schemas/Play"
           },
           {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/VariableDecl"
-              },
-              {
-                "$ref": "#/components/schemas/ParameterDecl"
-              },
-              {
-                "$ref": "#/components/schemas/ExternalDecl"
-              },
-              {
-                "$ref": "#/components/schemas/PulseDecl"
-              },
-              {
-                "$ref": "#/components/schemas/Discriminate"
-              },
-              {
-                "$ref": "#/components/schemas/Store"
-              }
-            ]
+            "$ref": "#/components/schemas/Wait"
+          },
+          {
+            "$ref": "#/components/schemas/Barrier"
+          },
+          {
+            "$ref": "#/components/schemas/SetFrequency"
+          },
+          {
+            "$ref": "#/components/schemas/ShiftFrequency"
+          },
+          {
+            "$ref": "#/components/schemas/SetPhase"
+          },
+          {
+            "$ref": "#/components/schemas/ShiftPhase"
+          },
+          {
+            "$ref": "#/components/schemas/Record"
+          },
+          {
+            "$ref": "#/components/schemas/Trace"
+          },
+          {
+            "$ref": "#/components/schemas/CompensateDC"
+          },
+          {
+            "$ref": "#/components/schemas/VariableDecl"
+          },
+          {
+            "$ref": "#/components/schemas/ParameterDecl"
+          },
+          {
+            "$ref": "#/components/schemas/ExternalDecl"
+          },
+          {
+            "$ref": "#/components/schemas/PulseDecl"
+          },
+          {
+            "$ref": "#/components/schemas/Discriminate"
+          },
+          {
+            "$ref": "#/components/schemas/Store"
           },
           {
             "$ref": "#/components/schemas/ExternalBlock"
@@ -672,29 +661,52 @@
       "DiscriminableSchedulableOp": {
         "oneOf": [
           {
-            "$ref": "#/components/schemas/ChannelOp"
+            "$ref": "#/components/schemas/Play"
           },
           {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/VariableDecl"
-              },
-              {
-                "$ref": "#/components/schemas/ParameterDecl"
-              },
-              {
-                "$ref": "#/components/schemas/ExternalDecl"
-              },
-              {
-                "$ref": "#/components/schemas/PulseDecl"
-              },
-              {
-                "$ref": "#/components/schemas/Discriminate"
-              },
-              {
-                "$ref": "#/components/schemas/Store"
-              }
-            ]
+            "$ref": "#/components/schemas/Wait"
+          },
+          {
+            "$ref": "#/components/schemas/Barrier"
+          },
+          {
+            "$ref": "#/components/schemas/SetFrequency"
+          },
+          {
+            "$ref": "#/components/schemas/ShiftFrequency"
+          },
+          {
+            "$ref": "#/components/schemas/SetPhase"
+          },
+          {
+            "$ref": "#/components/schemas/ShiftPhase"
+          },
+          {
+            "$ref": "#/components/schemas/Record"
+          },
+          {
+            "$ref": "#/components/schemas/Trace"
+          },
+          {
+            "$ref": "#/components/schemas/CompensateDC"
+          },
+          {
+            "$ref": "#/components/schemas/VariableDecl"
+          },
+          {
+            "$ref": "#/components/schemas/ParameterDecl"
+          },
+          {
+            "$ref": "#/components/schemas/ExternalDecl"
+          },
+          {
+            "$ref": "#/components/schemas/PulseDecl"
+          },
+          {
+            "$ref": "#/components/schemas/Discriminate"
+          },
+          {
+            "$ref": "#/components/schemas/Store"
           },
           {
             "$ref": "#/components/schemas/SchedRepetition"

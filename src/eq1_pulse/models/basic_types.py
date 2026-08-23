@@ -974,29 +974,36 @@ def op_tag_of(value: Any) -> str | None:
     return None
 
 
-def _operation_wire_tags(annotation: Any) -> tuple[str, ...]:
-    """The wire tags every operation reachable through *annotation* is spelled with.
+def _operation_wire_leaves(annotation: Any) -> tuple[tuple[type[OpBase], str], ...]:
+    """The ``(model, tag)`` pairs every operation reachable through *annotation* bottoms out at.
 
-    An operation contributes its own tag; a union -- or an alias for one, which is how
-    :data:`~.channel_ops.ChannelOp` reaches :data:`~.sequence.DiscriminableOp` -- contributes the
-    tags of everything in it. Nothing is skipped silently: a member that is neither is a mistake
-    that would otherwise drop out of the union unnoticed.
+    An operation contributes itself, paired with its own tag; a union -- or an alias for one,
+    which is how :data:`~.channel_ops.ChannelOp` reaches :data:`~.sequence.DiscriminableOp` --
+    contributes the pairs of everything in it. Nothing is skipped silently: a member that is
+    neither is a mistake that would otherwise drop out of the union unnoticed.
+
+    Pairing tags with the *leaf* model rather than the (possibly nested-union) annotation they
+    were reached through is what lets :class:`OperationDiscriminator` build one schema per
+    operation regardless of how many discriminated unions embed it: nesting
+    :data:`~.channel_ops.ChannelOp` inside :data:`~.sequence.DiscriminableOp` would otherwise ask
+    pydantic-core to build all of :data:`~.channel_ops.ChannelOp`'s schema once per tag it
+    reaches, one full duplicate per sibling operation.
 
     :param annotation: An operation model, or a union of them however aliased or annotated.
-    :return: The tags, in declaration order.
+    :return: The pairs, in declaration order.
     :raises TypeError: If *annotation* is neither an operation nor a union of them, or names an
         operation whose tag is not statically known.
     """
     if isinstance(annotation, TypeAliasType):
-        return _operation_wire_tags(annotation.__value__)
+        return _operation_wire_leaves(annotation.__value__)
     if hasattr(annotation, "__metadata__"):
-        return _operation_wire_tags(get_args(annotation)[0])
+        return _operation_wire_leaves(get_args(annotation)[0])
     if isinstance(annotation, type) and issubclass(annotation, OpBase):
         if (tag := annotation._wire_tag()) is None:
             raise TypeError(f"{annotation.__name__} has no statically known wire tag to discriminate it by")
-        return (tag,)
+        return ((annotation, tag),)
     if members := get_args(annotation):
-        return tuple(tag for member in members for tag in _operation_wire_tags(member))
+        return tuple(pair for member in members for pair in _operation_wire_leaves(member))
 
     raise TypeError(f"{annotation!r} is neither an operation nor a union of operations")
 
@@ -1011,10 +1018,11 @@ class OperationDiscriminator:
     A member is tagged by the sole key its wire object carries -- the value of its ``op_type``
     literal, which :class:`~.base_models.NestedWireModel` lifts to that key -- so a new operation
     is tagged by declaring it, with nothing here to keep in step. A member that is itself a union
-    of operations, as :data:`~.channel_ops.ChannelOp` is inside
-    :data:`~.sequence.DiscriminableOp`, contributes one tag per operation it reaches while staying
-    one named schema, which is what :obj:`~pydantic.Discriminator`'s string form did for the same
-    nesting.
+    of operations, as :data:`~.channel_ops.ChannelOp` is inside :data:`~.sequence.DiscriminableOp`,
+    contributes one tag per operation it reaches while each operation still gets exactly one schema
+    built for it -- tags are collected down to their leaf models before any schema is built, so an
+    operation embedded through two unions (or listed twice by mistake) is not built twice -- which
+    is what :obj:`~pydantic.Discriminator`'s string form did for the same nesting.
 
     The tag function is :func:`op_tag_of`, shared by every operation union rather than rebuilt per
     union: the tags are globally unique across operations, so there is no per-union binding to make
@@ -1032,9 +1040,10 @@ class OperationDiscriminator:
         if not (operations := get_args(source_type)):
             raise TypeError(f"{type(self).__name__} annotates a union of operation models, not {source_type!r}")
 
-        members = tuple(
-            Annotated[operation, Tag(tag)] for operation in operations for tag in _operation_wire_tags(operation)
-        )
+        # Deduplicated by leaf model: two embedding sites (or a member repeated by mistake) reaching
+        # the same operation must not ask pydantic-core to build its schema twice under two tags.
+        leaves = dict.fromkeys(pair for operation in operations for pair in _operation_wire_leaves(operation))
+        members = tuple(Annotated[model, Tag(tag)] for model, tag in leaves)
         return handler.generate_schema(Annotated[Union[*members], Discriminator(op_tag_of)])
 
 

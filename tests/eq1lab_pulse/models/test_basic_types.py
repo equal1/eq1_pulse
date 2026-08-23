@@ -2151,3 +2151,43 @@ def test_a_bare_operation_tag_is_selected_at_an_operation_union():
     document = ["sync", {"halt": {"reason": "done"}}]
     assert adapter.validate_python(document) == [Sync(), Halt(reason="done")]
     assert adapter.dump_python([Sync(), Halt(reason="done")]) == document
+
+
+def test_a_nested_operation_union_builds_one_schema_per_leaf_operation():
+    """A sub-union embedded in an outer union is flattened to its leaf operations, not duplicated.
+
+    :data:`~eq1_pulse.models.sequence.DiscriminableOp` embeds
+    :data:`~eq1_pulse.models.channel_ops.ChannelOp` -- itself an :class:`OperationDiscriminator`
+    union -- as one member among several. Before the schema is built each member is expanded down
+    to ``(model, tag)`` pairs and deduplicated by *model*, so ``ChannelOp``'s members do not each
+    get pydantic-core asked to build the whole nested union's schema again, once per tag they
+    reach. This model is used twice -- once directly, once through the nested union -- to pin
+    that the identical case (an operation reachable two ways) collapses too, rather than raising
+    or producing two competing tags for the same model.
+    """
+    from typing import Annotated, Literal
+
+    from pydantic import Field, TypeAdapter
+
+    from eq1_pulse.models.basic_types import OpBase, OperationDiscriminator
+
+    class Sync(OpBase):
+        op_type: Literal["sync"] = "sync"
+        channels: list[str] = Field(default_factory=list)
+
+    class Halt(OpBase):
+        op_type: Literal["halt"] = "halt"
+        reason: str
+
+    InnerOp = Annotated[Sync | Halt, OperationDiscriminator()]
+    # Sync is reachable both directly and through InnerOp -- the duplicate-embedding case.
+    OuterOp = Annotated[Sync | InnerOp, OperationDiscriminator()]
+
+    adapter: TypeAdapter[Any] = TypeAdapter(list[OuterOp])
+    document = ["sync", {"halt": {"reason": "done"}}]
+    assert adapter.validate_python(document) == [Sync(), Halt(reason="done")]
+    assert adapter.dump_python([Sync(), Halt(reason="done")]) == document
+
+    schema = adapter.json_schema()
+    tags = {ref["$ref"].rsplit("/", 1)[-1] for ref in schema["items"]["oneOf"]}
+    assert tags == {"Sync", "Halt"}, "each leaf operation is one schema entry, not one per tag path"
