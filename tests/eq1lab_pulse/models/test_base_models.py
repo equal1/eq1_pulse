@@ -229,6 +229,17 @@ def test_keyword_construction_still_works():
     assert TaggedByValueAllDefaults(channels=["a"]).channels == ["a"]
 
 
+def test_construction_never_leaks_the_flat_form_back_out():
+    """The wrap serializer is unconditional, so nothing constructed can dump flat.
+
+    ``__init__`` accepting the tag source as an ordinary keyword (needed for
+    ``test_keyword_construction_still_works`` and D6) must not be mistaken for a second wire
+    form: serializing the result always nests, whether or not the tag field was passed explicitly.
+    """
+    assert TaggedByValue(channel="q0").model_dump() == {"play": {"channel": "q0"}}
+    assert TaggedByValue(op_type="play", channel="q0").model_dump() == {"play": {"channel": "q0"}}
+
+
 @pytest.mark.parametrize(
     "model",
     [TaggedByValue, TaggedByValueAllDefaults, TaggedByName, Unconfigured, NoStaticTag, Holder],
