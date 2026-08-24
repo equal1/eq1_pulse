@@ -10,6 +10,7 @@ from eq1_pulse.builder import (
     barrier,
     build_sequence,
     channel,
+    compensate_dc,
     demod_integration,
     discriminate,
     experimental,
@@ -38,6 +39,7 @@ from eq1_pulse.builder import (
     step_pulse,
     store,
     sub_sequence,
+    trace,
     trigger_pulse,
     var,
     var_decl,
@@ -48,7 +50,9 @@ from eq1_pulse.models import (
     Amplitude,
     Assign,
     Barrier,
+    CompensateDC,
     Conditional,
+    DemodIntegration,
     DigitalTriggerPulse,
     Discriminate,
     Duration,
@@ -69,6 +73,7 @@ from eq1_pulse.models import (
     StepPulse,
     Store,
     Time,
+    Trace,
     ValueLimits,
     VariableDecl,
     VariableRef,
@@ -668,6 +673,71 @@ class TestMeasurement:
         # Should have: 2 var_decls + play + record + discriminate + conditional
         assert len(seq.items) == 6
         assert isinstance(seq.items[5], Conditional)
+
+
+class TestTraceAndCompensateDC:
+    """Tests for trace() and compensate_dc()."""
+
+    def test_trace_raw_adc(self):
+        """Test trace() with no integration -- the raw ADC trace mode."""
+        with build_sequence() as seq:
+            var_decl("raw_trace", "complex", shape=(1000,), unit="mV")
+            trace("readout", "raw_trace", duration="1us")
+
+        assert len(seq.items) == 2
+        assert isinstance(seq.items[1], Trace)
+        assert seq.items[1].integration is None
+
+    def test_trace_with_time_of_flight(self):
+        """Test trace() with a time_of_flight delay, e.g. determined via a prior raw trace."""
+        with build_sequence() as seq:
+            var_decl("raw_trace", "complex", shape=(1000,), unit="mV")
+            trace("readout", "raw_trace", duration="1us", time_of_flight="140ns")
+
+        assert isinstance(seq.items[1], Trace)
+        assert seq.items[1].time_of_flight == Duration("140ns")
+
+    def test_trace_with_integration(self):
+        """Test trace() with full/demod integration applied per-sample."""
+        with build_sequence() as seq:
+            var_decl("iq_trace", "complex", shape=(500,), unit="mV")
+            trace("readout", "iq_trace", duration="1us", integration=demod_integration())
+
+        assert isinstance(seq.items[1], Trace)
+        assert isinstance(seq.items[1].integration, DemodIntegration)
+
+    def test_trace_outside_context_raises_error(self):
+        """Test that trace() outside a sequence context raises RuntimeError.
+
+        Note: trace() validates the variable reference first, so it fails on the undeclared
+        variable before checking for context -- same ordering as record() (see TestErrorHandling).
+        """
+        with pytest.raises(RuntimeError, match="Variable 'raw_trace' has not been declared"):
+            trace("readout", "raw_trace", duration="1us")
+
+    def test_compensate_dc_operation(self):
+        """Test compensate_dc() playing a compensation pulse."""
+        with build_sequence() as seq:
+            play("qubit", square_pulse(duration="200ns", amplitude="100mV"))
+            compensate_dc("qubit", duration="200ns", max_amp="150mV")
+
+        assert len(seq.items) == 2
+        assert isinstance(seq.items[1], CompensateDC)
+        assert seq.items[1].duration == Duration("200ns")
+
+    def test_compensate_dc_reset(self):
+        """Test compensate_dc() with duration=None resets the accumulator without playing anything."""
+        with build_sequence() as seq:
+            compensate_dc("qubit", duration=None)
+
+        assert len(seq.items) == 1
+        assert isinstance(seq.items[0], CompensateDC)
+        assert seq.items[0].duration is None
+
+    def test_compensate_dc_outside_context_raises_error(self):
+        """Test that compensate_dc() outside a sequence context raises RuntimeError."""
+        with pytest.raises(RuntimeError, match="No active building context for compensate_dc\\(\\)"):
+            compensate_dc("qubit", duration="200ns")
 
 
 class TestDataOperations:

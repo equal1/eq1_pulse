@@ -296,6 +296,11 @@ class Trace(ChannelOpBase):
     The duration is the total time of the trace, the number of records
     is determined by the length of the array variable.
 
+    The integration type can be "full", "demod", or :obj:`None`. Full and demod integration behave
+    as in :class:`Record`, applied per-sample. :obj:`None` applies no integration or demodulation at
+    all, keeping the raw ADC samples -- this is the mode used for ``time_of_flight`` calibration and
+    other debug measurements of the unprocessed readout signal.
+
     Further processing may be applied to the result, such as projection to real/imaginary parts,
     see :class:`Discriminate`.
     """
@@ -307,7 +312,8 @@ class Trace(ChannelOpBase):
     duration: Duration | ValueRef
     """The total duration of the trace acquisition."""
     integration: FullIntegration | DemodIntegration | None = None
-    """The integration method to use."""
+    """The integration method to use. :obj:`None` means raw ADC samples, with no integration or
+    demodulation applied -- see the class docstring."""
     time_of_flight: Duration | ValueRef | None = None
     """Optional delay before starting acquisition."""
 
@@ -320,7 +326,7 @@ class Trace(ChannelOpBase):
             *,
             var: VariableRef | str,
             duration: DurationLike | ValueRefLike,
-            integration: FullIntegration | DemodIntegration = ...,
+            integration: FullIntegration | DemodIntegration | None = None,
             time_of_flight: DurationLike | ValueRefLike | None = None,
             **data,
         ): ...

@@ -44,6 +44,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast, overload
 from ..models.basic_types import LinSpace, Range
 from ..models.channel_ops import (
     Barrier,
+    CompensateDC,
     DemodIntegration,
     FullIntegration,
     Play,
@@ -52,6 +53,7 @@ from ..models.channel_ops import (
     SetPhase,
     ShiftFrequency,
     ShiftPhase,
+    Trace,
     Wait,
     WaitForTrigger,
 )
@@ -71,7 +73,16 @@ from ..models.external_block import ExternalBlock
 from ..models.pulse_types import PulseType
 from ..models.reference_types import PulseRef, VariableRef
 from ..models.sequence import Conditional, Iteration, OpSequence, Repetition
-from ._coerce import as_channel_ref, as_duration, as_frequency, as_phase, as_pulse_ref, as_symbol_value, as_threshold
+from ._coerce import (
+    as_channel_ref,
+    as_duration,
+    as_frequency,
+    as_magnitude,
+    as_phase,
+    as_pulse_ref,
+    as_symbol_value,
+    as_threshold,
+)
 from ._expressions import call_expr_ as call_expr_
 from ._expressions import expr as expr
 from ._factories import _coerce_or_ref as _coerce_or_ref
@@ -109,7 +120,7 @@ from ._state import _get_state as _get_state
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
 
-    from ..models.basic_types import AmplitudeLike, DurationLike, FrequencyLike, PhaseLike, ThresholdLike
+    from ..models.basic_types import AmplitudeLike, DurationLike, FrequencyLike, MagnitudeLike, PhaseLike, ThresholdLike
     from ..models.data_ops import ComparisonModeLike, ComplexToRealProjectionModeLike, SymbolValueLike
     from ..models.reference_types import ChannelRefLike, PulseRefLike, SymbolRefLike, VariableRefLike
     from ._expressions import ExprLike
@@ -121,6 +132,7 @@ __all__ = (
     "build_sequence",
     "call_expr_",
     "channel",
+    "compensate_dc",
     "demod_integration",
     "discriminate",
     "expr",
@@ -148,6 +160,7 @@ __all__ = (
     "step_pulse",
     "store",
     "sub_sequence",
+    "trace",
     "trigger_pulse",
     "var",
     "var_decl",
@@ -1077,6 +1090,125 @@ def record(
     context = _current_context("record()")
     if not _in_sequence(context):
         raise _not_a_sequence_context("record()")
+    _add_to_sequence(context, op)
+
+
+def trace(
+    channel: ChannelRefLike,
+    var: str | VariableRefLike,
+    *,
+    duration: DurationLike | SymbolRefLike | ExprLike,
+    integration: FullIntegration | DemodIntegration | None = None,
+    time_of_flight: DurationLike | SymbolRefLike | ExprLike | None = None,
+) -> None:
+    """Acquire a full trace from a channel: a repeated, continuous :func:`record`.
+
+    Unlike ``record()``, the result is array-valued -- one entry per sample of the acquisition
+    window, rather than a single accumulated value -- so ``var`` must have been declared with a
+    ``shape`` (see :func:`var_decl`) sized to hold it.
+
+    With no ``integration`` (the default), every sample is kept as-is: this is the raw ADC trace,
+    used to inspect the unprocessed readout signal, e.g. to calibrate ``time_of_flight`` or for
+    other debug measurements. Passing :func:`full_integration` or :func:`demod_integration` applies
+    that integration per-sample instead, same as ``record()`` would over each sample individually.
+
+    :param channel: Channel to acquire the trace from
+    :param var: Array variable to store the trace into (declared with a matching ``shape``)
+    :param duration: Total duration of the trace acquisition, or a variable/external reference
+    :param integration: Integration to apply per-sample, or :obj:`None` (default) for the raw,
+        unintegrated ADC trace
+    :param time_of_flight: Optional delay before starting acquisition, or a variable/external
+        reference
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import build_sequence, trace, var_decl
+
+        # Capture the raw readout signal to calibrate time_of_flight
+        var_decl("raw_trace", "complex", shape=(1000,), unit="mV")
+        with build_sequence() as seq:
+            trace("readout", "raw_trace", duration="1us")
+    """
+    # Validate variable reference
+    validated_var = _validate_variable_ref(var)
+    channel = as_channel_ref(channel)
+    validated_duration = _coerce_or_ref(duration, coerce=as_duration, param_name="duration", context="trace()")
+    validated_tof = _coerce_or_ref(time_of_flight, coerce=as_duration, param_name="time_of_flight", context="trace()")
+
+    op = Trace(
+        channel=channel,
+        var=validated_var,
+        duration=validated_duration,  # type: ignore[arg-type]
+        integration=integration,
+        time_of_flight=validated_tof,  # type: ignore[arg-type]
+    )
+
+    context = _current_context("trace()")
+    if not _in_sequence(context):
+        raise _not_a_sequence_context("trace()")
+    _add_to_sequence(context, op)
+
+
+def compensate_dc(
+    channel: ChannelRefLike,
+    *,
+    duration: DurationLike | SymbolRefLike | ExprLike | None,
+    max_amp: MagnitudeLike | SymbolRefLike | ExprLike | None = None,
+    rise_time: DurationLike | SymbolRefLike | ExprLike | None = None,
+    fall_time: DurationLike | SymbolRefLike | ExprLike | None = None,
+) -> None:
+    """Apply DC offset compensation to a channel.
+
+    Plays a square wave sized so the channel's accumulated (integrated) output returns to a zero
+    average since the last reset. Pass ``duration=None`` to reset the accumulator to zero without
+    playing anything.
+
+    :param channel: Channel to compensate
+    :param duration: Duration of the compensation pulse, or :obj:`None` to reset the accumulator
+        without playing anything
+    :param max_amp: Optional cap on the compensation pulse amplitude. If the ideal amplitude would
+        exceed it, only part of the accumulated area is compensated, leaving the rest for a later
+        ``compensate_dc()`` call
+    :param rise_time: Optional linear ramp-up duration at the start of the pulse
+    :param fall_time: Optional linear ramp-down duration at the end of the pulse
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import build_sequence, compensate_dc, play, square_pulse
+
+        with build_sequence() as seq:
+            play("qubit", square_pulse(duration="200ns", amplitude="100mV"))
+            # Bring the accumulated DC offset back to zero
+            compensate_dc("qubit", duration="200ns", max_amp="150mV")
+
+            # Reset the accumulator without playing anything
+            compensate_dc("qubit", duration=None)
+    """
+    channel = as_channel_ref(channel)
+    validated_duration = _coerce_or_ref(duration, coerce=as_duration, param_name="duration", context="compensate_dc()")
+    validated_max_amp = _coerce_or_ref(max_amp, coerce=as_magnitude, param_name="max_amp", context="compensate_dc()")
+    validated_rise_time = _coerce_or_ref(
+        rise_time, coerce=as_duration, param_name="rise_time", context="compensate_dc()"
+    )
+    validated_fall_time = _coerce_or_ref(
+        fall_time, coerce=as_duration, param_name="fall_time", context="compensate_dc()"
+    )
+
+    op = CompensateDC(
+        channel=channel,
+        duration=validated_duration,  # type: ignore[arg-type]
+        max_amp=validated_max_amp,  # type: ignore[arg-type]
+        rise_time=validated_rise_time,  # type: ignore[arg-type]
+        fall_time=validated_fall_time,  # type: ignore[arg-type]
+    )
+
+    context = _current_context("compensate_dc()")
+    if not _in_sequence(context):
+        raise _not_a_sequence_context("compensate_dc()")
     _add_to_sequence(context, op)
 
 

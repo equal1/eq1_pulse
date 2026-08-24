@@ -282,6 +282,40 @@ Example:
 
         play("q0_drive", square_pulse(duration="25ns", amplitude="80mV"))
 
+DC Compensation
+~~~~~~~~~~~~~~~
+
+The ``compensate_dc()`` function plays a square wave sized so the channel's accumulated
+(integrated) output returns to a zero average since the last reset. This is used to cancel out DC
+offset built up by asymmetric pulse sequences, which can otherwise saturate AC-coupled readout
+or drive lines over many shots:
+
+.. code-block:: python
+
+    compensate_dc(channel, *, duration, max_amp=None, rise_time=None, fall_time=None)
+
+Parameters:
+
+* ``channel`` - The channel to compensate
+* ``duration`` - Duration of the compensation pulse, or :obj:`None` to reset the accumulator to
+  zero *without* playing anything
+* ``max_amp`` - Optional cap on the compensation pulse amplitude. If the ideal amplitude would
+  exceed it, only part of the accumulated area is compensated, leaving the rest for a later call
+* ``rise_time`` / ``fall_time`` - Optional linear ramps at the start/end of the pulse
+
+Example:
+
+.. code-block:: python
+
+    with build_sequence():
+        play("qubit", square_pulse(duration="200ns", amplitude="100mV"))
+
+        # Bring the accumulated DC offset back to zero, capped at 150mV
+        compensate_dc("qubit", duration="200ns", max_amp="150mV")
+
+        # Elsewhere: reset the accumulator without playing anything
+        compensate_dc("qubit", duration=None)
+
 Pulse Shapes
 ------------
 
@@ -590,6 +624,50 @@ Example:
     )
 
 The ``state`` variable will be :obj:`True` if the measurement exceeds the threshold.
+
+Trace Acquisition
+~~~~~~~~~~~~~~~~~
+
+``record()`` accumulates a whole acquisition window down to one scalar value. ``trace()`` is its
+array-valued counterpart -- a repeated, continuous ``record()`` that keeps one entry per sample:
+
+.. code-block:: python
+
+    trace(channel, var, *, duration, integration=None, time_of_flight=None)
+
+Because the result is array-valued, ``var`` must be declared with a ``shape`` sized to hold it
+(``var_decl(name, dtype, shape=(n_samples,))``, see `Declaring Variables`_ below), rather than the
+plain scalar declaration ``record()`` uses.
+
+With no ``integration`` (the default), every sample is kept as-is -- the **raw ADC trace**. This is
+the mode used to inspect the unprocessed readout signal, most commonly to calibrate
+``time_of_flight`` (the delay between playing a readout pulse and the reflected signal arriving
+back at the ADC): capture a raw trace once, read the delay to the first real signal off of it, and
+pass that duration as ``time_of_flight`` to subsequent ``record()``/``trace()`` calls. It is also
+useful for other debug measurements where the demodulation reference is not yet known.
+
+Passing ``full_integration()`` or ``demod_integration()`` applies that integration per-sample
+instead, same as ``record()`` would over each sample individually.
+
+Example:
+
+.. code-block:: python
+
+    # Raw ADC trace, e.g. to calibrate time_of_flight
+    var_decl("raw_trace", "complex", shape=(1000,), unit="mV")
+    with build_sequence():
+        trace("readout", "raw_trace", duration="1us")
+
+    # Once time_of_flight is known, apply it (and per-sample demod) on later acquisitions
+    var_decl("iq_trace", "complex", shape=(1000,), unit="mV")
+    with build_sequence():
+        trace(
+            "readout",
+            "iq_trace",
+            duration="1us",
+            integration=demod_integration(),
+            time_of_flight="148ns",
+        )
 
 Variables
 ---------

@@ -218,6 +218,35 @@ def test_trace_with_full_integration_serialization():
     assert deserialized == original
 
 
+def test_trace_with_no_integration_is_raw_adc_trace():
+    # No integration_type field is defined for this: Trace with integration=None (the default) *is*
+    # the raw ADC trace -- every sample kept as-is, e.g. for time_of_flight calibration.
+    trace = Trace(channel="ch1", var=VariableRef("trace_data"), duration=Duration(s=1e-6))
+    assert trace.channel == "ch1"
+    assert trace.integration is None
+
+
+def test_trace_with_no_integration_validation():
+    trace_dict = {
+        "trace": {
+            "channel": "ch1",
+            "var": "trace_data",
+            "duration": {"s": 1e-6},
+        }
+    }
+    trace: Any = TypeAdapter(ChannelOp).validate_python(trace_dict)
+    assert isinstance(trace, Trace)
+    assert trace.integration is None
+
+
+def test_trace_with_no_integration_serialization():
+    original = Trace(channel="ch1", var=VariableRef("trace_data"), duration=Duration(s=1e-6), integration=None)
+    serialized = original.model_dump_json()
+    deserialized: Any = TypeAdapter(ChannelOp).validate_json(serialized)
+    assert isinstance(deserialized, Trace)
+    assert deserialized == original
+
+
 def test_wait_duration_accepts_external_ref():
     wait_op = Wait("ch1", "ch2", duration=ExternalRef(ext="q0.dur"))
     assert isinstance(wait_op.duration, ExternalRef)
