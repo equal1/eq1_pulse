@@ -8,8 +8,9 @@ latex_elements = {
     "pointsize": "9pt",
     # Additional stuff for the LaTeX preamble.
     "preamble": r"""
-            \usepackage{fontspec}
-            \usepackage[EU1]{fontenc}
+            \usepackage{fontspec}"""
+    + r"\usepackage[EU1]{fontenc}"
+    + r"""
             % \renewcommand\rmdefault{cmr}
             % \renewcommand\sfdefault{cmss}
             % \renewcommand\ttdefault{cmtt}
