@@ -71,7 +71,7 @@ doc = [
     # "sphinxcontrib-jquery",
     # "sphinxcontrib-mermaid",
     # "sphinxcontrib-ansi",
-    # "sphinx-autodoc-typehints",
+    "sphinx-autodoc-typehints",
 ]
 
 graphviz = ["pydot", "graphviz"]

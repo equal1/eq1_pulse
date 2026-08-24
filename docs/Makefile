@@ -25,7 +25,7 @@ distclean:
 	-@find  ./build/html -mindepth 1 -maxdepth 1 -not -name \\.git* -exec rm -rvf \{\} \;
 
 deploy:
-	rsync  -av --delete --no-p --no-g --chmod=ugo=rwX build/html/ engweb:/projects/engweb/eq1lab/
+	rsync  -av --delete --no-p --no-g --chmod=ugo=rwX build/html/ engweb:/projects/engweb/eq1_pulse/
 
 PORT ?= 18182
 

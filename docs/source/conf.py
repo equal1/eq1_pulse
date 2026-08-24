@@ -53,7 +53,7 @@ extensions = [
     "sphinx.ext.graphviz",
     "sphinx.ext.inheritance_diagram",
     "autoapi.extension",
-    "sphinx.ext.autodoc.typehints",
+    "sphinx_autodoc_typehints",
     "matplotlib.sphinxext.plot_directive",
     "sphinx.ext.mathjax",
     "sphinx.ext.todo",
