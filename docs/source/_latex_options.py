@@ -3,7 +3,30 @@ latex_engine = "xelatex"
 latex_elements = {
     # Clean out the legacy font encoding completely
     "fontenc": "",
+    "fontpkg": "",
     "utf8extra": "",
+    # Clean out font size
+    "fvset": "",
+    # untested ----
+    "sphinxsetup": (
+        # 1. Turn line wrapping on
+        "verbatimwrapslines=true, "
+        # 2. Fix the line-continuation hook (make it tiny and gray)
+        r"verbatimcontinued={\tiny\color{gray}\hookrightarrow}, "
+        # 3. Deal with the pre-newline whitespace marker:
+        # OPTION A: Make it gray instead of red to match the hook
+        r"verbatimvisiblespace={\tiny\color{gray}\textvisiblespace}, "
+        # OPTION B: Alternatively, uncomment the line below to hide the marker entirely
+        # r'verbatimvisiblespace={}, '
+        # Add this line to scale down the code block font size globally
+        r"verbatimwithframe=true, "
+        # Adjust the border thickness here (try 1.5pt or 2pt for a thicker frame,
+        # or 0.2pt for a hairline subtle look)
+        r"verbatimborderwidth=1.5pt, "
+        r"VerbatimColor={rgb}{0.98,0.98,0.98}, "
+        r"VerbatimBorderColor={rgb}{0.8,0.8,0.8}, "
+    ),
+    # --- end untesed ---
     # Additional stuff for the LaTeX preamble.
     # The paper size ('letterpaper' or 'a4paper').
     "papersize": "a4paper",
@@ -47,5 +70,12 @@ latex_elements = {
             % Silence layout spacing warnings
             \hbadness=10000
             \vbadness=10000
+
+            % Font size for code blocks. Unfortunately
+            % on Windows, anything except size 9pt is unsightly.
+            \usepackage{etoolbox}
+            \AtBeginEnvironment{sphinxVerbatim}{%
+            \fontsize{9pt}{11pt}\selectfont
+            }
         """,
 }
