@@ -1,6 +1,9 @@
 # sudo apt install fonts-lmodern fonts-cmu fonts-lato
 latex_engine = "xelatex"
 latex_elements = {
+    # Clean out the legacy font encoding completely
+    "fontenc": "",
+    "utf8extra": "",
     # Additional stuff for the LaTeX preamble.
     # The paper size ('letterpaper' or 'a4paper').
     "papersize": "a4paper",
@@ -11,9 +14,11 @@ latex_elements = {
             \usepackage{fontspec}"""
     # + r"\usepackage[EU1]{fontenc}"
     + r"""
+            % Map main system fonts natively - commented out
             % \renewcommand\rmdefault{cmr}
             % \renewcommand\sfdefault{cmss}
             % \renewcommand\ttdefault{cmtt}
+
             \setmainfont{Lato}
             \setsansfont{Lato}
             \setmonofont{DejaVu Sans Mono}
@@ -28,11 +33,19 @@ latex_elements = {
             % distributions, so this doesn't depend on an extra font install.
             \usepackage{newunicodechar}
             \newfontfamily{\unicodefallback}{DejaVu Sans}
-            \newunicodechar{μ}{{\unicodefallback μ}}
-            \newunicodechar{τ}{{\unicodefallback τ}}
-            \newunicodechar{→}{{\unicodefallback →}}
-            \newunicodechar{↔}{{\unicodefallback ↔}}
-            \newunicodechar{✅}{{\unicodefallback ✅}}
-            \newunicodechar{❌}{{\unicodefallback ❌}}
+
+            % Handle surgical Unicode fallbacks
+            """
+    + r"""
+            """.join(
+        r"""\newunicodechar{%s}{\unicodefallback %s}""" % (c, c)  # noqa: UP031
+        # This is the actual list of characters, add new ones here
+        for c in ("μ", "τ", "→", "↔", "✅", "❌")
+    )
+    + r"""
+
+            % Silence layout spacing warnings
+            \hbadness=10000
+            \vbadness=10000
         """,
 }
