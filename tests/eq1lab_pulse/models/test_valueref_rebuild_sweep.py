@@ -3,9 +3,10 @@
 Widening a field to :data:`~eq1_pulse.models.expressions.ValueRef` is only half the edit -- the
 model that declares it needs a ``model_rebuild()`` once :class:`~.expressions.Expression` becomes
 available, or the forward reference stays unresolved. A missed rebuild does not raise: it degrades
-the union member silently to a plain :obj:`dict`. Each case below validates one representative model
-per family from a plain dict containing an expression and asserts the field actually deserialized to
-an :class:`~.expressions.Expression` node, not a dict standing in for one.
+the union member silently to a plain :obj:`dict`/:obj:`list`. Each case below validates one
+representative model per family from a plain dict containing an expression wire array and asserts
+the field actually deserialized to an :class:`~.expressions.Expression` node, not a list standing in
+for one.
 """
 
 from typing import Any
@@ -19,13 +20,7 @@ from eq1_pulse.models.external_block import ExternalBlock
 from eq1_pulse.models.pulse_types import PulseType, SquarePulse
 from eq1_pulse.models.sequence import DiscriminableOp, OpSequenceItem
 
-_EXPR_DOCUMENT = {
-    "binary_op": {
-        "op": "+",
-        "lhs": {"symbol": {"var": "x"}},
-        "rhs": {"value": 1},
-    },
-}
+_EXPR_DOCUMENT = ["+", ["symbol", {"var": "x"}], ["value", 1]]
 
 
 def test_pulse_types_rebuild_sweep():
@@ -67,13 +62,7 @@ def test_external_block_rebuild_sweep():
 
 def test_control_flow_and_sequence_rebuild_sweep():
     """Repetition.count and Conditional.var -- control_flow.py's and sequence.py's model_rebuild sweep."""
-    compare_document = {
-        "compare_op": {
-            "op": ">",
-            "lhs": {"symbol": {"var": "x"}},
-            "rhs": {"value": 1},
-        },
-    }
+    compare_document = [">", ["symbol", {"var": "x"}], ["value", 1]]
     rep: Any = TypeAdapter(DiscriminableOp).validate_python({"repeat": {"count": _EXPR_DOCUMENT, "body": []}})
     assert isinstance(rep.count, BinaryExpr)
 

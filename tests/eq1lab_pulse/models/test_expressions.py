@@ -2,7 +2,7 @@
 
 import json
 import warnings
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from pydantic import TypeAdapter, ValidationError
@@ -28,6 +28,17 @@ from eq1_pulse.models.reference_types import ExternalRef, VariableRef
 def expression_adapter() -> TypeAdapter[Any]:
     """The ``Expression`` union as a validator."""
     return TypeAdapter(Expression)
+
+
+def dump_wire(node: Any) -> list[Any]:
+    """``node.model_dump()``, typed as the array it actually returns.
+
+    Every ``ExprBase``'s ``model_dump()`` returns a :obj:`list`; pydantic's stub still says
+    ``dict[str, Any]`` regardless of the model's own serializer, which makes ``mypy`` flag a direct
+    ``model_dump() == [...]`` comparison as non-overlapping. *node* is untyped here, so this
+    forwards whatever ``model_dump()`` actually returns without mypy re-deriving its stubbed type.
+    """
+    return cast(list[Any], node.model_dump())
 
 
 def nested_negations(levels: int) -> Any:
@@ -74,55 +85,40 @@ def test_each_node_round_trips(node: Any):
 
 
 @pytest.mark.parametrize(
-    ("key", "node_type"),
+    ("wire", "node_type"),
     [
-        ("value", LiteralExpr),
-        ("symbol", SymbolExpr),
-        ("unary_op", UnaryExpr),
-        ("binary_op", BinaryExpr),
-        ("compare_op", CompareExpr),
-        ("not_op", NotExpr),
-        ("logical_op", LogicalExpr),
-        ("function", CallExpr),
+        pytest.param(["value", 1], LiteralExpr, id="literal"),
+        pytest.param(["symbol", {"var": "x"}], SymbolExpr, id="symbol"),
+        pytest.param(["-", ["value", 1]], UnaryExpr, id="unary"),
+        pytest.param(["+", ["value", 1], ["value", 1]], BinaryExpr, id="binary"),
+        pytest.param(["<", ["value", 1], ["value", 1]], CompareExpr, id="compare"),
+        pytest.param(["not", ["value", 1]], NotExpr, id="not"),
+        pytest.param(["or", ["value", 1], ["value", 1]], LogicalExpr, id="logical"),
+        pytest.param(["sqrt", ["value", 1]], CallExpr, id="call"),
     ],
 )
-def test_union_discriminates_on_node_key(key: str, node_type: type):
-    """Each node key routes to its own node type, from a plain dict."""
-    operand = {"value": 1}
-    documents: dict[str, dict[str, Any]] = {
-        "value": {"value": 1},
-        "symbol": {"symbol": {"var": "x"}},
-        "unary_op": {"unary_op": {"op": "-", "rhs": operand}},
-        "binary_op": {"binary_op": {"op": "+", "lhs": operand, "rhs": operand}},
-        "compare_op": {"compare_op": {"op": "<", "lhs": operand, "rhs": operand}},
-        "not_op": {"not_op": {"rhs": operand}},
-        "logical_op": {"logical_op": {"op": "or", "lhs": operand, "rhs": operand}},
-        "function": {"function": {"name": "sqrt", "args": [operand]}},
-    }
-    node: Any = expression_adapter().validate_python(documents[key])
+def test_union_discriminates_on_wire_tag(wire: list[Any], node_type: type):
+    """Each wire tag routes to its own node type, from a plain list."""
+    node: Any = expression_adapter().validate_python(wire)
     assert isinstance(node, node_type)
 
 
-def test_nested_tree_validates_from_a_plain_dict():
-    """A three-level tree validates from a plain dict and round-trips through JSON.
+def test_minus_is_disambiguated_by_arity():
+    """``"-"`` alone is unary negation; with two operands it is binary subtraction."""
+    unary: Any = expression_adapter().validate_python(["-", ["value", 1]])
+    binary: Any = expression_adapter().validate_python(["-", ["value", 1], ["value", 2]])
+    assert isinstance(unary, UnaryExpr)
+    assert isinstance(binary, BinaryExpr)
+
+
+def test_nested_tree_validates_from_a_plain_list():
+    """A three-level tree validates from a plain list and round-trips through JSON.
 
     This is what a missed :meth:`~pydantic.BaseModel.model_rebuild` shows up as: a recursive
     discriminated union with an unresolved forward reference degrades its operands to plain
-    :obj:`dict` instead of failing.
+    :obj:`dict`/:obj:`list` instead of failing.
     """
-    document = {
-        "compare_op": {
-            "op": "<",
-            "lhs": {
-                "binary_op": {
-                    "op": "+",
-                    "lhs": {"symbol": {"var": "x"}},
-                    "rhs": {"value": 1},
-                },
-            },
-            "rhs": {"value": 2},
-        },
-    }
+    document = ["<", ["+", ["symbol", {"var": "x"}], ["value", 1]], ["value", 2]]
     node: Any = expression_adapter().validate_python(document)
     assert isinstance(node, CompareExpr)
     assert isinstance(node.lhs, BinaryExpr)
@@ -132,14 +128,8 @@ def test_nested_tree_validates_from_a_plain_dict():
 
 
 def test_unary_op_is_serialized():
-    """``UnaryExpr.unary_op`` survives serialization despite having exactly one possible value.
-
-    A default on it would be elided by :class:`~.base_models.LeanModel` -- ordinary default elision,
-    not the discriminator rule -- and the operator would vanish from the wire.
-    """
-    assert UnaryExpr(unary_op="-", rhs=LiteralExpr(value=1)).model_dump() == {
-        "unary_op": {"op": "-", "rhs": {"value": 1}},
-    }
+    """``UnaryExpr.unary_op`` survives serialization despite having exactly one possible value."""
+    assert dump_wire(UnaryExpr(unary_op="-", rhs=LiteralExpr(value=1))) == ["-", ["value", 1]]
 
 
 @pytest.mark.parametrize(
@@ -192,7 +182,7 @@ def test_logical_op_rejects_not():
 def test_tree_at_the_depth_limit_builds_and_serializes():
     """A tree exactly ``MAX_EXPRESSION_DEPTH`` deep is accepted and serializes."""
     node = nested_negations(MAX_EXPRESSION_DEPTH)
-    assert json.loads(node.model_dump_json())["unary_op"]["op"] == "-"
+    assert json.loads(node.model_dump_json())[0] == "-"
 
 
 def test_tree_past_the_depth_limit_is_rejected():
@@ -210,13 +200,13 @@ def test_deep_tree_is_rejected_from_the_wire_too():
     """A too-deep document is rejected on validation, not only on construction."""
     document = json.loads(nested_negations(MAX_EXPRESSION_DEPTH).model_dump_json())
     with pytest.raises(ValidationError, match=str(MAX_EXPRESSION_DEPTH)):
-        expression_adapter().validate_python({"unary_op": {"op": "-", "rhs": document}})
+        expression_adapter().validate_python(["-", document])
 
 
 def test_symbol_expr_keeps_the_external_reference_form():
     """A SymbolExpr over an ExternalRef round-trips with its ``{"ext": ...}`` object intact."""
     node = SymbolExpr(symbol=ExternalRef("q0.f01"))
-    assert node.model_dump() == {"symbol": {"ext": "q0.f01"}}
+    assert dump_wire(node) == ["symbol", {"ext": "q0.f01"}]
     reloaded: Any = expression_adapter().validate_python(node.model_dump())
     assert isinstance(reloaded.symbol, ExternalRef)
     assert reloaded.symbol.ext == "q0.f01"
@@ -231,12 +221,12 @@ def test_literal_expr_holds_a_complex_amplitude():
     """
     node = LiteralExpr(value=Amplitude(mV=1 + 2j))
     assert isinstance(node.value, Amplitude)
-    document = node.model_dump()
-    assert document == {"value": {"mV": (1.0, 2.0)}}
+    document = dump_wire(node)
+    assert document == ["value", {"mV": (1.0, 2.0)}]
     reloaded: Any = expression_adapter().validate_python(document)
     assert isinstance(reloaded.value, ComplexVoltage)
     assert reloaded.value.mV == 1 + 2j
-    assert reloaded.model_dump() == document
+    assert dump_wire(reloaded) == document
 
 
 def test_exact_serialization_of_mixed_tree_with_warnings_as_errors():
@@ -271,7 +261,7 @@ def test_exact_serialization_of_mixed_tree_with_warnings_as_errors():
 
 
 def test_binary_and_compare_expr_do_not_collide():
-    """BinaryExpr and CompareExpr differ only in operator key and do not confuse the union."""
+    """BinaryExpr and CompareExpr differ by their operator vocabulary and do not confuse the union."""
     binary = BinaryExpr(binary_op="+", lhs=LiteralExpr(value=1), rhs=LiteralExpr(value=2))
     compare = CompareExpr(compare_op="<", lhs=LiteralExpr(value=1), rhs=LiteralExpr(value=2))
 
@@ -298,63 +288,34 @@ def test_binary_and_compare_expr_do_not_collide():
 
 
 @pytest.mark.parametrize(
-    ("key", "document", "node_type"),
+    ("tag", "document", "node_type"),
     [
-        pytest.param("value", {"value": 1}, LiteralExpr, id="literal"),
-        pytest.param("symbol", {"symbol": {"var": "x"}}, SymbolExpr, id="symbol"),
-        pytest.param(
-            "unary_op",
-            {"unary_op": {"op": "-", "rhs": {"value": 1}}},
-            UnaryExpr,
-            id="unary",
-        ),
-        pytest.param(
-            "binary_op",
-            {"binary_op": {"op": "+", "lhs": {"value": 1}, "rhs": {"value": 2}}},
-            BinaryExpr,
-            id="binary",
-        ),
-        pytest.param(
-            "compare_op",
-            {"compare_op": {"op": "<", "lhs": {"value": 1}, "rhs": {"value": 2}}},
-            CompareExpr,
-            id="compare",
-        ),
-        pytest.param(
-            "logical_op",
-            {"logical_op": {"op": "and", "lhs": {"value": 1}, "rhs": {"value": 2}}},
-            LogicalExpr,
-            id="logical",
-        ),
-        pytest.param(
-            "not_op",
-            {"not_op": {"rhs": {"value": 1}}},
-            NotExpr,
-            id="not",
-        ),
-        pytest.param(
-            "function",
-            {"function": {"name": "abs", "args": [{"value": 1}]}},
-            CallExpr,
-            id="call",
-        ),
+        pytest.param("value", ["value", 1], LiteralExpr, id="literal"),
+        pytest.param("symbol", ["symbol", {"var": "x"}], SymbolExpr, id="symbol"),
+        pytest.param("unary_op", ["-", ["value", 1]], UnaryExpr, id="unary"),
+        pytest.param("binary_op", ["+", ["value", 1], ["value", 2]], BinaryExpr, id="binary"),
+        pytest.param("compare_op", ["<", ["value", 1], ["value", 2]], CompareExpr, id="compare"),
+        pytest.param("logical_op", ["and", ["value", 1], ["value", 2]], LogicalExpr, id="logical"),
+        pytest.param("not_op", ["not", ["value", 1]], NotExpr, id="not"),
+        pytest.param("function", ["abs", ["value", 1]], CallExpr, id="call"),
     ],
 )
 def test_expression_tag_of_identifies_all_nodes(
-    key: str,
-    document: dict[str, Any],
+    tag: str,
+    document: list[Any],
     node_type: type,
 ):
-    """``expression_tag_of`` returns the expected key for every node, and the union validates it."""
-    assert expression_tag_of(document) == key
+    """``expression_tag_of`` returns the expected tag for every node, and the union validates it."""
+    assert expression_tag_of(document) == tag
     node: Any = expression_adapter().validate_python(document)
     assert isinstance(node, node_type)
 
 
 def test_expression_tag_of_returns_none_for_non_expressions():
-    """``expression_tag_of`` returns None for mappings and values that are not expressions."""
+    """``expression_tag_of`` returns None for mappings, empty/unrecognized lists, and other values."""
     assert expression_tag_of({"var": "x"}) is None
-    assert expression_tag_of({}) is None
+    assert expression_tag_of([]) is None
+    assert expression_tag_of(["unknown_op", 1]) is None
     assert expression_tag_of(5) is None
 
 
@@ -363,7 +324,7 @@ def test_valueref_still_disambiguates():
     adapter: TypeAdapter[Any] = TypeAdapter(ValueRef)
     assert isinstance(adapter.validate_python({"var": "x"}), VariableRef)
     assert isinstance(adapter.validate_python({"ext": "q0.f01"}), ExternalRef)
-    binary_doc = {"binary_op": {"op": "+", "lhs": {"value": 1}, "rhs": {"value": 2}}}
+    binary_doc = ["+", ["value", 1], ["value", 2]]
     node: Any = adapter.validate_python(binary_doc)
     assert isinstance(node, BinaryExpr)
 
@@ -381,3 +342,11 @@ def test_no_expr_type_survives_in_dumped_tree():
     )
     json_str = tree.model_dump_json()
     assert "expr_type" not in json_str
+
+
+def test_wire_form_rejects_wrong_arity():
+    """A malformed wire array -- wrong element count for the operator's arity -- is rejected."""
+    with pytest.raises(ValidationError):
+        expression_adapter().validate_python(["+", ["value", 1]])
+    with pytest.raises(ValidationError):
+        expression_adapter().validate_python(["value", 1, 2])

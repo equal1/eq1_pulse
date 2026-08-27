@@ -118,45 +118,45 @@ every use site:
 Wire Format Reference
 ------------------------
 
-Every expression node serializes as a single-key object naming its kind. ``LiteralExpr`` and
-``SymbolExpr`` stay flat -- each already has exactly one field. The other six nest their fields
-under that key, the operator nodes carrying the operator symbol in an ``op`` field
-(``CallExpr`` carries the function name in ``name`` instead):
+Every expression node serializes as a JSON array, ``[<tag>, <operand>, ...]``, not an object. For
+the six operator nodes ``<tag>`` is the operator itself; ``LiteralExpr`` and ``SymbolExpr`` have no
+operator, so ``<tag>`` there is that field's own name instead:
 
 .. list-table::
    :header-rows: 1
    :widths: 20 20 60
 
    * - Node
-     - Wire key
+     - Wire tag
      - Example
    * - :class:`~eq1_pulse.models.expressions.LiteralExpr`
      - ``value``
-     - ``{"value": {"mV": 80}}``
+     - ``["value", {"mV": 80}]``
    * - :class:`~eq1_pulse.models.expressions.SymbolExpr`
      - ``symbol``
-     - ``{"symbol": {"var": "scale"}}``
+     - ``["symbol", {"var": "scale"}]``
    * - :class:`~eq1_pulse.models.expressions.UnaryExpr`
-     - ``unary_op``
-     - ``{"unary_op": {"op": "-", "rhs": {"...": "..."}}}``
+     - ``-``
+     - ``["-", ["...", "..."]]``
    * - :class:`~eq1_pulse.models.expressions.BinaryExpr`
-     - ``binary_op``
-     - ``{"binary_op": {"op": "*", "lhs": {"...": "..."}, "rhs": {"...": "..."}}}``
+     - ``+``, ``-``, ``*``, ``/``, ``%``
+     - ``["*", ["...", "..."], ["...", "..."]]``
    * - :class:`~eq1_pulse.models.expressions.CompareExpr`
-     - ``compare_op``
-     - ``{"compare_op": {"op": "<", "lhs": {"...": "..."}, "rhs": {"...": "..."}}}``
+     - ``<``, ``<=``, ``>``, ``>=``, ``==``, ``!=``
+     - ``["<", ["...", "..."], ["...", "..."]]``
    * - :class:`~eq1_pulse.models.expressions.NotExpr`
-     - ``not_op``
-     - ``{"not_op": {"rhs": {"...": "..."}}}``
+     - ``not``
+     - ``["not", ["...", "..."]]``
    * - :class:`~eq1_pulse.models.expressions.LogicalExpr`
-     - ``logical_op``
-     - ``{"logical_op": {"op": "and", "lhs": {"...": "..."}, "rhs": {"...": "..."}}}``
+     - ``and``, ``or``
+     - ``["and", ["...", "..."], ["...", "..."]]``
    * - :class:`~eq1_pulse.models.expressions.CallExpr`
-     - ``function``
-     - ``{"function": {"name": "sqrt", "args": [{"...": "..."}]}}``
+     - the function name
+     - ``["sqrt", ["...", "..."]]``, or ``["min", op, op, ...]`` for a variadic function
 
-No discriminator field is needed: the presence of one of these eight keys is itself the
-discriminator, both for pydantic's validator and for reading a document by hand.
+No discriminator field is needed: the array's first element (and, for ``"-"``, the array's
+length -- 2 for negation, 3 for subtraction) is itself the discriminator, both for pydantic's
+validator and for reading a document by hand.
 
 Expression Depth Limit
 --------------------------

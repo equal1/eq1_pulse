@@ -11,28 +11,38 @@ There is one node type per *arity and result kind* rather than one per operator 
 :class:`BinaryExpr` with ``op="+"``, not an ``AddExpr``. :class:`CompareExpr`, :class:`NotExpr` and
 :class:`LogicalExpr` are split out of :class:`UnaryExpr`/:class:`BinaryExpr` for the same reason
 applied one level up: all three yield booleans, all are valid where an arithmetic node is not, and
-keeping them distinct makes "is this a predicate?" answerable from the wire key alone --
-``{"compare_op": {"op": "<", ...}}`` / ``{"not_op": {"rhs": ...}}`` / ``{"logical_op": {"op": "and", ...}}``
-versus ``{"unary_op": {"op": "-", ...}}`` / ``{"binary_op": {"op": "+", ...}}`` -- as well as in Python.
-:class:`NotExpr` and :class:`LogicalExpr` are themselves split by arity, the same way
+keeping them distinct makes "is this a predicate?" answerable from the node type alone, as well as
+in Python. :class:`NotExpr` and :class:`LogicalExpr` are themselves split by arity, the same way
 :class:`UnaryExpr` and :class:`BinaryExpr` are: ``not`` is unary, ``and``/``or`` are binary, and a
 single node type spanning both would need an optional field and a validator to enforce which
 operator requires which -- exactly the awkwardness arity-specific node types elsewhere in this
 module avoid.
+
+**Wire form.** Every node is a JSON array, ``[<tag>, <operand>, ...]``, not an object. For the six
+operator nodes (:class:`UnaryExpr` through :class:`CallExpr`) ``<tag>`` is the operator itself --
+``"+"``, ``"<"``, ``"abs"`` -- and the rest of the array is its operand(s), in declaration order.
+:class:`LiteralExpr` and :class:`SymbolExpr` hold no operator, only a single payload field, so
+``<tag>`` there is that field's own name -- ``"value"`` or ``"symbol"`` -- and the array holds
+exactly one operand. :class:`ExprBase` implements the array encoding once, generically over each
+node's declared fields, rather than per class: adding a node type means declaring its fields, not
+hand-writing its wire form.
 """
 
 from __future__ import annotations
 
-import contextvars
-from collections.abc import Iterator, Mapping
-from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Final, Literal, Self
+from collections.abc import Iterator
+from typing import TYPE_CHECKING, Annotated, Any, Final, Literal, Self, cast, get_args, get_origin
 
 from pydantic import Discriminator, Tag, model_serializer, model_validator
+from pydantic.json_schema import JsonSchemaValue
+from pydantic_core import CoreSchema
 
-from .base_models import NestedWireModel
+from .base_models import NoExtrasModel
 from .reference_types import SymbolRef
 
 if TYPE_CHECKING:
+    from pydantic import GetJsonSchemaHandler
+
     from .data_ops import SymbolValueLike
     from .reference_types import SymbolRefLike
 
@@ -63,65 +73,159 @@ guard while validating, so a deep tree already fails there with a
 and emits wrong output. Rejecting a too-deep tree on the way in means one can never be built to
 serialize. Hand-written expressions do not approach 32.
 
-The cap is on *Python* nesting, which :func:`_expression_depth` measures and which the six nodes'
-:class:`~.base_models.NestedWireModel` opt-in does not change. The serialized JSON gains one level
-per operator node, so a maximal tree is ~64 JSON levels deep instead of ~32 -- still an order of
-magnitude under the serializer's recursion limit, which is what this cap exists to protect.
+The cap is on *Python* nesting, which :func:`_expression_depth` measures. The array wire form nests
+one level of JSON per level of Python -- an operand is the array element directly, not wrapped in an
+intervening tag/payload object -- so the serialized JSON stays proportional to this cap rather than
+doubling it.
 """
 
 
-_wire_serializing: contextvars.ContextVar[frozenset[int]] = contextvars.ContextVar(
-    "_wire_serializing", default=frozenset()
-)
-"""Object ids of :class:`ExprBase` instances whose :meth:`~ExprBase._wrap_serializer` is currently
-on the call stack.
+class ExprBase(NoExtrasModel):
+    """Base class for all expression nodes; see the module docstring for the array wire form.
 
-Works around a pydantic-core defect in recursive models with a ``@model_serializer(mode="wrap")``
-(upstream `pydantic#11812 <https://github.com/pydantic/pydantic/issues/11812>`_ and the related
-`pydantic#11563 <https://github.com/pydantic/pydantic/issues/11563>`_): when such a model is
-reached *through another model's field* and the model's own schema is also self-referential --
-exactly the shape :data:`Expression` has, recursing directly through operand fields with no
-intervening container -- pydantic-core inserts the wrap serializer twice in series for that outer
-reference. The spurious second call receives the *same* instance, not its sibling operands, so it
-is detectable by object identity and made a no-op: only the outer (first) call performs the tag
-lift, the inner one passes the plain field dump straight through.
-
-Kept here rather than on :class:`~.base_models.NestedWireModel` itself: :class:`ExprBase` is the
-only subclass shaped this way today -- reached through a field *and* self-referential -- so every
-other ``NestedWireModel`` (every operation, every pulse) pays nothing for a defect that cannot
-reach it. A future subclass with the same shape needs this same guard, copied here rather than
-reintroduced silently on the shared base.
-"""
-
-
-class ExprBase(NestedWireModel):
-    """Base class for all expression nodes.
-
-    Each node is keyed on a field it already needs -- the operator for the five operator nodes, and
-    the single payload field for the other three -- rather than on a separate discriminator field.
-    Six of the eight opt into :class:`~.base_models.NestedWireModel`'s ``{tag: payload}`` wire form
-    by setting its class vars; :class:`LiteralExpr` and :class:`SymbolExpr` leave them unset and stay
-    flat, since each has exactly one field already.
+    The encoding is generic over each subclass's declared fields: the first field is the tag
+    (an operator, or -- for the two single-field leaf nodes -- the field's own name), and every
+    field after it is an operand, either one-per-field or, for the two nodes with a variable
+    number of operands, gathered from a single ``list[Expression]`` field.
     """
 
     if TYPE_CHECKING:
 
         def __init__(self, *args, **kwargs): ...  # noqa: D107
 
-    @model_serializer(mode="wrap")
-    def _wrap_serializer(self, wrapped) -> Any:
-        key = id(self)
-        in_progress = _wire_serializing.get()
-        if key in in_progress:
-            # The pydantic-core duplicate-call defect described at `_wire_serializing`: this is the
-            # spurious inner invocation for the instance the outer call is already wrapping.
-            return wrapped(self)
+    @classmethod
+    def _tag_field(cls) -> str:
+        """The name of this node's first declared field: its operator, or its sole payload field."""
+        return next(iter(cls.model_fields))
 
-        token = _wire_serializing.set(in_progress | {key})
-        try:
-            return self._wrap_payload(wrapped)
-        finally:
-            _wire_serializing.reset(token)
+    @classmethod
+    def _operand_fields(cls) -> list[str]:
+        """The names of the fields after :meth:`_tag_field`, in declaration order.
+
+        Empty for :class:`LiteralExpr` and :class:`SymbolExpr`, whose one field *is* the tag field.
+        """
+        return list(cls.model_fields)[1:]
+
+    @classmethod
+    def _variadic_field(cls) -> str | None:
+        """The name of this node's single ``list[Expression]`` operand field, if it has one.
+
+        :class:`LogicalExpr` and :class:`CallExpr` hold a variable number of operands in one such
+        field; every other operator node has exactly one field per operand instead.
+        """
+        fields = cls._operand_fields()
+        if len(fields) == 1 and get_origin(cls.model_fields[fields[0]].annotation) is list:
+            return fields[0]
+        return None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _from_wire(cls, data: Any) -> Any:
+        if not isinstance(data, list | tuple):
+            return data
+        tag_field = cls._tag_field()
+        operand_fields = cls._operand_fields()
+        if not operand_fields:
+            if len(data) != 2:
+                raise ValueError(f'{cls.__name__} wire form is ["{tag_field}", <value>], got {len(data)} elements')
+            return {tag_field: data[1]}
+        if not data:
+            raise ValueError(f"{cls.__name__} wire form is a non-empty array")
+        if (variadic_field := cls._variadic_field()) is not None:
+            return {tag_field: data[0], variadic_field: list(data[1:])}
+        if len(data) - 1 != len(operand_fields):
+            raise ValueError(f"{cls.__name__} wire form takes {len(operand_fields)} operand(s), got {len(data) - 1}")
+        return {tag_field: data[0], **dict(zip(operand_fields, data[1:], strict=True))}
+
+    @model_serializer(mode="plain")
+    def _to_wire(self) -> list[Any]:
+        tag_field = self._tag_field()
+        operand_fields = self._operand_fields()
+        if not operand_fields:
+            return [tag_field, getattr(self, tag_field)]
+        tag = getattr(self, tag_field)
+        if (variadic_field := self._variadic_field()) is not None:
+            return [tag, *getattr(self, variadic_field)]
+        return [tag, *(getattr(self, field) for field in operand_fields)]
+
+    @staticmethod
+    def _field_core_schemas(core_schema: CoreSchema) -> dict[str, Any]:
+        """Find *core_schema*'s per-field core schemas, keyed by field name.
+
+        Walked out of the actual core schema rather than rebuilt from the field annotations with a
+        fresh :class:`~pydantic.TypeAdapter`: every operand field is typed :data:`Expression`, which
+        names this very class back, and a fresh ``TypeAdapter(Expression)`` built *while* this
+        class's own schema is still being generated recurses without ever finding a base case. The
+        schema already being built has that recursion resolved -- each such field is a
+        ``"definition-ref"`` into the surrounding document's shared definitions -- so this walks
+        down to it instead of re-deriving it.
+
+        :param core_schema: This node's own core schema, however many validator layers deep.
+        :return: Each declared field's core schema, by field name.
+        """
+
+        def find_fields(schema: Any) -> dict[str, Any] | None:
+            if isinstance(schema, dict):
+                if schema.get("type") == "model-fields":
+                    return cast(dict[str, Any], schema["fields"])
+                for value in schema.values():
+                    if (found := find_fields(value)) is not None:
+                        return found
+            elif isinstance(schema, list):
+                for item in schema:
+                    if (found := find_fields(item)) is not None:
+                        return found
+            return None
+
+        fields = find_fields(core_schema)
+        if fields is None:
+            raise KeyError("no model-fields schema found")
+        return {name: field["schema"] for name, field in fields.items()}
+
+    @classmethod
+    def __get_pydantic_json_schema__(cls, core_schema: CoreSchema, handler: GetJsonSchemaHandler) -> JsonSchemaValue:
+        """Describe this node's array wire form, in both validation and serialization mode.
+
+        The default schema handler renders a ``model_validator(mode="before")``-wrapped model as if
+        the validator were not there: the plain field-keyed object shape, not the array the wire
+        form actually is. Rebuilt here from the field core schemas instead -- the same fix
+        :class:`~.base_models.LeanModel` applies to the equivalent problem on the serialization
+        side, needed on both sides here because the array shape holds in both directions.
+
+        :param core_schema: this node's own core schema, walked by :meth:`_field_core_schemas` to
+            find each field's schema.
+        :param handler: the handler producing the default JSON schema, reused so refs land in the
+            same ``$defs``/``components.schemas`` collection as the rest of the document.
+        :return: the JSON schema describing this node's ``[<tag>, <operand>, ...]`` array form.
+        """
+        field_schemas = cls._field_core_schemas(core_schema)
+        tag_field = cls._tag_field()
+        operand_fields = cls._operand_fields()
+        tag_schema = handler(field_schemas[tag_field])
+        if not operand_fields:
+            return {
+                "type": "array",
+                "prefixItems": [{"const": tag_field}, tag_schema],
+                "minItems": 2,
+                "maxItems": 2,
+                "title": cls.__name__,
+            }
+        if (variadic_field := cls._variadic_field()) is not None:
+            return {
+                "type": "array",
+                "prefixItems": [tag_schema],
+                "items": handler(field_schemas[variadic_field]["items_schema"]),
+                "minItems": 2,
+                "title": cls.__name__,
+            }
+        prefix_items = [tag_schema, *(handler(field_schemas[f]) for f in operand_fields)]
+        return {
+            "type": "array",
+            "prefixItems": prefix_items,
+            "minItems": len(prefix_items),
+            "maxItems": len(prefix_items),
+            "title": cls.__name__,
+        }
 
     @model_validator(mode="after")
     def _validate_depth(self) -> Self:
@@ -202,16 +306,12 @@ class UnaryExpr(ExprBase):
     every other named mathematical operation lives.
     """
 
-    _wire_tag_source_: ClassVar[str] = "unary_op"
-    _wire_tag_from_: ClassVar[Literal["value", "name"]] = "name"
-    _wire_payload_key_: ClassVar[str | None] = "op"
-
     unary_op: Literal["-"]
     """The operator applied to :attr:`rhs`.
 
-    Declared without a default even though it has exactly one possible value: it is the
-    discriminator for this node now, first in the class, so :class:`~.base_models.LeanModel`
-    serializes it always regardless of whether it has one.
+    Declared without a default even though it has exactly one possible value: it is
+    :meth:`ExprBase._tag_field`, and must appear as this node's wire-array first element,
+    ``["-", operand]``, on every dump.
     """
     rhs: Expression
     """The expression being negated."""
@@ -219,10 +319,6 @@ class UnaryExpr(ExprBase):
 
 class BinaryExpr(ExprBase):
     """An arithmetic operation on two operands."""
-
-    _wire_tag_source_: ClassVar[str] = "binary_op"
-    _wire_tag_from_: ClassVar[Literal["value", "name"]] = "name"
-    _wire_payload_key_: ClassVar[str | None] = "op"
 
     binary_op: Literal["+", "-", "*", "/", "%"]
     """The arithmetic operator."""
@@ -239,10 +335,6 @@ class CompareExpr(ExprBase):
     comparison is a valid :attr:`~.control_flow.ConditionalBase.var` where an arithmetic node is not.
     """
 
-    _wire_tag_source_: ClassVar[str] = "compare_op"
-    _wire_tag_from_: ClassVar[Literal["value", "name"]] = "name"
-    _wire_payload_key_: ClassVar[str | None] = "op"
-
     compare_op: Literal["<", "<=", ">", ">=", "==", "!="]
     """The comparison operator."""
     lhs: Expression
@@ -258,10 +350,6 @@ class NotExpr(ExprBase):
     :class:`BinaryExpr`: ``not`` is the only unary boolean connective, so it gets its own node
     instead of an optional ``lhs`` on a node shared with the binary ones.
     """
-
-    _wire_tag_source_: ClassVar[str] = "not_op"
-    _wire_tag_from_: ClassVar[Literal["value", "name"]] = "name"
-    _wire_payload_key_: ClassVar[str | None] = None
 
     not_op: Literal["not"]
     """The operator applied to :attr:`rhs`.
@@ -282,10 +370,6 @@ class LogicalExpr(ExprBase):
     ``and``/``or`` only -- ``not`` is :class:`NotExpr`. For n-ary ``and``/``or``, nest the
     expressions (e.g., ``and(and(a, b), c)``).
     """
-
-    _wire_tag_source_: ClassVar[str] = "logical_op"
-    _wire_tag_from_: ClassVar[Literal["value", "name"]] = "name"
-    _wire_payload_key_: ClassVar[str | None] = "op"
 
     logical_op: Literal["and", "or"]
     """The boolean connective."""
@@ -308,10 +392,6 @@ _VARIADIC_FUNCTIONS: Final = frozenset({"min", "max"})
 
 class CallExpr(ExprBase):
     """A call to one of the named functions in :data:`ExpressionFunction`."""
-
-    _wire_tag_source_: ClassVar[str] = "function"
-    _wire_tag_from_: ClassVar[Literal["value", "name"]] = "name"
-    _wire_payload_key_: ClassVar[str | None] = "name"
 
     function: ExpressionFunction
     """The function being called."""
@@ -338,32 +418,52 @@ _EXPRESSION_TAGS: Final[dict[type[ExprBase], str]] = {
     LogicalExpr: "logical_op",
     CallExpr: "function",
 }
-"""Expression node type -> the sole wire key that discriminates it."""
+"""Expression node type -> its internal discriminator tag (see :data:`Expression`'s ``Tag``s)."""
+
+
+def _operator_values(node_type: type[ExprBase]) -> tuple[str, ...]:
+    """The wire-array tags *node_type* is picked out by: its operators, or its field name.
+
+    :param node_type: One of :data:`_EXPRESSION_TAGS`' keys.
+    :return: For an operator node, every value its operator field's ``Literal`` accepts. For a leaf
+        node (no operand fields), a single-element tuple holding its one field's name.
+    """
+    tag_field = node_type._tag_field()
+    if not node_type._operand_fields():
+        return (tag_field,)
+    annotation = node_type.model_fields[tag_field].annotation
+    # CallExpr.function is spelled as the ExpressionFunction alias rather than a literal Literal[...]
+    # in its field annotation, and get_args() does not see through a PEP 695 type statement.
+    annotation = getattr(annotation, "__value__", annotation)
+    return get_args(annotation)
+
+
+_OPERATOR_TAGS: Final[dict[str, str]] = {
+    operator: tag
+    for node_type, tag in _EXPRESSION_TAGS.items()
+    for operator in _operator_values(node_type)
+    if operator != "-"  # shared by UnaryExpr and BinaryExpr; expression_tag_of resolves it by arity
+}
+"""Every node's wire-array first element (its operator, or a leaf's field name) -> its tag.
+
+Excludes ``"-"``: negation and subtraction share it, and array length -- 2 elements vs. 3 -- is
+what tells them apart, not the operator string alone.
+"""
 
 
 def expression_tag_of(value: Any) -> str | None:
-    """Return the wire key that discriminates *value* as an expression node, or :obj:`None`.
+    """Return the tag that discriminates *value* as an expression node, or :obj:`None`.
 
-    A mapping is tagged by its **sole** key, if that key is one of :data:`_EXPRESSION_TAGS`'
-    values -- every node's wire object, nested or flat, has exactly one key naming its type, so a
-    mapping with any other number of keys, or a single key that names something else, carries no
-    tag. Returning :obj:`None` in both cases is load-bearing: :func:`~.pulse_types._external_param_value_tag`
-    depends on it to fall through to its unit and reference branches.
-
-    A node whose payload is empty is spelled as the bare tag string by
-    :class:`~.base_models.NestedWireModel`, so a string naming a node key is tagged by *being* that
-    key; any other string -- a unit-suffixed quantity, a channel name -- still carries no tag.
-
-    :param value: A mapping or a bare tag (raw input), or an :class:`ExprBase` instance
-    :return: The discriminating key, or :obj:`None` if *value* is neither
+    :param value: A wire-form array (raw input) or an :class:`ExprBase` instance
+    :return: The discriminating tag, or :obj:`None` if *value* is neither
     """
-    if isinstance(value, str):
-        return value if value in _EXPRESSION_TAGS.values() else None
-    if isinstance(value, Mapping):
-        if len(value) == 1:
-            key = next(iter(value))
-            return key if key in _EXPRESSION_TAGS.values() else None
-        return None
+    if isinstance(value, list | tuple):
+        if not value:
+            return None
+        operator = value[0]
+        if operator == "-":
+            return "unary_op" if len(value) == 2 else "binary_op"
+        return _OPERATOR_TAGS.get(operator)
     for node_type, tag in _EXPRESSION_TAGS.items():
         if isinstance(value, node_type):
             return tag
@@ -381,7 +481,7 @@ type Expression = Annotated[
     | Annotated[CallExpr, Tag("function")],
     Discriminator(expression_tag_of),
 ]
-"""Any expression node, discriminated by the wire key naming its type."""
+"""Any expression node, discriminated by its wire-array tag (see :func:`expression_tag_of`)."""
 
 
 type ValueRef = SymbolRef | Expression
@@ -392,9 +492,9 @@ module already imports :mod:`~.reference_types`; the other placement is a cycle.
 one way: ``reference_types`` -> ``expressions`` -> the operation modules.
 
 A plain ``|`` union rather than a tagged one in the style of :data:`~.data_ops.SymbolValue`: its
-members are unambiguous by wire shape -- a symbol is ``{"var": ...}`` or ``{"ext": ...}``, an
-expression carries one of the seven node keys -- so there is no ambiguity for a discriminator to
-remove.
+members are unambiguous by wire shape -- a symbol is an object, ``{"var": ...}`` or ``{"ext":
+...}``, an expression is an array, ``[<tag>, <operand>, ...]`` -- so there is no ambiguity for a
+discriminator to remove.
 """
 
 type ValueRefLike = SymbolRefLike | Expression

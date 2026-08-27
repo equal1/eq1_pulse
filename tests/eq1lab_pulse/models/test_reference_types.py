@@ -5,7 +5,7 @@ validate and serialize, in both directions; ``"q0_drive"`` is what a channel doe
 a form it does not emit, which is what the schema-symmetry ledger next door measures.
 """
 
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 
 import pytest
 from pydantic import TypeAdapter, ValidationError
@@ -200,7 +200,7 @@ def test_var_name_is_bare_and_the_unions_stay_tagged():
         assert tagged.validate_json('{"var": "iq"}') == VariableRef("iq")
         assert tagged.dump_python(VariableRef("iq")) == {"var": "iq"}
 
-    assert SymbolExpr(symbol=VariableRef("iq")).model_dump() == {"symbol": {"var": "iq"}}
+    assert cast(list[Any], SymbolExpr(symbol=VariableRef("iq")).model_dump()) == ["symbol", {"var": "iq"}]
 
 
 def test_var_name_publishes_the_same_string_in_both_schema_modes():

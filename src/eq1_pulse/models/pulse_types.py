@@ -317,6 +317,11 @@ def _external_param_value_tag(value: Any) -> str | None:
             if key in _EXTERNAL_PARAM_REFERENCE_TAGS.values():
                 return key
         return None
+    if isinstance(value, list | tuple) and expression_tag_of(value) is not None:
+        # Checked before the "complex" branch below: an expression's wire form is an array too, and
+        # the two are told apart the same way expression_tag_of always is -- a leading operator
+        # string a plain ``(real, imag)`` pair never has.
+        return _EXTERNAL_PARAM_EXPR_TAG
     if isinstance(value, bool):
         return "bool"
     if isinstance(value, str):

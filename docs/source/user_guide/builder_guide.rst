@@ -923,36 +923,25 @@ using expressions.
 What an expression looks like on the wire
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-On the wire, each expression node carries exactly one key naming what it is, and that key's value
-holds the node's data. For the five operator nodes (``unary_op``, ``binary_op``, ``compare_op``,
-``not_op``, ``logical_op``), the key names the node's arity/result kind, and the operator symbol
-itself is nested inside under ``op`` -- the same nesting the "Wire format" section above
-introduces for expression operator nodes:
+On the wire, each expression node is a JSON array, ``[<tag>, <operand>, ...]``, not an object. For
+the operator nodes the first element is the operator itself -- ``"+"``, ``"<"``, ``"abs"`` -- and
+the rest of the array is its operand(s). ``symbol`` and ``value`` nodes have no operator, so the
+first element there is that field's own name instead:
 
 .. code-block:: json
 
-    {
-      "binary_op": {
-        "op": "*",
-        "lhs": {
-          "symbol": {
-            "var": "scale"
-          }
-        },
-        "rhs": {
-          "value": {
-            "mV": 80
-          }
-        }
-      }
-    }
+    [
+      "*",
+      ["symbol", {"var": "scale"}],
+      ["value", {"mV": 80}]
+    ]
 
 This is the wire form of ``expr(var("scale")) * Amplitude("80mV")``: a binary multiplication of a
-symbol and a voltage literal. ``LiteralExpr`` and ``SymbolExpr`` stay flat (``{"value": ...}``,
-``{"symbol": ...}``); ``CallExpr`` nests the same way as the operator nodes but under
-``function``/``name`` instead of an ``op`` field, e.g. ``{"function": {"name": "sqrt", "args": [...]}}``.
-No discriminator field is needed -- the presence of ``binary_op``, ``compare_op``, ``logical_op``,
-``not_op``, ``unary_op``, ``symbol``, ``value``, or ``function`` is itself the discriminator.
+symbol and a voltage literal. ``CallExpr`` follows the same shape: the function name is the first
+element and its arguments follow, e.g. ``["sqrt", ["value", 2]]`` or, for a variadic function,
+``["min", ["value", 1], ["value", 2]]``. No discriminator field is needed -- the array's first
+element (and, for ``"-"``, the array's length -- 2 for negation, 3 for subtraction) is itself the
+discriminator.
 
 Control Flow
 ------------

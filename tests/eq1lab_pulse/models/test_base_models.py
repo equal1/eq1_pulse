@@ -6,7 +6,7 @@ pins the other half of the claim -- that a plain :class:`LeanModel` serializes e
 before :class:`NestedWireModel` existed.
 """
 
-from typing import Any, ClassVar, Literal
+from typing import Any, ClassVar, Literal, cast
 
 import pytest
 from pydantic import BaseModel, Field, ValidationError, model_serializer
@@ -362,15 +362,11 @@ class SelfReferential(ExprBase):
     """A node whose operand field points back at its own type, as expression nodes do.
 
     This is the shape that trips the pydantic-core defect
-    :func:`test_pydantic_still_double_invokes_a_recursive_wrap_serializer` pins, and the one
-    :class:`~eq1_pulse.models.expressions.ExprBase` carries its re-entrancy guard for -- so this
-    is based on :class:`ExprBase`, not the plain :class:`NestedWireModel`, which no longer needs
-    or carries that guard.
+    :func:`test_pydantic_still_double_invokes_a_recursive_wrap_serializer` pins -- self-referential
+    and reached through another model's field. :class:`~eq1_pulse.models.expressions.ExprBase`'s
+    array wire form serializes with a *plain*-mode serializer rather than a wrap-mode one, which
+    sidesteps the defect rather than working around it.
     """
-
-    _wire_tag_source_: ClassVar[str] = "binary_op"
-    _wire_tag_from_: ClassVar[Literal["value", "name"]] = "name"
-    _wire_payload_key_: ClassVar[str | None] = "op"
 
     binary_op: Literal["+", "-"]
     rhs: "SelfReferential | int"
@@ -387,16 +383,13 @@ SelfReferentialHolder.model_rebuild()
 
 
 def test_pydantic_still_double_invokes_a_recursive_wrap_serializer():
-    """Pin the upstream defect :class:`NestedWireModel`'s re-entrancy guard works around.
+    """Pin the upstream defect that motivates avoiding ``@model_serializer(mode="wrap")`` here.
 
     When a model with a ``@model_serializer(mode="wrap")`` is *both* self-referential and reached
     through another model's field, pydantic-core invokes the serializer twice on the same instance,
     the second time over the first's output -- pydantic#11812 and pydantic#11563.
 
-    **This test failing is good news.** It means the upstream defect is fixed, and the guard in
-    :meth:`~eq1_pulse.models.expressions.ExprBase._wrap_serializer` -- along with the
-    ``_wire_serializing`` context variable it reads -- can be deleted. Do not "fix" this test by
-    loosening the assertion.
+    **This test failing is good news.** It means the upstream defect is fixed.
     """
     calls: list[str] = []
 
@@ -422,18 +415,19 @@ def test_pydantic_still_double_invokes_a_recursive_wrap_serializer():
     )
 
 
-def test_a_self_referential_node_is_wrapped_exactly_once():
-    """The guard's payload: one wrap per node, however the node is reached.
+def test_a_self_referential_node_serializes_exactly_once():
+    """A self-referential node serializes the same array whether standalone or through a field.
 
-    Without it the outermost node comes back double-wrapped -- ``{"binary_op": {"op": {"op": ...}}}``
-    for a node that keeps its operator, and an empty ``{"binary_op": {}}`` for one that drops it.
+    A wrap-mode serializer would double-invoke here (see the test above); the plain-mode array
+    serializer does not, so the outermost node comes back as a single ``[tag, operand]`` array
+    however it is reached, not one nested inside another.
     """
     node = SelfReferential(binary_op="+", rhs=SelfReferential(binary_op="-", rhs=1))
 
-    standalone = node.model_dump()
-    through_a_field = SelfReferentialHolder(node=node).model_dump()["node"]
+    standalone = cast(list[Any], node.model_dump())
+    through_a_field = cast(list[Any], SelfReferentialHolder(node=node).model_dump()["node"])
 
-    expected = {"binary_op": {"op": "+", "rhs": {"binary_op": {"op": "-", "rhs": 1}}}}
+    expected = ["+", ["-", 1]]
     assert standalone == expected
     assert through_a_field == expected, "reached through a field, the node was wrapped twice"
     assert SelfReferential.model_validate(expected) == node
