@@ -174,5 +174,9 @@ condaenv.*.requirements.txt
 # uv build temp file
 /.ok
 
+# codebase memory
+/.codebase-memory/
+
+
 openapi.json
 openapi.yaml
