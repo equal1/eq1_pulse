@@ -59,6 +59,7 @@ to re-open; each is a place where correct-looking code is wrong.
 | **The rank walk must stop at `IndexExpr` and `LenExpr`.** Both take a sweep and return a scalar, so `sweep_names_in()` must **not** descend into their `operand`. Get this wrong and `amplitude=sweep("vg")[var("i")]` — plan §6's index-iteration form, one of the two loop spellings the feature exists for — is rejected as rank-1, while every other test still passes. | Task 1         |
 | **A missed `model_rebuild()` does not raise.** It degrades a union member to a plain `dict`, surfacing far from its cause. `IterableSequence` and `Expression` both gain members this plan. `tests/eq1lab_pulse/models/test_valueref_rebuild_sweep.py` is the shape to copy — validate from a plain dict and assert the field is the model, not a dict standing in for one. | Tasks 1, 3     |
 | **`ValueRef` is edited, and it is used by nearly every model in the tree.** Narrowing it to `SymbolRef \| ScalarExpression` is one line whose blast radius is every read site in the IR. Every existing expression is rank-0 and must keep validating; if any existing test breaks, the walk is wrong, not the test. | Task 1         |
+| **`ValueRef` is not the only value site.** `pulse_types.ExternalParamValue` offers `Expression` as a tagged member of its own union — the type of `ExternalPulse.params` and `ExternalBlock.params` — so narrowing `ValueRef` leaves it wide. It needs the same edit, and nothing tells you: the miss type-checks, passes every test, and lets `{"sweep": "vg"}` reach an external program. Found in review of T1, not by QA. | Task 1         |
 | **A widened field is only half the edit.** The builder function exposing it needs the same widening or the field is unreachable through the public API. #6 shipped four such gaps and caught them in review, not QA — a narrow parameter hint is not a type error. | Task 4         |
 | **`LeanModel` treats the first single-valued `Literal` field as the discriminator** and always serializes it. `SweepDecl(SweepSpec, DataOpBase)` must declare `op_type` **first**, or the wire form in §15 is wrong in a way no type checker catches.               | Task 2         |
 | **`OpBase` lifts every operation to `{op_type: payload}` unconditionally.** This is why `SweepGroup.sweeps` is `list[SweepSpec]` and not `list[SweepDecl]`. Typing it the obvious way produces valid, ugly YAML that passes every test except §15's.             | Task 2         |
@@ -134,6 +135,8 @@ consumer uploads the wrong scan. T4 and T6 have loud failures.
 
 ## T1 — `models/expressions.py`: the sweep leaf, two nodes, and the rank rule
 
+**Landed** as `bb6dea6`, with the review fixes in steps 2, 5 and 5a folded in afterwards.
+
 **Read:** plan §3, §5, §15 (expressions and transforms).
 **Depends on:** nothing.
 **Goal:** a sweep is an expression operand; a tree knows whether it reads one; the value sites say
@@ -151,7 +154,8 @@ This is the plan's load-bearing task. Everything else consumes what it defines.
    `_wire_tag_from_ = "name"`, `_wire_payload_key_ = None` — and its single-valued `Literal` tag
    field. Read `NotExpr` and its docstring first; it explains why the tag comes from the field name.
    `IndexExpr.indices` is `list[ScalarExpression]`, not `list[Expression]`: an index is a position,
-   never a sweep.
+   never a sweep. Give it `Field(min_length=1)` — `a[]` names no item, and `CallExpr` already
+   establishes that arity is checked in this module.
 
 3. Register all three in `_EXPRESSION_TAGS` (`sweep`, `index_op`, `len_op`) and add
    `Annotated[..., Tag(...)]` members to the `Expression` union. `expression_tag_of` needs no edit —
@@ -177,23 +181,32 @@ This is the plan's load-bearing task. Everything else consumes what it defines.
    type ValueRef = SymbolRef | ScalarExpression        # was: SymbolRef | Expression
    ```
 
-   Both validators raise a message **naming the offending sweeps** — `_reject_sweeps` because the
-   author needs to know which one leaked into a value, `_require_sweep` because "this is not a
-   sweep" is otherwise unactionable. Leave `ValueRefLike` alone: it hints authoring input, and the
-   field's own type does the checking.
+   `_reject_sweeps` raises a message **naming the offending sweeps**, because the author needs to
+   know which one leaked into a value. `_require_sweep` has none to name — their absence is the
+   fault — so it names **the node it got instead**, via `expression_tag_of`; a bare "this is not a
+   sweep" is unactionable, and the usual way to land here by accident is an `IndexExpr` or `LenExpr`
+   that is rank-0 however deep the sweep under it sits. Leave `ValueRefLike` alone: it hints
+   authoring input, and the field's own type does the checking.
 
-6. `model_rebuild()` for the three new nodes at the bottom of the module, beside the existing eight.
+6. **Narrow `ExternalParamValue` too.** In `models/pulse_types.py`, its expression member becomes
+   `Annotated[ScalarExpression, Tag(_EXTERNAL_PARAM_EXPR_TAG)]`. It is the one value site in the IR
+   that does not go through `ValueRef` — see the trap table — and it types `ExternalPulse.params`
+   and `ExternalBlock.params`. Add `ScalarExpression` to the deferred import at the bottom of the
+   module. `ExternalParamValueLike` keeps its plain `Expression`, for the reason `ValueRefLike`
+   does.
 
-7. **Do not** add `"len"` to `ExpressionFunction`. Plan §9 Q3 closed that; `CallExpr` stays a set of
+7. `model_rebuild()` for the three new nodes at the bottom of the module, beside the existing eight.
+
+8. **Do not** add `"len"` to `ExpressionFunction`. Plan §9 Q3 closed that; `CallExpr` stays a set of
    mathematical functions, which over a sweep are applied elementwise.
 
-8. **Do not** curate which operators may take a sweep. A node is rank-1 exactly when an operand is,
+9. **Do not** curate which operators may take a sweep. A node is rank-1 exactly when an operand is,
    uniformly — comparisons included. Plan §9 Q21.
 
-9. `__all__` updated and sorted; the module docstring gains a paragraph on rank, in the terms it
-   already uses for result kind.
+10. `__all__` updated and sorted; the module docstring gains a paragraph on rank, in the terms it
+    already uses for result kind.
 
-10. Tests in `tests/eq1lab_pulse/models/test_expressions.py`:
+11. Tests in `tests/eq1lab_pulse/models/test_expressions.py`:
     - all three nodes round-trip, and their wire forms match §15 **literally**;
     - **the stop condition**: `sweep_names_in` returns empty for a `LenExpr` and an `IndexExpr`
       however deep the sweep sits, and `{"index_op": …}` **validates** at a `ValueRef` field;
@@ -205,7 +218,13 @@ This is the plan's load-bearing task. Everything else consumes what it defines.
     - `expression_tag_of` returns the three new tags and the existing eight are unchanged;
     - an `IndexExpr` nested inside a `BinaryExpr` round-trips **through JSON**, not just
       `model_dump`;
-    - the depth validator counts the new nodes like any other.
+    - the depth validator counts the new nodes like any other;
+    - `indices=[]` is rejected;
+    - `_require_sweep`'s message names the node it got.
+
+12. Tests in `tests/eq1lab_pulse/models/test_pulse_types.py` for step 6: a bare `{"sweep": "vg"}`
+    and a tree over one are both rejected at `ExternalParamValue`, an `index_op` and a `len_op` are
+    both accepted there, and the rejection reaches `ExternalPulse.params` and not just the alias.
 
 ### Acceptance
 
@@ -213,6 +232,9 @@ This is the plan's load-bearing task. Everything else consumes what it defines.
 - **No existing expression or model test is modified.** Every expression in the tree today is
   rank-0; if one now fails, the walk is wrong.
 - `git grep -n "SweepRef" src/` returns nothing. Plan §9 Q24.
+- `git grep -n "Annotated\[Expression" src/` returns exactly the two alias definitions in
+  `expressions.py` and nothing else — no other field or union still admits a rank-1 tree at a value
+  site.
 
 ### Out of scope
 
@@ -221,6 +243,8 @@ This is the plan's load-bearing task. Everything else consumes what it defines.
 ---
 
 ## T2 — `models/sweeps.py`: the declarations
+
+**Landed** as `be20b19`, including the `nd_array` fix step 2 now describes.
 
 **Read:** plan §2, §4.1, §4.3, §15 (declarations).
 **Depends on:** nothing.
@@ -233,8 +257,17 @@ This is the plan's load-bearing task. Everything else consumes what it defines.
    module. The sweep **expression** nodes are not here; they are in `expressions.py` (T1), which is
    what keeps this module a leaf and `control_flow.py` free of any import of it.
 
-2. `type SweepValue = LinSpace | Range | NumpyIterableArray`, reusing `basic_types` unchanged.
-   Members are decidable by wire shape; do not add a tag.
+2. `type SweepValue = LinSpace | Range | NumpyIntArray1D | NumpyFloatArray1D | NumpyComplexArray1D`.
+   `LinSpace` and `Range` come from `basic_types` unchanged. The three arrays come from `nd_array`
+   and are **restated, not imported as `NumpyIterableArray`** — that alias lives in `control_flow`,
+   which is an operation module, and importing it would break this module's leaf property, which is
+   step 1 and an acceptance criterion. Members are decidable by wire shape; do not add a tag.
+
+   Expect to fix `nd_array.np_int_1d_array_validate` on the way: it returned a real-dtype array
+   before checking `ndim`, so an `(N, 2)` real array — the authoring form of a 1-D *complex* one —
+   was accepted by the integer member and won the smart union ahead of the complex member. Move the
+   dimension check first. A complex `default` cannot round-trip until you do, and no existing test
+   covers it because `IterableSequence` never exercised that path.
 
 3. `SweepSpec(LeanModel)` with `name`, `dtype`, `shape`, `unit`, `default`, `limits`. **It cannot
    inherit `SymbolDeclBase`** — that is an `OpBase` descendant and would make every group member an
@@ -299,15 +332,25 @@ Lock-step validation (T4).
    strings" from "a list of iterables", and removing the member simplifies but does not delete the
    validator. **The zipped and broadcast cases must still pass.**
 
-4. In `models/sequence.py`, add `SweepOp` to `DiscriminableOp`.
+4. In `models/sequence.py`, add `SweepOp` to `DiscriminableOp`. This is also the first thing that
+   imports `models/sweeps.py` at all — T2 left it a leaf nothing reaches — so a rebuild that was
+   never exercised now is. Check what `models/__init__.py` re-exports while you are there: it lists
+   nine modules and `expressions` and `sweeps` are not among them, so `Expression`, `ValueRef`,
+   `SweepDecl` and the rest are not importable from `eq1_pulse.models`. That predates this plan;
+   decide it deliberately rather than by omission, and say which way you went.
 
-5. Run the rebuild sweep. Every model transitively mentioning the new union members needs
+5. **Optional, and this is the task to do it in:** `control_flow.NumpyIterableArray` and the three
+   array members `sweeps.SweepValue` restates are the same set written twice (plan §2.1). Moving
+   the alias down into `nd_array` and importing it from both removes the duplication without
+   costing `sweeps.py` its leaf property. You are editing that line anyway.
+
+6. Run the rebuild sweep. Every model transitively mentioning the new union members needs
    `model_rebuild()`. Add `tests/eq1lab_pulse/models/test_sweep_rebuild.py` on the model of
    `test_valueref_rebuild_sweep.py` — validate one representative model per family from a plain
    dict containing a sweep expression and assert the field deserialized to the model, not a dict.
    This is the task's highest-value test; a missed rebuild is silent.
 
-6. Tests:
+7. Tests:
    - `test_control_flow.py` — `Iteration` accepts a bare `{"sweep": …}`, a `binary_op` tree over
      one, and `Indices`; a rank-0 tree and a `list[str]` are both now **rejected**; zipped and
      broadcast forms unchanged;
@@ -502,6 +545,12 @@ Calling it from anywhere. Any model change. Any builder change. Evaluating a swe
    and `QualifiedSweepValue` are present; `SweepExpr`, `IndexExpr` and `LenExpr` are present. There
    is **no** `AffineSweep` and no `SweepRef`; if you find yourself looking for either, read plan
    §17.
+
+   **Do not look for the rank rule in the schema, and do not assert it is there.** `ScalarExpression`
+   and `SweepSource` are `AfterValidator`s, which emit no JSON Schema, so all three aliases publish
+   the same thing and a schema validator accepts `{"sweep": "vg"}` under an amplitude. Plan §3.3
+   says so; if the docs section in step 4 claims the schema enforces rank, that is the sentence to
+   fix, not the schema.
 
 3. `examples/swept_gate_scan.py` — plan §13 example C, made runnable, dumping the program twice
    with different supplied ranges to show §0's point. `tests/test_examples.py` discovers examples by
@@ -714,6 +763,32 @@ question, then an explicit "what this means for the sweeps plan" section naming 
 ### Out of scope
 
 Changing anything in this repo. Proposing eq1lab changes. This is a survey.
+
+---
+
+## Deferred — file as issues once this plan closes
+
+Found while reviewing T1 and T2. Neither blocks a task here, and neither should be picked up while
+tasks are still landing on the same files.
+
+**D-A — the expression walks are exponential on a shared-operand DAG.** `_expression_depth` and
+`sweep_names_in` both walk structure rather than distinct objects, so a tree that reuses one operand
+instance at both sides of a node — `n = BinaryExpr(lhs=n, rhs=n)`, repeated — doubles its expansion
+per level. Pydantic never copies submodels, so an author can build one in Python; it becomes
+unusably slow around 21 levels, under `MAX_EXPRESSION_DEPTH`. It is **not reachable from a document**:
+JSON has no sharing, so a deserialized tree is a real tree. Predates this plan (`_expression_depth`
+came with #3); T1 inherited the shape rather than introducing it, and the note lives on
+`_expression_depth`'s docstring.
+
+The fix is memoizing on `id()` in both walks, and the reason not to do it now is that it changes what
+"depth" means for a shared subtree — a real decision, and `MAX_EXPRESSION_DEPTH` is a wire-format
+constraint that T3's and T6's schema work is measured against. Investigate after T8.
+
+**D-B — `models/__init__.py` re-exports neither `expressions` nor `sweeps`.** It lists nine modules;
+`Expression`, `ValueRef`, `SweepDecl`, `SweepSpec` and `sweep_names_in` are therefore not importable
+from `eq1_pulse.models`, only from their own modules. Also predates this plan. T3 step 4 asks the
+task that first imports `sweeps.py` to settle it rather than leave it to omission; if T3 defers it
+too, it belongs here.
 
 ---
 

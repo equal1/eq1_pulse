@@ -66,7 +66,7 @@ not there, so the model says **items** throughout — the word `Iteration` alrea
 
 ```python
 # models/sweeps.py
-type SweepValue = LinSpace | Range | NumpyIterableArray
+type SweepValue = LinSpace | Range | NumpyIntArray1D | NumpyFloatArray1D | NumpyComplexArray1D
 ```
 
 The list-valued counterpart of `data_ops.SymbolValue`. Members are decidable by wire shape with no
@@ -82,6 +82,13 @@ tag, exactly as `SymbolValue`'s are:
 `LinSpaceLike` / `RangeLike` TypedDict authoring forms. Both are already explicitly unitless
 (*"units should be specified in the variable declaration"*), which is what `SweepDecl.unit`
 continues.
+
+The array members are the same three `control_flow.NumpyIterableArray` is an alias for, **restated
+over `nd_array` rather than imported from it**. `NumpyIterableArray` lives in `control_flow`, which
+is an operation module, and `models/sweeps.py` takes no import from one — that is what keeps it a
+leaf (§4.1's task acceptance). The duplication is three names and is deliberate; consolidating it
+means moving the alias down into `nd_array` and re-exporting, which is a change to `control_flow`
+and belongs to the task that edits `IterableSequence` anyway.
 
 ### 2.2 Compactness, and where it went
 
@@ -178,12 +185,25 @@ type ScalarExpression = Annotated[Expression, AfterValidator(_reject_sweeps)]
 type SweepSource = Annotated[Expression, AfterValidator(_require_sweep)]
 """An expression that reads at least one. What every sweep site accepts."""
 
-type ValueRef = SymbolRef | ScalarExpression        # the one edit to an existing alias
+type ValueRef = SymbolRef | ScalarExpression        # the first of two edits to existing aliases
 ```
 
-`ValueRef` is the alias every read site in the IR already uses — `Play.amplitude`,
+`ValueRef` is the alias nearly every read site in the IR already uses — `Play.amplitude`,
 `Repetition.count`, `Delay.duration`, `ConditionalBase.var`, all of them. Guarding it once guards
-every one of them, and no field anywhere else is touched.
+every one of them.
+
+**There is a second value site, and it is easy to miss.** `pulse_types.ExternalParamValue` — the
+type of `ExternalPulse.params` and `ExternalBlock.params` — does not go through `ValueRef`. It
+offers an expression as one tagged member of its own union, so it needs the same narrowing
+independently:
+
+```python
+    | Annotated[ScalarExpression, Tag(_EXTERNAL_PARAM_EXPR_TAG)]     # was: Expression
+```
+
+Nothing warns you about this. A missed narrowing here type-checks, passes every test, and lets
+`{"sweep": "vg"}` reach an external program as a parameter. Together the two aliases are the whole
+of the rank guard on the value side; a value site added later has to pick one of them on purpose.
 
 Inside a sweep-valued tree the operands stay plain `Expression`, which is what lets a sweep leaf sit
 under a `BinaryExpr` at all. The guard applies at the boundary, not at every node.
@@ -197,11 +217,21 @@ under a `BinaryExpr` at all. The guard applies at the boundary, not at every nod
 | `if_(sweep("vg") > 0)`                                      | `ScalarExpression` — `ConditionalBase.var` is a `ValueRef`    |
 | `for_("i", var("n"))` over a scalar                         | `SweepSource` — a rank-0 tree where a sweep is required       |
 | `for_("i", ext("gain") * 2)`                                | `SweepSource` — same, and this one used to be unrepresentable |
+| `external_pulse("gate", detuning=sweep("vg"))`              | `ScalarExpression` — via `ExternalParamValue`, §3.2          |
 
-On the builder, on deserialization, on a program emitted by another producer, and visible in the
-published OpenAPI schema — the same four places the union-membership version covered. The second
-and third rows are new: the first version of this plan could not catch them at all, because a
-sweep-bearing *tree* had no way to exist and therefore no way to be rejected.
+On the builder, on deserialization, and on a program emitted by another producer — wherever the
+document passes through pydantic. The second and third rows are new: the first version of this plan
+could not catch them at all, because a sweep-bearing *tree* had no way to exist and therefore no way
+to be rejected.
+
+**What the published schema does not carry.** This is the admitted cost of reading rank off the
+tree instead of off union membership, and it is not obvious: an `AfterValidator` emits no JSON
+Schema, so `ScalarExpression`, `SweepSource` and `Expression` all publish the *same* schema, and a
+consumer validating a document against the OpenAPI spec alone accepts `{"sweep": "vg"}` under an
+amplitude. The union-membership version would have shown the rule, because a type is a schema and a
+walk is not. Rank is enforced by eq1_pulse and stated in the docs, not by the spec — which is the
+same place `check_arguments()` and `affine_form()` sit, and the same *declare, never enforce* line
+§1 draws everywhere else. A task publishing the schema (§12) should not assert otherwise.
 
 **What this does not catch** is lock-step: whether the sweeps a tree reads are members of one group.
 That needs declaration scope, which no field validator has. It was a build-time check in the first
@@ -427,9 +457,10 @@ index iteration — would be rejected as rank-1 by the `ValueRef` guard. **This 
 in the walk and the one thing a test must pin**: a `LenExpr` or `IndexExpr` is rank-0 *whatever*
 its operand reads, exactly as `len()` of a list is an `int`.
 
-`indices` is a list, so `a[i, j]` is representable without a second node. The IR validates arity and
-depth and nothing else — no bounds checking, no rank checking against `shape`. Same *declare, never
-enforce* line `ValueLimits` sits on.
+`indices` is a list, so `a[i, j]` is representable without a second node. It is `min_length=1` —
+`a[]` names no item, and arity is the one structural thing this module checks, as `CallExpr` already
+does. Beyond arity the IR validates only depth: no bounds checking, no count checked against a
+declaration's `shape`. Same *declare, never enforce* line `ValueLimits` sits on.
 
 `LenExpr` gets its own node rather than joining `ExpressionFunction` on the precedent `CompareExpr`
 sets: that split is by **result kind**, and `len` is the one operation returning an `int` from
@@ -652,7 +683,7 @@ transform has no name for another to reference.
 | Q11 | Element iteration, index iteration, or both?                    | **Both.** Element binding is the common case; the index is needed when an item and its position meet in one expression, or to reach a fixed item. |
 | Q12 | What are the public names?                                      | **`sweep()`** references, **`sweep_decl()`** declares a supplied sweep, **`sweep_group()`** declares a lock-step group — one `sweep*` prefix, and the wire keys match. A transform has no name at all (Q13). Rejected: `axis()` (contradicts Q5's "items may repeat and need not be ordered"); `derived_sweep()` and `parallel_sweep()` (both broke the prefix, and "parallel" already means simultaneous-in-time here); `together_sweep()` and `sweep_ref()` (near-misses). |
 | Q13 | Is a transform named and declared?                              | **No — it is an anonymous value.** A sweep-valued expression goes wherever a sweep goes (`SweepSource`), so it is written where it is read and the loop variable already supplies the name. This removes an operation, a wire key, a `dtype` that could not be inferred, a scoping rule, a name-collision check and a cycle check. There is no assignment anywhere in this design. §4.2. |
-| Q20 | How is rank enforced, now that a tree can be rank-1?            | **Two annotated aliases over `Expression`, each running a bounded walk.** `ScalarExpression` rejects a tree reading any sweep, and `ValueRef` is defined in terms of it, so one edit guards every value site in the IR; `SweepSource` requires one. Rejected: a whole-program `validate_ranks()` pass — the thing Q1 rejected `var()` for. This is not that: the walk is local to one field's value, bounded by `MAX_EXPRESSION_DEPTH`, and runs during validation like any other constraint. §3.2. |
+| Q20 | How is rank enforced, now that a tree can be rank-1?            | **Two annotated aliases over `Expression`, each running a bounded walk.** `ScalarExpression` rejects a tree reading any sweep and `SweepSource` requires one. Two field edits apply the first: `ValueRef`, which nearly every value site goes through, and `ExternalParamValue`, which does not and so needs its own. Rejected: a whole-program `validate_ranks()` pass — the thing Q1 rejected `var()` for. This is not that: the walk is local to one field's value, bounded by `MAX_EXPRESSION_DEPTH`, and runs during validation like any other constraint. The cost, admitted in §3.3, is that a walk publishes no JSON Schema, so the rule is invisible to a consumer validating against the spec alone. §3.2. |
 | Q21 | Which operators may take a sweep?                               | **All of them, uniformly.** A node is rank-1 exactly when an operand is. That admits boolean sweeps (`sweep("d") > 0`), which reach only `Iteration.items` and `IndexExpr.operand` and are harmless at both — a condition is a `ValueRef` and already rejects them. Rejected: a curated arithmetic-only allow-list, which needs a validator and a rule with no principle behind it. §5. |
 | Q22 | Where did compact transport go?                                 | **Into `affine_form()`, a recogniser in `utilities/`.** It returns `terms` and an `offset` for the affine subset and `None` otherwise — the same fields the deleted model carried, produced by analysis rather than enforced by a type. Advisory, like `check_arguments()`; nothing calls it automatically. §2.2. |
 | Q23 | Is lock-step checked by the models or the builder?              | **The builder, unchanged from the first version.** It needs declaration scope, which no field validator has. The first version could not check `AffineSweep.terms` in the model either, and said so; the revision changed the input to the check — a tree walk instead of a key list — not its home. §8.3. |
@@ -1043,7 +1074,7 @@ array with no discriminator change.
 {index_op: {operand: {sweep: vg}, indices: [{symbol: {var: i}}]}}
 
 # the same two over an anonymous transform -- operand is SweepSource, so any tree fits
-{len_op: {operand: {binary_op: {op: "*", lhs: {sweep: vg}, rhs: 2}}}}
+{len_op: {operand: {binary_op: {op: "*", lhs: {sweep: vg}, rhs: {value: 2}}}}}
 
 # vg[i] * gate.gain, as a Play amplitude -- rank-0, because index_op is
 amplitude:

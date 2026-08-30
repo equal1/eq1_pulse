@@ -676,3 +676,18 @@ def test_depth_validator_counts_the_new_nodes():
                 rhs=nested_negations(MAX_EXPRESSION_DEPTH - 1),
             ),
         )
+
+
+def test_index_expr_needs_at_least_one_index():
+    """``a[]`` names no item. Arity is checked here as it is for ``CallExpr``."""
+    with pytest.raises(ValidationError):
+        IndexExpr(index_op="[]", operand=SweepExpr(sweep="vg"), indices=[])
+
+
+def test_sweep_source_error_names_the_node_it_got():
+    """``_require_sweep`` has no sweep to name, so it names the tree it was handed instead."""
+    with pytest.raises(ValidationError, match="binary_op tree reads none"):
+        sweep_source_adapter().validate_python({"binary_op": {"op": "+", "lhs": {"value": 1}, "rhs": {"value": 2}}})
+
+    with pytest.raises(ValidationError, match="len_op tree reads none"):
+        sweep_source_adapter().validate_python({"len_op": {"operand": {"sweep": "vg"}}})

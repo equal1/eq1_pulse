@@ -39,7 +39,7 @@ import contextvars
 from collections.abc import Iterator, Mapping
 from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Final, Literal, Self
 
-from pydantic import AfterValidator, Discriminator, Tag, model_serializer, model_validator
+from pydantic import AfterValidator, Discriminator, Field, Tag, model_serializer, model_validator
 
 from .base_models import NestedWireModel
 from .identifier_str import IdentifierStr
@@ -172,6 +172,20 @@ def _expression_depth(expression: ExprBase) -> int:
     Walked breadth-first with an explicit queue rather than recursively: this runs on trees that
     have not yet been depth-checked, and a recursive walk would hit the interpreter's own limit
     before reporting the one this is measuring.
+
+    .. note::
+
+       The walk visits *structure*, not distinct objects, so it is exponential in depth when the
+       same operand instance is reused at both sides of a node -- ``n = BinaryExpr(lhs=n, rhs=n)``
+       repeated builds a DAG whose expansion doubles per level. Pydantic does not copy submodels
+       (``revalidate_instances`` is never), so an author can construct one in Python; it slows to a
+       crawl around 21 levels, well under :data:`MAX_EXPRESSION_DEPTH`. Deserialized documents
+       cannot hit it, since JSON has no sharing and every node arrives as its own object.
+
+       Left as it is deliberately: memoizing on :func:`id` would fix both this and
+       :func:`sweep_names_in`, which inherits the same shape, but it changes the meaning of "depth"
+       for a shared subtree and is not something to decide while a feature is landing on top. To be
+       investigated once the sweeps plan closes; see its execution breakdown, *Deferred*.
 
     :param expression: The root of the tree to measure
     :return: The number of node levels, at least 1
@@ -392,8 +406,12 @@ class IndexExpr(ExprBase):
     wire tag besides -- read off the field *name*, since ``"[]"`` is its only possible value."""
     operand: SweepSource
     """The sweep-valued expression being indexed."""
-    indices: list[ScalarExpression]
-    """The position of the wanted item, one entry per dimension."""
+    indices: Annotated[list[ScalarExpression], Field(min_length=1)]
+    """The position of the wanted item, one entry per dimension.
+
+    At least one: ``a[]`` names no item, and arity is the one structural thing this module does
+    check -- the same line :meth:`CallExpr._validate_arity` draws.
+    """
 
 
 class LenExpr(ExprBase):
@@ -494,7 +512,10 @@ def sweep_names_in(expression: Expression) -> frozenset[str]:
     loop forms sweeps exist for -- would be rejected as rank-1 by the :data:`ValueRef` guard.
 
     Iterative rather than recursive, for the reason :func:`_expression_depth` is: the depth cap
-    bounds any tree that has validated, but this also runs on trees mid-validation.
+    bounds any tree that has validated, but this also runs on trees mid-validation. It inherits that
+    function's behaviour on a tree whose operand instances are shared -- see the note there -- and
+    is unreachable for the same reason: such a tree cannot be built past ~21 levels, and cannot be
+    deserialized at all.
 
     :param expression: The root of the tree to inspect
     :return: The sweep names read, or an empty set if the tree is rank-0
@@ -531,14 +552,23 @@ def _reject_sweeps(expression: Expression) -> Expression:
 
 
 def _require_sweep(expression: Expression) -> Expression:
-    """Validate that *expression* reads at least one sweep.
+    """Validate that *expression* reads at least one sweep, naming what it got instead.
+
+    There are no sweeps to name here -- their absence is the fault -- so the message names the node
+    the tree is rooted at instead. "This is not a sweep" alone is unactionable: the author needs to
+    see that the tree they wrote is the rank-0 one, and that :class:`IndexExpr` and :class:`LenExpr`
+    are rank-0 however deep a sweep sits under them, which is the usual way to arrive here by
+    accident.
 
     :param expression: The expression being validated
     :return: *expression* unchanged
     :raises ValueError: If the tree reads no sweep
     """
     if not sweep_names_in(expression):
-        raise ValueError("a sweep is required here, but this expression reads none")
+        tag = expression_tag_of(expression) or "expression"
+        raise ValueError(
+            f"a sweep is required here, but this {tag} tree reads none; reference a declared sweep with sweep(name)"
+        )
     return expression
 
 
@@ -571,10 +601,16 @@ expression carries one of the node keys -- so there is no ambiguity for a discri
 remove.
 
 The expression side is :data:`ScalarExpression` rather than :data:`Expression`, so guarding this
-one alias guards every read site in the IR -- :attr:`~.channel_ops.Play.amplitude`,
+one alias guards every read site typed on it -- :attr:`~.channel_ops.Play.amplitude`,
 :attr:`~.control_flow.Repetition.count`, :attr:`~.control_flow.ConditionalBase.var`, all of them --
 against a sweep appearing where a scalar belongs, at any depth. A document that put a sweep under
 an amplitude is rejected; none can exist, since sweeps are newer than this alias.
+
+That is *nearly* every value site but not quite: :data:`~.pulse_types.ExternalParamValue` offers an
+expression as one member of its own union rather than going through this alias, and carries the
+same narrowing for the same reason. The two together are the whole of the rank guard on the value
+side; a third value site added later must choose one of them deliberately, because neither type
+error nor test failure follows from using plain :data:`Expression`.
 """
 
 type ValueRefLike = SymbolRefLike | Expression
