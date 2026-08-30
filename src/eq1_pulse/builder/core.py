@@ -400,7 +400,11 @@ def for_(
 
     # Handle both single and zipped iteration items
     # For zipped iteration, items should be a list; convert single iterable to list
-    validated_items: list[Iterable[Any] | Range | LinSpace] | Iterable[Any] | Range | LinSpace
+    # `_convert_range_to_model` converts a Python `range` and passes everything else through
+    # unchanged, so this matches its own return type rather than restating `for_()`'s -- an item
+    # may be an `Expression` (a sweep or a transform of one) or `Indices`, neither of which is an
+    # `Iterable[Any]`.
+    validated_items: list[Range | list[Any] | Any] | Range | list[Any] | Any
     if isinstance(validated_vars, list):
         # Multiple variables - items must be a list of iterables (zipped iteration)
         if not isinstance(items, list):

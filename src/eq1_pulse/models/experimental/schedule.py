@@ -24,7 +24,8 @@ from ..data_ops import DataOp
 
 if TYPE_CHECKING:
     from ..basic_types import LinSpaceLike, RangeLike, TimeDict
-    from ..expressions import ValueRefLike
+    from ..control_flow import Indices
+    from ..expressions import Expression, ValueRefLike
     from ..nd_array import NumpyArrayLike
     from ..reference_types import VariableRefLike
 
@@ -195,11 +196,12 @@ class SchedIteration(IterationBase[Schedule]):
             /,
             *,
             var: VariableRefLike | list[VariableRefLike],
-            items=LinSpaceLike
+            items: LinSpaceLike
             | RangeLike
             | NumpyArrayLike
-            | list[str]
-            | list[LinSpaceLike | RangeLike | NumpyArrayLike | list[str]],
+            | Expression
+            | Indices
+            | list[LinSpaceLike | RangeLike | NumpyArrayLike | Expression | Indices],
             body: ScheduleLike,
             **data,
         ): ...
