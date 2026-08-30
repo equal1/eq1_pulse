@@ -11,6 +11,7 @@ expensive to reproduce.
 | [openpulse-alignment-assessment.md](openpulse-alignment-assessment.md) | How eq1_pulse's builder and models align with OpenPulse / OpenQASM 3, and whether `Schedule` can be eliminated. **Start here.** |
 | [PR #7](https://github.com/equal1/eq1_pulse/pull/7) | The work that came out of it: isolate `Schedule`, unify on `OpSequence`, add the opaque `ExternalBlock`. Remaining follow-on work is tracked in [#8](https://github.com/equal1/eq1_pulse/issues/8). |
 | [pydantic-json-schema-assessment.md](pydantic-json-schema-assessment.md) | Why every `model_json_schema()` override in `models/` was silently bypassed, what the published OpenAPI document was actually describing, and the conversion to `__get_pydantic_json_schema__`. |
+| [sweeps-eq1lab-integration.md](sweeps-eq1lab-integration.md) | How eq1lab would consume the sweeps design in `docs/plans/sweeps-plan.md`, judged against the authoritative `eq1lab-experiments` corpus (`common_exp_lib`, `experiments/beta2`) and the `hp-peti/260824-qblox-branch-lift` qblox-pulsing branch: `@apparatus_pulse_action` typed signatures are `SweepDecl`s, `do_nd_inner_loop`'s positional level list is `ProgramArguments.sweeps`, `InnerTogetherSweep`→`SweepGroup`, and every derived sweep is a host-side affine transform of a compact endpoint (the manual form of `affine_form()`). `ParameterExpr` / `{np.expr}` is an eq1x-scripts-only construct, unused in eq1lab-experiments. Reopens no §9 decision; the corpus is a close structural match for the design. |
 
 ## Raw research dumps
 
