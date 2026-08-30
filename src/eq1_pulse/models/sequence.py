@@ -38,6 +38,7 @@ from .control_flow import ConditionalBase, IterationBase, RepetitionBase, Sequen
 from .data_ops import DataOp
 from .external_block import ExternalBlock
 from .nd_array import NumpyArray
+from .sweeps import SweepOp
 
 if TYPE_CHECKING:
     from .basic_types import LinSpaceLike, RangeLike
@@ -46,7 +47,7 @@ if TYPE_CHECKING:
     from .reference_types import VariableRefLike
 
 type DiscriminableOp = Annotated[
-    ChannelOp | DataOp | ExternalBlock | Repetition | Iteration | Conditional, OperationDiscriminator()
+    ChannelOp | DataOp | ExternalBlock | Repetition | Iteration | Conditional | SweepOp, OperationDiscriminator()
 ]
 """Every operation, selected by the sole key of its ``{op_type: payload}`` wire object."""
 

@@ -24,7 +24,8 @@ from eq1_pulse.models import (
     VariableRef,
     WaitForTrigger,
 )
-from eq1_pulse.models.expressions import BinaryExpr, CompareExpr, LiteralExpr, SymbolExpr
+from eq1_pulse.models.expressions import BinaryExpr, CompareExpr, LiteralExpr, SweepExpr, SymbolExpr
+from eq1_pulse.models.sweeps import SweepDecl, SweepGroup, SweepSpec
 
 
 def test_op_sequence_init():
@@ -214,9 +215,10 @@ def test_iteration_multiple_variables_validation_errors():
 
 
 def test_iteration_multiple_variables_construction():
+    """The fourth iterable is a bare sweep reference, not a ``list[str]`` -- removed by this plan."""
     iter_obj = Iteration(
         var=[VariableRef("i"), VariableRef("j"), VariableRef("k"), VariableRef("s")],
-        items=[[0, 1, 2], Range(start=3, stop=5, step=1), LinSpace(start=10, stop=20, num=3), ["a", "b", "c"]],
+        items=[[0, 1, 2], Range(start=3, stop=5, step=1), LinSpace(start=10, stop=20, num=3), SweepExpr(sweep="s")],
         body=OpSequence([]),
     )
     assert isinstance(iter_obj, Iteration)
@@ -226,7 +228,7 @@ def test_iteration_multiple_variables_construction():
     assert isinstance(iter_obj.items[0], np.ndarray)
     assert isinstance(iter_obj.items[1], Range)
     assert isinstance(iter_obj.items[2], LinSpace)
-    assert isinstance(iter_obj.items[3], list)
+    assert isinstance(iter_obj.items[3], SweepExpr)
 
 
 def test_iteration_multiple_variables_validation():
@@ -238,7 +240,7 @@ def test_iteration_multiple_variables_validation():
                     [0, 1, 2],
                     {"start": 3, "stop": 5, "step": 1},
                     {"start": 10, "stop": 20, "num": 3},
-                    ["a", "b", "c"],
+                    {"sweep": "s"},
                 ],
                 "body": [],
             }
@@ -251,7 +253,7 @@ def test_iteration_multiple_variables_validation():
     assert isinstance(iter_obj.items[0], np.ndarray)
     assert isinstance(iter_obj.items[1], Range)
     assert isinstance(iter_obj.items[2], LinSpace)
-    assert isinstance(iter_obj.items[3], list)
+    assert isinstance(iter_obj.items[3], SweepExpr)
 
 
 def test_iteration_multiple_variables_validate_json():
@@ -263,7 +265,7 @@ def test_iteration_multiple_variables_validate_json():
                     [0, 1, 2],
                     {"start": 3, "stop": 5, "step": 1},
                     {"start": 10, "stop": 20, "num": 3},
-                    ["a", "b", "c"]
+                    {"sweep": "s"}
                 ],
                 "body": []
             }
@@ -277,13 +279,13 @@ def test_iteration_multiple_variables_validate_json():
     assert issubclass(iter_obj.items[0].dtype.type, np.integer)
     assert isinstance(iter_obj.items[1], Range)
     assert isinstance(iter_obj.items[2], LinSpace)
-    assert isinstance(iter_obj.items[3], list)
+    assert isinstance(iter_obj.items[3], SweepExpr)
 
 
 def test_iteration_multiple_variables_serialize_json():
     iter_obj = Iteration(
         var=[VariableRef("i"), VariableRef("j"), VariableRef("k"), VariableRef("s")],
-        items=[[0, 1, 2], Range(start=3, stop=5, step=1), LinSpace(start=10, stop=20, num=3), ["a", "b", "c"]],
+        items=[[0, 1, 2], Range(start=3, stop=5, step=1), LinSpace(start=10, stop=20, num=3), SweepExpr(sweep="s")],
         body=OpSequence([]),
     )
     serialized = iter_obj.model_dump_json()
@@ -293,9 +295,45 @@ def test_iteration_multiple_variables_serialize_json():
         + '"items":['
         + '[0,1,2],{"start":3,"stop":5,"step":1},'
         + '{"start":10,"stop":20,"num":3},'
-        + '["a","b","c"]'
+        + '{"sweep":"s"}'
         + '],"body":[]}}'
     )
+
+
+def test_sequence_with_sweep_operations_round_trips_through_json():
+    """A sequence carrying a ``sweep_decl``, a ``sweep_group`` and both loop forms over them.
+
+    Matches plan section 15's declaration and loop wire forms literally: no ``sweep_decl:`` key repeated
+    inside the group, ``LeanModel`` elision leaving out unset ``shape``/``limits``, and a bare
+    ``{"sweep": ...}`` for both the single-var and the zipped-over-a-group loop.
+    """
+    sequence = OpSequence(
+        [
+            SweepDecl(name="vg", dtype="float", unit="mV"),
+            SweepGroup(
+                sweeps=[
+                    SweepSpec(name="i_amp", dtype="float", unit="mV"),
+                    SweepSpec(name="drive_freq", dtype="float", unit="MHz"),
+                ]
+            ),
+            Iteration(var=VariableRef("v"), items=SweepExpr(sweep="vg"), body=OpSequence([])),
+            Iteration(
+                var=[VariableRef("a"), VariableRef("f")],
+                items=[SweepExpr(sweep="i_amp"), SweepExpr(sweep="drive_freq")],
+                body=OpSequence([]),
+            ),
+        ]
+    )
+    serialized = sequence.model_dump_json()
+    assert serialized == (
+        '[{"sweep_decl":{"name":"vg","dtype":"float","unit":"mV"}},'
+        '{"sweep_group":{"sweeps":[{"name":"i_amp","dtype":"float","unit":"mV"},'
+        '{"name":"drive_freq","dtype":"float","unit":"MHz"}]}},'
+        '{"for":{"var":"v","items":{"sweep":"vg"},"body":[]}},'
+        '{"for":{"var":["a","f"],"items":[{"sweep":"i_amp"},{"sweep":"drive_freq"}],"body":[]}}]'
+    )
+    round_tripped = OpSequence.model_validate_json(serialized)
+    assert round_tripped == sequence
 
 
 def test_sequence_external_param_references_round_trip_without_degrading():

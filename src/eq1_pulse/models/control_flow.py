@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sized
 from typing import Annotated, Literal, Self
 
 from pydantic import (
@@ -12,8 +12,9 @@ from pydantic import (
     model_validator,
 )
 
+from .base_models import LeanModel
 from .basic_types import LinSpace, OpBase, Range
-from .nd_array import NumpyComplexArray1D, NumpyFloatArray1D, NumpyIntArray1D
+from .nd_array import NumpyIterableArray
 from .reference_types import ExternalRef, VariableRef, VarName
 
 __all__ = "ConditionalBase", "IterationBase", "RepetitionBase"
@@ -84,8 +85,24 @@ class RepetitionBase[BodyT](OpBase):
     """The sequence of operations to repeat."""
 
 
-type NumpyIterableArray = NumpyIntArray1D | NumpyFloatArray1D | NumpyComplexArray1D
-type IterableSequence = LinSpace | Range | list[str] | NumpyIterableArray
+class Indices(LeanModel):
+    """Iterate ``0 .. count-1``, binding the position rather than an item.
+
+    ``for_``'s other iterable form: :data:`SweepSource` binds each item of a sweep, this binds each
+    position, most often paired with :class:`~.expressions.LenExpr` -- ``indices(len_(sweep("vg")))``
+    -- to iterate the positions of a sweep whose length is not known until invocation.
+    """
+
+    count: int | ValueRef
+    """How many positions to iterate, ``0 .. count-1``.
+
+    The literal branch has no constraint of its own -- unlike :attr:`RepetitionBase.count`, a
+    negative count here is simply a mistake the caller made, not a value with a symbolic branch to
+    guard -- and the symbol branch is the same widened value site every other symbol value uses.
+    """
+
+
+type IterableSequence = LinSpace | Range | NumpyIterableArray | SweepSource | Indices
 
 
 class IterationBase[BodyT](OpBase):
@@ -106,7 +123,7 @@ class IterationBase[BodyT](OpBase):
     when iterating over multiple variables simultaneously.
     """
     items: list[IterableSequence] | IterableSequence
-    """The linear space, range, array or list of arrays over which to iterate.
+    """The linear space, range, array, sweep or list of those over which to iterate.
 
     It can be a single iterable or a list of iterables when iterating
     over multiple variables simultaneously.
@@ -121,15 +138,17 @@ class IterationBase[BodyT](OpBase):
     @model_validator(mode="after")
     def _validate_vars_vs_items(self) -> Self:
         if isinstance(self.var, list):
-            if not isinstance(self.items, list) or all(isinstance(item, str) for item in self.items):
+            if not isinstance(self.items, list):
                 raise ValueError("Both 'var' and 'items' must be lists or both must be single values.")
             if len(self.var) != len(self.items):
                 raise ValueError("Both 'var' and 'items' must have the same length.")
-            lengths = [len(item) for item in self.items]
-            if not all(length == lengths[0] for length in lengths[1:]):
+            # A sweep or a transform of one has no length until invocation, so only the items with
+            # a length known now -- LinSpace, Range, an array -- are compared against each other.
+            lengths = [len(item) for item in self.items if isinstance(item, Sized)]
+            if lengths and not all(length == lengths[0] for length in lengths[1:]):
                 raise ValueError("All 'items' must have the same length.")
         else:
-            if isinstance(self.items, list) and not all(isinstance(item, str) for item in self.items):
+            if isinstance(self.items, list):
                 raise ValueError("Both 'var' and 'items' must be lists or both must be single values.")
         return self
 
@@ -168,7 +187,9 @@ class ConditionalBase[BodyT](OpBase):
 
 # Deferred: this module is reachable (via `data_ops` -> `pulse_types`) before `expressions` has
 # finished defining `ValueRef`, so importing it at the top would recurse back through that edge.
-from .expressions import CompareExpr, LogicalExpr, NotExpr, ValueRef  # noqa: E402
+from .expressions import CompareExpr, LogicalExpr, NotExpr, SweepSource, ValueRef  # noqa: E402
 
+Indices.model_rebuild()
 RepetitionBase.model_rebuild()
+IterationBase.model_rebuild()
 ConditionalBase.model_rebuild()

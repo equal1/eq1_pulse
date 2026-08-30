@@ -34,7 +34,7 @@ from .base_models import LeanModel
 from .basic_types import LinSpace, OpBase, OperationDiscriminator, Range
 from .data_ops import DataOpBase, ValueLimits, VariableDTypeType
 from .identifier_str import IdentifierStr
-from .nd_array import NumpyComplexArray1D, NumpyFloatArray1D, NumpyIntArray1D
+from .nd_array import NumpyIterableArray
 
 if TYPE_CHECKING:
     from .basic_types import LinSpaceLike, RangeLike
@@ -50,7 +50,7 @@ __all__ = (
 )
 
 
-type SweepValue = LinSpace | Range | NumpyIntArray1D | NumpyFloatArray1D | NumpyComplexArray1D
+type SweepValue = LinSpace | Range | NumpyIterableArray
 """The values of a sweep: the list-valued counterpart of :data:`~.data_ops.SymbolValue`.
 
 Its members are decidable by wire shape with no tag, exactly as :data:`~.data_ops.SymbolValue`'s
@@ -69,9 +69,9 @@ Wire                                    Size    For
 explicitly unitless -- the unit is on the declaration, which is what :attr:`SweepSpec.unit`
 continues.
 
-The three array members are the same set :mod:`~.control_flow` iterates over as
-``NumpyIterableArray``, restated over :mod:`~.nd_array` rather than imported from there: this
-module takes no import from an operation module, which is what keeps it a leaf.
+:data:`~.nd_array.NumpyIterableArray` is the same set :mod:`~.control_flow` iterates over, imported
+rather than restated now that it lives in :mod:`~.nd_array` -- a leaf module itself, so importing it
+here does not cost this module its own leaf property.
 """
 
 type SweepValueLike = LinSpaceLike | RangeLike | NumpyArrayLike
