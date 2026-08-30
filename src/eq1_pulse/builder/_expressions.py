@@ -7,7 +7,7 @@ authoring grammars again -- the raw-value branch of :class:`Expr`'s constructor 
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Never
 
 from ..models.expressions import (
     BinaryExpr,
@@ -121,6 +121,26 @@ class Expr:
             )
         positions = index if isinstance(index, tuple) else (index,)
         return Expr(IndexExpr(index_op="[]", operand=node, indices=[expr(p).unwrap() for p in positions]))
+
+    def __iter__(self) -> Never:
+        """Refuse iteration, which :meth:`__getitem__` would otherwise make silently infinite.
+
+        Python falls back to the legacy sequence protocol for a class that defines
+        ``__getitem__`` and no ``__iter__``: it calls ``self[0]``, ``self[1]``, ... and stops at
+        :exc:`IndexError`. Every index here *succeeds*, building one more
+        :class:`~.expressions.IndexExpr`, so ``list(sweep("vg"))``, ``for v in sweep("vg")`` and
+        ``[*sweep("vg")]`` would each run until memory ran out. A sweep has no length at authoring
+        time (:func:`len_` is a node, not a number), so there is nothing to iterate here even in
+        principle -- iteration over a sweep is what :func:`~eq1_pulse.builder.core.for_` is.
+
+        :return: Never returns.
+        :raises TypeError: Always.
+        """
+        raise TypeError(
+            "an expression cannot be iterated in Python: it has no length until the program is "
+            "invoked. Iterate a sweep with for_(v, sweep(name)), its positions with "
+            "for_(i, indices(len_(sweep(name)))), or index one item with sweep(name)[i]."
+        )
 
     def __add__(self, other: _ExprOperand) -> Expr:
         return Expr(BinaryExpr(binary_op="+", lhs=self.unwrap(), rhs=expr(other).unwrap()))

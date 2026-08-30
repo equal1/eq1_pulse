@@ -370,6 +370,27 @@ def _register_sweep(name: str, group: int | None) -> None:
     current[name] = group
 
 
+def _unregister_sweep(name: str, group: int) -> None:
+    """Undo the registration of a sweep whose ``sweep_group()`` never reached the sequence.
+
+    A group that raises -- from its body, or because it collected fewer than two members -- emits no
+    declaration, so leaving its members registered would let a later ``sweep("x")`` validate against
+    a sweep the program does not declare. Matched on *group* rather than name alone, so a member
+    declared in a nested context that has already been popped, or a name since re-registered by
+    something else, is left alone.
+
+    :param name: Sweep name to unregister
+    :param group: Id of the group that registered it
+    """
+    state = _get_state()
+    if not state.context_stack:
+        return
+
+    if state.declared_sweeps[-1].get(name) == group:
+        del state.declared_sweeps[-1][name]
+        state.sweep_consumers[-1].pop(name, None)
+
+
 def _is_sweep_declared(name: str) -> bool:
     """Check if a sweep has been declared in the current or parent contexts.
 

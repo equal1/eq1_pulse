@@ -12,8 +12,9 @@ What is left is one constructor, two declaration functions and three build-time 
     a sweep read by two loops' ``items`` has no well-defined position in the nesting order.
 
 **lock-step**
-    every sweep a *single* expression reads must be the same sweep, or a member of one
-    :func:`sweep_group`.
+    every sweep a *single* expression reads -- and every sweep a *single zipped loop* iterates,
+    which is one level of nesting just as an expression is -- must be the same sweep, or a member
+    of one :func:`sweep_group`.
 
 All three are local; none is a traversal of the program. There is no cycle check to write either:
 an expression tree is finite and acyclic by construction, and a transform is anonymous, so it has
@@ -55,6 +56,7 @@ from ._state import (
     _not_a_sequence_context,
     _register_sweep,
     _sweep_group_of,
+    _unregister_sweep,
 )
 
 if TYPE_CHECKING:
@@ -224,22 +226,30 @@ def sweep_group() -> Iterator[None]:
         )
 
     state.sweep_group_counter += 1
+    group_id = state.sweep_group_counter
     state.open_sweep_group = []
-    state.open_sweep_group_id = state.sweep_group_counter
+    state.open_sweep_group_id = group_id
+    emitted = False
     try:
         yield
+        specs = state.open_sweep_group or []
+        if len(specs) < 2:
+            raise RuntimeError(
+                f"sweep_group() needs at least two sweep_decl() calls in its body, got {len(specs)}. "
+                "A group of one is an ordinary sweep_decl()."
+            )
+        _add_to_sequence(context, SweepGroup(sweeps=specs))
+        emitted = True
     finally:
         specs = state.open_sweep_group or []
         state.open_sweep_group = None
         state.open_sweep_group_id = 0
-
-    # Reached only when the body completed normally; a body that raised has nothing to emit.
-    if len(specs) < 2:
-        raise RuntimeError(
-            f"sweep_group() needs at least two sweep_decl() calls in its body, got {len(specs)}. "
-            "A group of one is an ordinary sweep_decl()."
-        )
-    _add_to_sequence(context, SweepGroup(sweeps=specs))
+        if not emitted:
+            # Nothing reached the sequence, so nothing may stay declared: a member left registered
+            # by a group that raised would let a later sweep("x") validate against a sweep the
+            # program does not declare.
+            for spec in specs:
+                _unregister_sweep(spec.name, group_id)
 
 
 def _check_sweep_reads(node: Expression) -> None:
@@ -283,6 +293,32 @@ def _check_sweep_reads(node: Expression) -> None:
         _check_lock_step(names)
 
 
+def _lock_step_offenders(names: set[str]) -> tuple[str, str] | None:
+    """Check that *names* are declared, and return the first pair that does not advance together.
+
+    The rule both callers apply: sweeps advance together when they are the same sweep, or members of
+    one :func:`sweep_group`. What differs is only what was found combining them, and so the message.
+
+    :param names: The sweep names one lock-step scope reads
+
+    :return: The offending pair, or :obj:`None` if every name advances with the others
+    :raises RuntimeError: If a name is undeclared
+    """
+    ordered = sorted(names)
+    for name in ordered:
+        _check_sweep_declared(name)
+
+    if len(ordered) < 2:
+        return None
+
+    first = ordered[0]
+    group = _sweep_group_of(first)
+    for other in ordered[1:]:
+        if group is None or _sweep_group_of(other) != group:
+            return first, other
+    return None
+
+
 def _check_lock_step(names: set[str]) -> None:
     """Check that the sweeps read by one expression are declared and advance together.
 
@@ -291,25 +327,53 @@ def _check_lock_step(names: set[str]) -> None:
     :raises RuntimeError: If a name is undeclared, or two of them are neither the same sweep nor
         members of one :func:`sweep_group`
     """
-    ordered = sorted(names)
-    for name in ordered:
-        _check_sweep_declared(name)
-
-    if len(ordered) < 2:
+    offenders = _lock_step_offenders(names)
+    if offenders is None:
         return
 
-    first = ordered[0]
-    group = _sweep_group_of(first)
-    for other in ordered[1:]:
-        if group is not None and _sweep_group_of(other) == group:
-            continue
-        raise RuntimeError(
-            f"Sweeps '{first}' and '{other}' are read by one expression but do not advance "
-            f"together. Only the same sweep, or sweeps declared side by side in one "
-            f"sweep_group(), may be combined in a single expression. To combine sweeps from "
-            f"different nesting levels, give each its own for_() and do the arithmetic on the "
-            f"loop variables in the body."
-        )
+    first, other = offenders
+    raise RuntimeError(
+        f"Sweeps '{first}' and '{other}' are read by one expression but do not advance "
+        f"together. Only the same sweep, or sweeps declared side by side in one "
+        f"sweep_group(), may be combined in a single expression. To combine sweeps from "
+        f"different nesting levels, give each its own for_() and do the arithmetic on the "
+        f"loop variables in the body."
+    )
+
+
+def _check_zipped_lock_step(items: Any) -> None:
+    """Check that the sweeps a zipped loop iterates advance together.
+
+    The same rule :func:`_check_lock_step` applies within one expression, applied *across* a zipped
+    loop's items: one loop is one level of nesting, and a level has one length, so its items must
+    read members of one group (plan section 7). Independently declared sweeps are two levels and
+    belong in two nested loops -- the models cannot catch it, since neither item has a length until
+    the program is invoked.
+
+    :param items: The loop's already-validated items, one or a list of them
+
+    :raises RuntimeError: If two items read sweeps that are neither the same sweep nor members of
+        one :func:`sweep_group`
+    """
+    if not isinstance(items, list) or len(items) < 2:
+        return
+
+    names: set[str] = set()
+    for item in items:
+        if isinstance(item, ExprBase):
+            names |= sweep_names_in(cast("Expression", item))
+
+    offenders = _lock_step_offenders(names)
+    if offenders is None:
+        return
+
+    first, other = offenders
+    raise RuntimeError(
+        f"Sweeps '{first}' and '{other}' are zipped by one for_() but do not advance together. "
+        f"A zipped loop is a single level of nesting, so its items must read the same sweep, or "
+        f"sweeps declared side by side in one sweep_group(). To iterate them independently, give "
+        f"each its own for_() and nest the two loops."
+    )
 
 
 def _consume_sweeps(items: Any, consumer: str) -> None:

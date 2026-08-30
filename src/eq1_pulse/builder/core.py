@@ -120,7 +120,7 @@ from ._state import (
     _register_variable,
 )
 from ._state import _get_state as _get_state
-from ._sweeps import _consume_sweeps
+from ._sweeps import _check_zipped_lock_step, _consume_sweeps
 from ._sweeps import sweep as sweep
 from ._sweeps import sweep_decl as sweep_decl
 from ._sweeps import sweep_group as sweep_group
@@ -363,7 +363,8 @@ def for_(
     :yield: The iteration being built
 
     :raises RuntimeError: If not called within a sequence context, if an item references an
-        undeclared symbol or sweep, or if a sweep it reads is already iterated by another loop
+        undeclared symbol or sweep, if a sweep it reads is already iterated by another loop, or if
+        a zipped loop's items read sweeps that do not advance together
     :raises ValueError: If var/items length mismatch in zipped iteration
 
     Examples
@@ -438,8 +439,10 @@ def for_(
         raise _not_a_sequence_context("for_()")
 
     # A loop takes its position in the nesting order from the sweeps it iterates, so each of
-    # them may be iterated by exactly one loop (parameter sweeps plan, section 7).
+    # them may be iterated by exactly one loop, and a zipped loop -- one level of nesting -- may
+    # only zip sweeps that advance together (parameter sweeps plan, section 7).
     _consume_sweeps(validated_items, _loop_description(validated_vars))
+    _check_zipped_lock_step(validated_items)
 
     iter_obj = Iteration(var=validated_vars, items=validated_items, body=OpSequence([]))
     _add_to_sequence(parent, iter_obj)

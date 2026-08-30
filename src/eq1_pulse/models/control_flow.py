@@ -105,6 +105,22 @@ class Indices(LeanModel):
 type IterableSequence = LinSpace | Range | NumpyIterableArray | SweepSource | Indices
 
 
+def _known_length(item: IterableSequence) -> int | None:
+    """Return how many items *item* has, or :obj:`None` if that is not known until invocation.
+
+    :class:`Indices` needs its own branch: it is not :class:`~collections.abc.Sized` -- it carries a
+    ``count`` rather than the items themselves -- but a literal count is a length like any other, and
+    the one place it is *not* known is exactly the one where its count is a symbol or a
+    :class:`~.expressions.LenExpr` over a sweep.
+
+    :param item: One entry of a zipped iteration's ``items``
+    :return: The number of items, or :obj:`None` if it has no length yet
+    """
+    if isinstance(item, Indices):
+        return item.count if isinstance(item.count, int) else None
+    return len(item) if isinstance(item, Sized) else None
+
+
 class IterationBase[BodyT](OpBase):
     """Base class for iteration over a sequence of operations.
 
@@ -143,8 +159,9 @@ class IterationBase[BodyT](OpBase):
             if len(self.var) != len(self.items):
                 raise ValueError("Both 'var' and 'items' must have the same length.")
             # A sweep or a transform of one has no length until invocation, so only the items with
-            # a length known now -- LinSpace, Range, an array -- are compared against each other.
-            lengths = [len(item) for item in self.items if isinstance(item, Sized)]
+            # a length known now -- LinSpace, Range, an array, a literal `Indices` -- are compared
+            # against each other.
+            lengths = [length for item in self.items if (length := _known_length(item)) is not None]
             if lengths and not all(length == lengths[0] for length in lengths[1:]):
                 raise ValueError("All 'items' must have the same length.")
         else:

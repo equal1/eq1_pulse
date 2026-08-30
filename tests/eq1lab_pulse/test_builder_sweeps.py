@@ -314,6 +314,41 @@ class TestDeclarations:
 
         assert _ops(seq) == []
 
+    def test_a_failed_group_leaves_its_members_undeclared(self):
+        """A group that raises emits nothing, so nothing it declared may stay in scope.
+
+        Otherwise a later ``sweep("a")`` validates against a sweep the program does not declare --
+        a document referencing a name that is nowhere in it.
+        """
+        with build_sequence():
+            with pytest.raises(ValueError, match="boom"):
+                with sweep_group():
+                    sweep_decl("a", "float")
+                    sweep_decl("b", "float")
+                    raise ValueError("boom")
+
+            var_decl("v", "float")
+            with pytest.raises(RuntimeError, match="Sweep 'a' has not been declared"):
+                with for_("v", sweep("a")):
+                    pass
+
+            # The name is free again, so the recovery an author would write actually works.
+            sweep_decl("a", "float")
+
+    def test_a_group_of_one_leaves_its_member_undeclared(self):
+        """The same rollback for the other way a group fails: too few members to be a group."""
+        with build_sequence() as seq:
+            with pytest.raises(RuntimeError, match="at least two sweep_decl"):
+                with sweep_group():
+                    sweep_decl("only", "float")
+
+            var_decl("v", "float")
+            with pytest.raises(RuntimeError, match="Sweep 'only' has not been declared"):
+                with for_("v", sweep("only")):
+                    pass
+
+        assert [next(iter(op)) for op in _ops(seq)] == ["var_decl"]
+
     def test_redeclaring_a_sweep_in_one_context_raises(self):
         with build_sequence():
             sweep_decl("vg", "float")
@@ -375,6 +410,28 @@ class TestIndexingAndLength:
         """Plan §9 Q4: ``len()`` runs ``__index__`` on the result, which a tree can never satisfy."""
         with pytest.raises(TypeError, match="has no len"):
             len(sweep("a"))  # type: ignore[arg-type]  # the point of the test: it is not Sized
+
+    def test_iteration_is_refused(self):
+        """``__getitem__`` without ``__iter__`` would make ``list(sweep("a"))`` run forever.
+
+        Python falls back to the legacy sequence protocol -- ``self[0]``, ``self[1]``, ... until an
+        ``IndexError`` that indexing an expression never raises. Asserted through :func:`iter`
+        rather than through ``list()`` or a ``for``, which are the same call and would hang the
+        suite rather than fail it if this regressed.
+        """
+        with pytest.raises(TypeError, match="cannot be iterated"):
+            iter(sweep("a"))  # type: ignore[call-overload]  # the point of the test: it is not Iterable
+
+    def test_a_symbolic_index_count_is_not_compared_against_a_length(self):
+        """``indices(len_(s))`` has no length until invocation, so a zipped sibling's is unopposed."""
+        with build_sequence() as seq:
+            sweep_decl("vg", "float")
+            var_decl("i", "int")
+            var_decl("j", "int")
+            with for_(["i", "j"], [indices(len_(sweep("vg"))), range(3)]):
+                pass
+
+        assert _ops(seq)[-1]["for"]["items"][1] == {"start": 0, "stop": 2, "step": 1}  # range(3), stop inclusive
 
     def test_indexing_a_scalar_expression_raises_type_error(self):
         """A ``TypeError`` at the calling line, not a ``ValidationError`` two frames later."""
@@ -561,6 +618,56 @@ class TestChecks:
             var_decl("i", "int")
             with pytest.raises(RuntimeError, match="do not advance together"):
                 play("gate", step_pulse(duration="40ns", amplitude=(sweep("d1") + sweep("d2"))[var("i")]))
+
+    def test_zipping_independent_sweeps_raises(self):
+        """§7: a zipped ``for_`` is one level of nesting, so its items must advance together.
+
+        The same two sweeps in one expression are already rejected; zipped they are the same
+        mistake, and the models cannot catch it -- neither item has a length until invocation.
+        """
+        with build_sequence():
+            sweep_decl("a", "float")
+            sweep_decl("b", "float")
+            var_decl("x", "float")
+            var_decl("y", "float")
+            with pytest.raises(RuntimeError, match="zipped by one for_") as caught:
+                with for_(["x", "y"], [sweep("a"), sweep("b")]):
+                    pass
+
+        message = str(caught.value)
+        assert "'a'" in message
+        assert "'b'" in message
+        assert "sweep_group()" in message
+        assert "nest the two loops" in message
+
+    def test_zipping_grouped_sweeps_is_accepted(self):
+        """Example D's shape: what a ``sweep_group()`` is for."""
+        with build_sequence():
+            with sweep_group():
+                sweep_decl("i_amp", "float", unit="mV")
+                sweep_decl("drive_freq", "float", unit="MHz")
+            var_decl("a", "float", unit="mV")
+            var_decl("f", "float", unit="MHz")
+            with for_(["a", "f"], [sweep("i_amp"), sweep("drive_freq")]):
+                pass
+
+    def test_zipping_a_base_with_a_transform_of_it_is_accepted(self):
+        """Example C's shape: one base and sweeps derived from it are lock-step by construction."""
+        with build_sequence():
+            sweep_decl("detuning", "float", unit="mV")
+            var_decl("p1", "float", unit="mV")
+            var_decl("p2", "float", unit="mV")
+            with for_(["p1", "p2"], [sweep("detuning") * 2, sweep("detuning") * 3]):
+                pass
+
+    def test_zipping_a_sweep_with_a_plain_iterable_is_accepted(self):
+        """Only sweeps take their length from a declaration; a literal iterable states its own."""
+        with build_sequence():
+            sweep_decl("a", "float")
+            var_decl("x", "float")
+            var_decl("y", "int")
+            with for_(["x", "y"], [sweep("a"), range(3)]):
+                pass
 
 
 class TestExports:
