@@ -19,6 +19,18 @@ versus ``{"unary_op": {"op": "-", ...}}`` / ``{"binary_op": {"op": "+", ...}}`` 
 single node type spanning both would need an optional field and a validator to enforce which
 operator requires which -- exactly the awkwardness arity-specific node types elsewhere in this
 module avoid.
+
+Nodes are split by *result kind* above; they are not split by **rank**. A sweep is a list of values
+and a symbol is a scalar, but both are read by the same nodes: :class:`SweepExpr` is a leaf like
+:class:`SymbolExpr`, and every operator over it is the operator already documented here, applied
+elementwise. Rank is therefore a property of a *tree* rather than of a node type, computed by
+:func:`sweep_names_in` -- a tree is rank-1 when it reads a sweep anywhere, and rank-0 otherwise.
+:class:`IndexExpr` and :class:`LenExpr` are where rank comes back down: each takes a sweep-valued
+operand and produces a scalar, so both are rank-0 whatever they read, exactly as :func:`len` of a
+list is an :class:`int`. The two annotated aliases :data:`ScalarExpression` and :data:`SweepSource`
+apply the walk at the boundaries that care -- every value site accepts the first, every sweep site
+the second -- and nothing checks rank in between, which is what lets a sweep leaf sit under a
+:class:`BinaryExpr` at all.
 """
 
 from __future__ import annotations
@@ -27,9 +39,10 @@ import contextvars
 from collections.abc import Iterator, Mapping
 from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Final, Literal, Self
 
-from pydantic import Discriminator, Tag, model_serializer, model_validator
+from pydantic import AfterValidator, Discriminator, Tag, model_serializer, model_validator
 
 from .base_models import NestedWireModel
+from .identifier_str import IdentifierStr
 from .reference_types import SymbolRef
 
 if TYPE_CHECKING:
@@ -43,13 +56,19 @@ __all__ = (
     "CompareExpr",
     "ExprBase",
     "Expression",
+    "IndexExpr",
+    "LenExpr",
     "LiteralExpr",
     "LogicalExpr",
     "NotExpr",
+    "ScalarExpression",
+    "SweepExpr",
+    "SweepSource",
     "SymbolExpr",
     "UnaryExpr",
     "ValueRef",
     "ValueRefLike",
+    "sweep_names_in",
 )
 
 
@@ -63,7 +82,7 @@ guard while validating, so a deep tree already fails there with a
 and emits wrong output. Rejecting a too-deep tree on the way in means one can never be built to
 serialize. Hand-written expressions do not approach 32.
 
-The cap is on *Python* nesting, which :func:`_expression_depth` measures and which the six nodes'
+The cap is on *Python* nesting, which :func:`_expression_depth` measures and which the eight nodes'
 :class:`~.base_models.NestedWireModel` opt-in does not change. The serialized JSON gains one level
 per operator node, so a maximal tree is ~64 JSON levels deep instead of ~32 -- still an order of
 magnitude under the serializer's recursion limit, which is what this cap exists to protect.
@@ -97,11 +116,11 @@ reintroduced silently on the shared base.
 class ExprBase(NestedWireModel):
     """Base class for all expression nodes.
 
-    Each node is keyed on a field it already needs -- the operator for the five operator nodes, and
-    the single payload field for the other three -- rather than on a separate discriminator field.
-    Six of the eight opt into :class:`~.base_models.NestedWireModel`'s ``{tag: payload}`` wire form
-    by setting its class vars; :class:`LiteralExpr` and :class:`SymbolExpr` leave them unset and stay
-    flat, since each has exactly one field already.
+    Each node is keyed on a field it already needs -- the operator for the seven operator nodes, and
+    the single payload field for the other four -- rather than on a separate discriminator field.
+    Eight of the eleven opt into :class:`~.base_models.NestedWireModel`'s ``{tag: payload}`` wire
+    form by setting its class vars; :class:`LiteralExpr`, :class:`SymbolExpr` and :class:`SweepExpr`
+    leave them unset and stay flat, since each has exactly one field already.
     """
 
     if TYPE_CHECKING:
@@ -193,6 +212,25 @@ class SymbolExpr(ExprBase):
     if TYPE_CHECKING:
 
         def __init__(self, /, *, symbol: SymbolRefLike, **data): ...  # noqa: D107
+
+
+class SweepExpr(ExprBase):
+    """A reference to a declared sweep appearing in an expression.
+
+    Flat, like :class:`LiteralExpr` and :class:`SymbolExpr` -- one field, so there is nothing to
+    wrap and the wire form is ``{"sweep": "vg"}`` everywhere, in a union or out of one.
+
+    **It is the only leaf that is rank-1**, and the only node whose rank is not read off its
+    operands: a tree reads a sweep exactly when one of these is somewhere in it, below any
+    :class:`IndexExpr` or :class:`LenExpr`. See :func:`sweep_names_in`.
+    """
+
+    sweep: IdentifierStr
+    """The name of the declared sweep being read."""
+
+    if TYPE_CHECKING:
+
+        def __init__(self, /, *, sweep: str, **data): ...  # noqa: D107
 
 
 class UnaryExpr(ExprBase):
@@ -328,15 +366,72 @@ class CallExpr(ExprBase):
         return self
 
 
+class IndexExpr(ExprBase):
+    """One item of a sweep, as a scalar.
+
+    Modelled on :class:`NotExpr` -- a single-valued :obj:`~typing.Literal` tag field read off the
+    field *name*, so the wire form is
+    ``{"index_op": {"operand": {"sweep": "vg"}, "indices": [{"symbol": {"var": "i"}}]}}``.
+
+    :attr:`operand` is :data:`SweepSource`, so any sweep-valued tree is indexable, and the node
+    **produces a scalar** whatever that tree reads -- which is what makes
+    ``amplitude=sweep("vg")[var("i")]`` legal at a :data:`ValueRef` field. :attr:`indices` is
+    :data:`ScalarExpression`: an index is a position, and a sweep of positions would be a gather,
+    which nothing downstream could schedule. Being a list, ``a[i, j]`` needs no second node.
+
+    Structure and depth are validated; bounds are not, and the indices are not checked against a
+    declaration's ``shape``. Same *declare, never enforce* line the rest of the IR sits on.
+    """
+
+    _wire_tag_source_: ClassVar[str] = "index_op"
+    _wire_tag_from_: ClassVar[Literal["value", "name"]] = "name"
+    _wire_payload_key_: ClassVar[str | None] = None
+
+    index_op: Literal["[]"]
+    """The operator, declared first and without a default so it discriminates the node and is its
+    wire tag besides -- read off the field *name*, since ``"[]"`` is its only possible value."""
+    operand: SweepSource
+    """The sweep-valued expression being indexed."""
+    indices: list[ScalarExpression]
+    """The position of the wanted item, one entry per dimension."""
+
+
+class LenExpr(ExprBase):
+    """The number of items in a sweep, as an int.
+
+    Its own node rather than a member of :data:`ExpressionFunction`, on the precedent
+    :class:`CompareExpr` sets: that split is by **result kind**, and ``len`` is the one operation
+    returning an :class:`int` from something that is not a number. Keeping it out also leaves
+    :class:`CallExpr` honest -- every remaining member there is a scalar mathematical function,
+    which over a sweep is that function applied elementwise.
+
+    Like :class:`IndexExpr`, it takes a sweep and returns a scalar, so it is rank-0 whatever its
+    operand reads.
+    """
+
+    _wire_tag_source_: ClassVar[str] = "len_op"
+    _wire_tag_from_: ClassVar[Literal["value", "name"]] = "name"
+    _wire_payload_key_: ClassVar[str | None] = None
+
+    len_op: Literal["len"]
+    """The operator, declared first and without a default, for the reason
+    :attr:`IndexExpr.index_op` gives."""
+    operand: SweepSource
+    """The sweep-valued expression whose length is taken."""
+
+
 _EXPRESSION_TAGS: Final[dict[type[ExprBase], str]] = {
     LiteralExpr: "value",
     SymbolExpr: "symbol",
+    SweepExpr: "sweep",
     UnaryExpr: "unary_op",
     BinaryExpr: "binary_op",
     CompareExpr: "compare_op",
     NotExpr: "not_op",
     LogicalExpr: "logical_op",
     CallExpr: "function",
+    IndexExpr: "index_op",
+    LenExpr: "len_op",
 }
 """Expression node type -> the sole wire key that discriminates it."""
 
@@ -373,18 +468,97 @@ def expression_tag_of(value: Any) -> str | None:
 type Expression = Annotated[
     Annotated[LiteralExpr, Tag("value")]
     | Annotated[SymbolExpr, Tag("symbol")]
+    | Annotated[SweepExpr, Tag("sweep")]
     | Annotated[UnaryExpr, Tag("unary_op")]
     | Annotated[BinaryExpr, Tag("binary_op")]
     | Annotated[CompareExpr, Tag("compare_op")]
     | Annotated[NotExpr, Tag("not_op")]
     | Annotated[LogicalExpr, Tag("logical_op")]
-    | Annotated[CallExpr, Tag("function")],
+    | Annotated[CallExpr, Tag("function")]
+    | Annotated[IndexExpr, Tag("index_op")]
+    | Annotated[LenExpr, Tag("len_op")],
     Discriminator(expression_tag_of),
 ]
 """Any expression node, discriminated by the wire key naming its type."""
 
 
-type ValueRef = SymbolRef | Expression
+def sweep_names_in(expression: Expression) -> frozenset[str]:
+    """Return the names of every sweep read anywhere in *expression*, empty for a scalar tree.
+
+    Walked with the same :func:`_operands_of` iterator :func:`_expression_depth` uses, so a node
+    type added later is walked without registering it anywhere -- with one exception, which is the
+    whole subtlety of the walk: it **does not descend into** :class:`IndexExpr` or
+    :class:`LenExpr`. Both take a sweep and produce a scalar, so a tree containing one reads no
+    sweep *through* it, exactly as :func:`len` of a list is an :class:`int`. Without that stop,
+    ``play("g", step_pulse(amplitude=sweep("vg")[var("i")]))`` -- index iteration, one of the two
+    loop forms sweeps exist for -- would be rejected as rank-1 by the :data:`ValueRef` guard.
+
+    Iterative rather than recursive, for the reason :func:`_expression_depth` is: the depth cap
+    bounds any tree that has validated, but this also runs on trees mid-validation.
+
+    :param expression: The root of the tree to inspect
+    :return: The sweep names read, or an empty set if the tree is rank-0
+    """
+    names: set[str] = set()
+    pending: list[ExprBase] = [expression]
+    while pending:
+        node = pending.pop()
+        if isinstance(node, IndexExpr | LenExpr):
+            continue
+        if isinstance(node, SweepExpr):
+            # `sweep` is a `str`, so it is invisible to `_operands_of` and read here instead.
+            names.add(node.sweep)
+            continue
+        pending.extend(_operands_of(node))
+    return frozenset(names)
+
+
+def _reject_sweeps(expression: Expression) -> Expression:
+    """Validate that *expression* reads no sweep, naming the offenders if it does.
+
+    :param expression: The expression being validated
+    :return: *expression* unchanged
+    :raises ValueError: If the tree reads a sweep at any depth
+    """
+    names = sweep_names_in(expression)
+    if names:
+        offenders = ", ".join(sorted(names))
+        raise ValueError(
+            f"a value may not read a sweep, but this expression reads {offenders}; "
+            "index it (sweep(name)[i]) or iterate it with for_()"
+        )
+    return expression
+
+
+def _require_sweep(expression: Expression) -> Expression:
+    """Validate that *expression* reads at least one sweep.
+
+    :param expression: The expression being validated
+    :return: *expression* unchanged
+    :raises ValueError: If the tree reads no sweep
+    """
+    if not sweep_names_in(expression):
+        raise ValueError("a sweep is required here, but this expression reads none")
+    return expression
+
+
+type ScalarExpression = Annotated[Expression, AfterValidator(_reject_sweeps)]
+"""An expression that reads no sweep. What every value site accepts.
+
+A sweep is a list and a value is a scalar, so the two are told apart by :func:`sweep_names_in` over
+the whole tree rather than by union membership -- which could only ever type a leaf, leaving
+``amplitude=sweep("vg") * 2`` unrepresentable and therefore unrejectable.
+"""
+
+type SweepSource = Annotated[Expression, AfterValidator(_require_sweep)]
+"""An expression that reads at least one sweep. What every sweep site accepts.
+
+A bare :class:`SweepExpr` needs no member of its own anywhere this appears: it is a one-node
+expression, and this alias already admits it.
+"""
+
+
+type ValueRef = SymbolRef | ScalarExpression
 """Anything that stands in for a value at a read site: a symbol, or an expression over symbols.
 
 Defined here rather than in :mod:`~.reference_types` because it names :data:`Expression`, and this
@@ -393,8 +567,14 @@ one way: ``reference_types`` -> ``expressions`` -> the operation modules.
 
 A plain ``|`` union rather than a tagged one in the style of :data:`~.data_ops.SymbolValue`: its
 members are unambiguous by wire shape -- a symbol is ``{"var": ...}`` or ``{"ext": ...}``, an
-expression carries one of the seven node keys -- so there is no ambiguity for a discriminator to
+expression carries one of the node keys -- so there is no ambiguity for a discriminator to
 remove.
+
+The expression side is :data:`ScalarExpression` rather than :data:`Expression`, so guarding this
+one alias guards every read site in the IR -- :attr:`~.channel_ops.Play.amplitude`,
+:attr:`~.control_flow.Repetition.count`, :attr:`~.control_flow.ConditionalBase.var`, all of them --
+against a sweep appearing where a scalar belongs, at any depth. A document that put a sweep under
+an amplitude is rejected; none can exist, since sweeps are newer than this alias.
 """
 
 type ValueRefLike = SymbolRefLike | Expression
@@ -413,9 +593,12 @@ from .data_ops import SymbolValue  # noqa: E402
 
 LiteralExpr.model_rebuild()
 SymbolExpr.model_rebuild()
+SweepExpr.model_rebuild()
 UnaryExpr.model_rebuild()
 BinaryExpr.model_rebuild()
 CompareExpr.model_rebuild()
 NotExpr.model_rebuild()
 LogicalExpr.model_rebuild()
 CallExpr.model_rebuild()
+IndexExpr.model_rebuild()
+LenExpr.model_rebuild()

@@ -14,13 +14,18 @@ from eq1_pulse.models.expressions import (
     CallExpr,
     CompareExpr,
     Expression,
+    IndexExpr,
+    LenExpr,
     LiteralExpr,
     LogicalExpr,
     NotExpr,
+    SweepExpr,
+    SweepSource,
     SymbolExpr,
     UnaryExpr,
     ValueRef,
     expression_tag_of,
+    sweep_names_in,
 )
 from eq1_pulse.models.reference_types import ExternalRef, VariableRef
 
@@ -381,3 +386,293 @@ def test_no_expr_type_survives_in_dumped_tree():
     )
     json_str = tree.model_dump_json()
     assert "expr_type" not in json_str
+
+
+def sweep_source_adapter() -> TypeAdapter[Any]:
+    """The ``SweepSource`` alias as a validator."""
+    return TypeAdapter(SweepSource)
+
+
+def value_ref_adapter() -> TypeAdapter[Any]:
+    """The ``ValueRef`` alias as a validator."""
+    return TypeAdapter(ValueRef)
+
+
+@pytest.mark.parametrize(
+    ("node", "document"),
+    [
+        pytest.param(SweepExpr(sweep="vg"), {"sweep": "vg"}, id="sweep"),
+        pytest.param(
+            IndexExpr(
+                index_op="[]",
+                operand=SweepExpr(sweep="vg"),
+                indices=[SymbolExpr(symbol=VariableRef("i"))],
+            ),
+            {"index_op": {"operand": {"sweep": "vg"}, "indices": [{"symbol": {"var": "i"}}]}},
+            id="index",
+        ),
+        pytest.param(
+            LenExpr(len_op="len", operand=SweepExpr(sweep="vg")),
+            {"len_op": {"operand": {"sweep": "vg"}}},
+            id="len",
+        ),
+    ],
+)
+def test_sweep_nodes_match_the_normative_wire_form(node: Any, document: dict[str, Any]):
+    """Each new node dumps to the form plan §15 specifies, literally, and validates back."""
+    assert node.model_dump() == document
+    reloaded = expression_adapter().validate_python(document)
+    assert type(reloaded) is type(node)
+    assert reloaded == node
+    assert reloaded.model_dump() == document
+
+
+def test_sweep_names_in_reads_a_bare_sweep():
+    """``SweepExpr.sweep`` is a plain string, so the walk reads it off the node itself."""
+    assert sweep_names_in(SweepExpr(sweep="vg")) == frozenset({"vg"})
+
+
+def test_sweep_names_in_is_empty_for_a_scalar_tree():
+    """A tree of literals and symbols reads no sweep."""
+    tree = BinaryExpr(binary_op="+", lhs=SymbolExpr(symbol=VariableRef("x")), rhs=LiteralExpr(value=1))
+    assert sweep_names_in(tree) == frozenset()
+
+
+def test_sweep_names_in_collects_every_sweep_at_any_depth():
+    """Rank is a property of the whole tree: a sweep anywhere in it is read."""
+    tree = BinaryExpr(
+        binary_op="+",
+        lhs=BinaryExpr(binary_op="*", lhs=SweepExpr(sweep="d1"), rhs=LiteralExpr(value=2)),
+        rhs=CallExpr(function="abs", args=[UnaryExpr(unary_op="-", rhs=SweepExpr(sweep="d2"))]),
+    )
+    assert sweep_names_in(tree) == frozenset({"d1", "d2"})
+
+
+@pytest.mark.parametrize(
+    "node",
+    [
+        pytest.param(
+            LenExpr(
+                len_op="len",
+                operand=BinaryExpr(binary_op="*", lhs=SweepExpr(sweep="vg"), rhs=LiteralExpr(value=2)),
+            ),
+            id="len",
+        ),
+        pytest.param(
+            IndexExpr(
+                index_op="[]",
+                operand=UnaryExpr(
+                    unary_op="-",
+                    rhs=BinaryExpr(binary_op="*", lhs=SweepExpr(sweep="vg"), rhs=LiteralExpr(value=2)),
+                ),
+                indices=[SymbolExpr(symbol=VariableRef("i"))],
+            ),
+            id="index",
+        ),
+    ],
+)
+def test_index_and_len_stop_the_walk(node: Any):
+    """``IndexExpr`` and ``LenExpr`` are rank-0 however deep the sweep sits under them.
+
+    The one subtlety in :func:`sweep_names_in`: both take a sweep and produce a scalar, exactly as
+    :func:`len` of a list is an :class:`int`. Without the stop, index iteration -- one of the two
+    loop forms sweeps exist for -- would be rejected at every value site.
+    """
+    assert sweep_names_in(node) == frozenset()
+    assert sweep_names_in(BinaryExpr(binary_op="*", lhs=node, rhs=LiteralExpr(value=3))) == frozenset()
+
+
+def test_index_expr_validates_at_a_value_ref_field():
+    """``vg[i] * gate.gain`` is a legal amplitude: the sweep is inside an ``index_op``."""
+    document = {
+        "binary_op": {
+            "op": "*",
+            "lhs": {"index_op": {"operand": {"sweep": "vg"}, "indices": [{"symbol": {"var": "i"}}]}},
+            "rhs": {"symbol": {"ext": "gate.gain"}},
+        },
+    }
+    node: Any = value_ref_adapter().validate_python(document)
+    assert isinstance(node, BinaryExpr)
+    assert isinstance(node.lhs, IndexExpr)
+    assert isinstance(node.lhs.operand, SweepExpr)
+    assert node.model_dump() == document
+
+
+def test_len_expr_validates_at_a_value_ref_field():
+    """A ``len_op`` is an int, so it is a legal count."""
+    node: Any = value_ref_adapter().validate_python({"len_op": {"operand": {"sweep": "vg"}}})
+    assert isinstance(node, LenExpr)
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        pytest.param({"sweep": "vg"}, id="bare"),
+        pytest.param(
+            {
+                "binary_op": {
+                    "op": "+",
+                    "lhs": {
+                        "unary_op": {
+                            "op": "-",
+                            "rhs": {"function": {"name": "abs", "args": [{"sweep": "vg"}]}},
+                        },
+                    },
+                    "rhs": {"value": 1},
+                },
+            },
+            id="nested",
+        ),
+    ],
+)
+def test_value_ref_rejects_a_sweep_naming_it(document: dict[str, Any]):
+    """A sweep at a value site is rejected wherever it sits, and the error names it."""
+    with pytest.raises(ValidationError, match="vg"):
+        value_ref_adapter().validate_python(document)
+
+
+def test_sweep_source_rejects_a_rank_zero_tree():
+    """A tree reading no sweep is not a sweep source."""
+    with pytest.raises(ValidationError, match="sweep"):
+        sweep_source_adapter().validate_python({"binary_op": {"op": "+", "lhs": {"value": 1}, "rhs": {"value": 2}}})
+
+
+def test_sweep_source_accepts_a_bare_sweep_and_a_transform():
+    """A one-node expression and a whole tree over it are both sweep sources."""
+    assert isinstance(sweep_source_adapter().validate_python({"sweep": "vg"}), SweepExpr)
+    transform = {
+        "binary_op": {
+            "op": "+",
+            "lhs": {"binary_op": {"op": "*", "lhs": {"sweep": "detuning"}, "rhs": {"symbol": {"ext": "vg.m11"}}}},
+            "rhs": {"symbol": {"ext": "vg.o1"}},
+        },
+    }
+    node: Any = sweep_source_adapter().validate_python(transform)
+    assert isinstance(node, BinaryExpr)
+    assert node.model_dump() == transform
+
+
+def test_index_expr_rejects_a_scalar_operand():
+    """``IndexExpr.operand`` is a ``SweepSource``: indexing a scalar is not a thing."""
+    with pytest.raises(ValidationError):
+        IndexExpr(index_op="[]", operand=SymbolExpr(symbol=VariableRef("x")), indices=[LiteralExpr(value=0)])
+
+
+def test_index_expr_rejects_a_sweep_index():
+    """``IndexExpr.indices`` is ``ScalarExpression``: an index is a position, never a gather."""
+    with pytest.raises(ValidationError, match="i_amp"):
+        IndexExpr(index_op="[]", operand=SweepExpr(sweep="vg"), indices=[SweepExpr(sweep="i_amp")])
+
+
+def test_index_expr_takes_several_indices():
+    """``a[i, j]`` needs no second node -- ``indices`` is a list."""
+    node = IndexExpr(
+        index_op="[]",
+        operand=SweepExpr(sweep="grid"),
+        indices=[SymbolExpr(symbol=VariableRef("i")), SymbolExpr(symbol=VariableRef("j"))],
+    )
+    assert node.model_dump() == {
+        "index_op": {
+            "operand": {"sweep": "grid"},
+            "indices": [{"symbol": {"var": "i"}}, {"symbol": {"var": "j"}}],
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    "node",
+    [
+        pytest.param(BinaryExpr(binary_op="+", lhs=SweepExpr(sweep="s"), rhs=LiteralExpr(value=1)), id="add"),
+        pytest.param(BinaryExpr(binary_op="-", lhs=LiteralExpr(value=1), rhs=SweepExpr(sweep="s")), id="sub"),
+        pytest.param(BinaryExpr(binary_op="*", lhs=SweepExpr(sweep="s"), rhs=SweepExpr(sweep="t")), id="mul"),
+        pytest.param(BinaryExpr(binary_op="/", lhs=SweepExpr(sweep="s"), rhs=LiteralExpr(value=2)), id="div"),
+        pytest.param(BinaryExpr(binary_op="%", lhs=SweepExpr(sweep="s"), rhs=LiteralExpr(value=3)), id="mod"),
+        pytest.param(UnaryExpr(unary_op="-", rhs=SweepExpr(sweep="s")), id="neg"),
+        pytest.param(CallExpr(function="abs", args=[SweepExpr(sweep="s")]), id="abs"),
+        pytest.param(CompareExpr(compare_op=">", lhs=SweepExpr(sweep="s"), rhs=LiteralExpr(value=0)), id="compare"),
+    ],
+)
+def test_every_operator_takes_a_sweep(node: Any):
+    """There is no allow-list: a node is rank-1 exactly when an operand is, comparisons included."""
+    assert "s" in sweep_names_in(node)
+    document = node.model_dump()
+    reloaded = expression_adapter().validate_python(document)
+    assert reloaded == node
+    assert json.loads(node.model_dump_json()) == document
+    assert isinstance(sweep_source_adapter().validate_python(document), type(node))
+
+
+@pytest.mark.parametrize(
+    ("key", "document", "node_type"),
+    [
+        pytest.param("sweep", {"sweep": "vg"}, SweepExpr, id="sweep"),
+        pytest.param(
+            "index_op",
+            {"index_op": {"operand": {"sweep": "vg"}, "indices": [{"value": 0}]}},
+            IndexExpr,
+            id="index",
+        ),
+        pytest.param("len_op", {"len_op": {"operand": {"sweep": "vg"}}}, LenExpr, id="len"),
+    ],
+)
+def test_expression_tag_of_identifies_the_sweep_nodes(key: str, document: dict[str, Any], node_type: type):
+    """``expression_tag_of`` reads the three new tags off the registry, with no edit of its own."""
+    assert expression_tag_of(document) == key
+    node: Any = expression_adapter().validate_python(document)
+    assert isinstance(node, node_type)
+    assert expression_tag_of(node) == key
+
+
+def test_existing_expression_tags_are_unchanged():
+    """The eight nodes that were here keep the tags they had."""
+    assert expression_tag_of({"value": 1}) == "value"
+    assert expression_tag_of({"symbol": {"var": "x"}}) == "symbol"
+    assert expression_tag_of({"unary_op": {"op": "-", "rhs": {"value": 1}}}) == "unary_op"
+    assert expression_tag_of({"binary_op": {"op": "+", "lhs": {"value": 1}, "rhs": {"value": 2}}}) == "binary_op"
+    assert expression_tag_of({"compare_op": {"op": "<", "lhs": {"value": 1}, "rhs": {"value": 2}}}) == "compare_op"
+    assert expression_tag_of({"not_op": {"rhs": {"value": 1}}}) == "not_op"
+    assert expression_tag_of({"logical_op": {"op": "and", "lhs": {"value": 1}, "rhs": {"value": 2}}}) == "logical_op"
+    assert expression_tag_of({"function": {"name": "abs", "args": [{"value": 1}]}}) == "function"
+
+
+def test_index_expr_nested_in_a_binary_expr_round_trips_through_json():
+    """A nested ``index_op`` survives JSON, not only ``model_dump`` -- a missed rebuild shows here.
+
+    Validated from a plain dict, so an unresolved forward reference would leave ``operand`` as a
+    :obj:`dict` rather than raising anywhere.
+    """
+    document = {
+        "binary_op": {
+            "op": "*",
+            "lhs": {"index_op": {"operand": {"sweep": "vg"}, "indices": [{"symbol": {"var": "i"}}]}},
+            "rhs": {"len_op": {"operand": {"sweep": "vg"}}},
+        },
+    }
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        node: Any = expression_adapter().validate_python(document)
+        assert isinstance(node.lhs, IndexExpr)
+        assert isinstance(node.lhs.operand, SweepExpr)
+        assert isinstance(node.lhs.indices[0], SymbolExpr)
+        assert isinstance(node.rhs, LenExpr)
+        assert isinstance(node.rhs.operand, SweepExpr)
+        assert json.loads(node.model_dump_json()) == document
+
+
+def test_depth_validator_counts_the_new_nodes():
+    """The new nodes are levels like any other, and a tree past the cap is still rejected."""
+    inner = nested_negations(MAX_EXPRESSION_DEPTH - 2)
+    node = LenExpr(
+        len_op="len",
+        operand=BinaryExpr(binary_op="*", lhs=SweepExpr(sweep="vg"), rhs=inner),
+    )
+    assert node.len_op == "len"
+    with pytest.raises(ValidationError, match=str(MAX_EXPRESSION_DEPTH)):
+        LenExpr(
+            len_op="len",
+            operand=BinaryExpr(
+                binary_op="*",
+                lhs=SweepExpr(sweep="vg"),
+                rhs=nested_negations(MAX_EXPRESSION_DEPTH - 1),
+            ),
+        )
