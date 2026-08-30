@@ -109,10 +109,13 @@ def np_int_1d_array_validate(value: object) -> np.ndarray:
     value = np.asanyarray(value)
     if np.iscomplexobj(value):
         raise ValueError("Array must be of integer type, not complex")
-    if issubclass(value.dtype.type, float | np.floating):
-        return value
+    # Checked before the float pass-through below, so that a 2-D real array -- the ``(N, 2)``
+    # authoring form of a 1-D complex one -- is rejected here rather than handed on unconverted and
+    # then selected as the integer member of a union that also offers the complex one.
     if value.ndim != 1:
         raise ValueError("Array must be 1-dimensional")
+    if issubclass(value.dtype.type, float | np.floating):
+        return value
     if issubclass(value.dtype.type, int):
         return value
     else:
