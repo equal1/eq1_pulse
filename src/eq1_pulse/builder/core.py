@@ -41,7 +41,7 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
-from ..models.basic_types import LinSpace, Range
+from ..models.basic_types import Range
 from ..models.channel_ops import (
     Barrier,
     CompensateDC,
@@ -85,9 +85,11 @@ from ._coerce import (
 )
 from ._expressions import call_expr_ as call_expr_
 from ._expressions import expr as expr
+from ._expressions import len_ as len_
 from ._factories import _coerce_or_ref as _coerce_or_ref
+from ._factories import _validate_explicit_variable_ref as _validate_explicit_variable_ref
 from ._factories import (
-    _convert_range_to_model,
+    _validate_iteration_item,
     _validate_variable_ref,
     arbitrary_pulse,
     channel,
@@ -103,12 +105,14 @@ from ._factories import (
     trigger_pulse,
     var,
 )
-from ._factories import _validate_explicit_variable_ref as _validate_explicit_variable_ref
 from ._factories import _validate_or_pass_through as _validate_or_pass_through
+from ._factories import indices as indices
 from ._state import (
+    _add_to_sequence,
     _current_context,
     _in_schedule,
     _in_sequence,
+    _not_a_sequence_context,
     _pop_context,
     _push_context,
     _register_external,
@@ -116,14 +120,19 @@ from ._state import (
     _register_variable,
 )
 from ._state import _get_state as _get_state
+from ._sweeps import _consume_sweeps
+from ._sweeps import sweep as sweep
+from ._sweeps import sweep_decl as sweep_decl
+from ._sweeps import sweep_group as sweep_group
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Iterator
+    from collections.abc import Iterator
 
     from ..models.basic_types import AmplitudeLike, DurationLike, FrequencyLike, MagnitudeLike, PhaseLike, ThresholdLike
     from ..models.data_ops import ComparisonModeLike, ComplexToRealProjectionModeLike, SymbolValueLike
     from ..models.reference_types import ChannelRefLike, PulseRefLike, SymbolRefLike, VariableRefLike
     from ._expressions import ExprLike
+    from ._factories import IterableLike
 
 __all__ = (
     "arbitrary_pulse",
@@ -143,6 +152,8 @@ __all__ = (
     "for_",
     "full_integration",
     "if_",
+    "indices",
+    "len_",
     "measure",
     "nested_sequence",
     "param_decl",
@@ -160,6 +171,9 @@ __all__ = (
     "step_pulse",
     "store",
     "sub_sequence",
+    "sweep",
+    "sweep_decl",
+    "sweep_group",
     "trace",
     "trigger_pulse",
     "var",
@@ -167,35 +181,6 @@ __all__ = (
     "wait",
     "wait_for_trigger",
 )
-
-
-def _not_a_sequence_context(operation_name: str) -> RuntimeError:
-    """Build the reciprocal-rejection error for an operation called outside a sequence.
-
-    :param operation_name: Name of the operation for the error message, e.g. ``"play()"``
-
-    :return: The error to raise
-    """
-    return RuntimeError(
-        f"{operation_name} requires a build_sequence() context. Schedules are built with "
-        "eq1_pulse.builder.experimental and cannot contain sequence operations."
-    )
-
-
-def _add_to_sequence(context: Any, operation: Any) -> None:
-    """Add an operation to a sequence context.
-
-    :param context: The sequence context to add to; anything else raises
-    :param operation: The operation to add
-
-    :raises RuntimeError: If context is not a sequence
-    """
-    if isinstance(context, Repetition | Iteration | Conditional):
-        context.body.items.append(operation)
-    elif isinstance(context, OpSequence):
-        context.items.append(operation)
-    else:
-        raise RuntimeError(f"Cannot add sequence operation to {type(context).__name__} context")
 
 
 # ============================================================================
@@ -325,11 +310,24 @@ def repeat(count: int | str | SymbolRefLike | ExprLike) -> Iterator[Repetition]:
         _pop_context()
 
 
+def _loop_description(validated_vars: list[VariableRefLike] | VariableRefLike) -> str:
+    """Spell a ``for_()`` back the way it was written, for the second-consumer error message.
+
+    :param validated_vars: The loop's already-validated variable reference(s)
+
+    :return: A short description such as ``for_('v')`` or ``for_(['a', 'f'])``
+    """
+    if isinstance(validated_vars, list):
+        names = ", ".join(repr(ref.var) for ref in cast("list[VariableRef]", validated_vars))
+        return f"for_([{names}])"
+    return f"for_({cast('VariableRef', validated_vars).var!r})"
+
+
 @overload
 @contextmanager
 def for_(
     var: str | VariableRefLike,
-    items: Iterable[Any] | Range | LinSpace,
+    items: IterableLike,
 ) -> Iterator[Iteration]: ...
 
 
@@ -337,14 +335,14 @@ def for_(
 @contextmanager
 def for_(
     var: list[str | VariableRefLike],
-    items: list[Iterable[Any] | Range | LinSpace] | Iterable[Any] | Range | LinSpace,
+    items: list[IterableLike] | IterableLike,
 ) -> Iterator[Iteration]: ...
 
 
 @contextmanager
 def for_(
     var: str | VariableRefLike | list[str | VariableRefLike],
-    items: Iterable[Any] | Range | LinSpace | list[Iterable[Any] | Range | LinSpace],
+    items: IterableLike | list[IterableLike],
 ) -> Iterator[Iteration]:
     """Context manager for building an iteration (for loop).
 
@@ -357,13 +355,15 @@ def for_(
         Can be a single variable or list of variables for zipped iteration.
     :param items: Iterable(s) to iterate over.
 
-        - For single iteration: Range, LinSpace, or any iterable
+        - For single iteration: Range, LinSpace, any iterable, a sweep or a transform of one
+          (``sweep("vg")``, ``sweep("vg") * ext("gain")``), or :func:`indices`
         - For zipped iteration: list of iterables, one per variable. A single iterable
           is broadcast across all of the variables.
 
     :yield: The iteration being built
 
-    :raises RuntimeError: If not called within a sequence context
+    :raises RuntimeError: If not called within a sequence context, if an item references an
+        undeclared symbol or sweep, or if a sweep it reads is already iterated by another loop
     :raises ValueError: If var/items length mismatch in zipped iteration
 
     Examples
@@ -391,6 +391,13 @@ def for_(
                     duration="100ns",
                     amplitude=var("amp")
                 ))
+
+        # Iteration over a sweep, and over its positions
+        with build_sequence():
+            sweep_decl("vg", "float", unit="mV")
+            var_decl("v", "float", unit="mV")
+            with for_("v", sweep("vg")):
+                play("gate", step_pulse(duration="40ns", amplitude=var("v")))
     """
     # Validate variable reference(s)
     if isinstance(var, list):
@@ -400,10 +407,10 @@ def for_(
 
     # Handle both single and zipped iteration items
     # For zipped iteration, items should be a list; convert single iterable to list
-    # `_convert_range_to_model` converts a Python `range` and passes everything else through
-    # unchanged, so this matches its own return type rather than restating `for_()`'s -- an item
-    # may be an `Expression` (a sweep or a transform of one) or `Indices`, neither of which is an
-    # `Iterable[Any]`.
+    # `_validate_iteration_item` unwraps an `Expr` and passes everything but a Python `range`
+    # through unchanged, so this matches its own return type rather than restating `for_()`'s --
+    # an item may be an `Expression` (a sweep or a transform of one) or `Indices`, neither of
+    # which is an `Iterable[Any]`.
     validated_items: list[Range | list[Any] | Any] | Range | list[Any] | Any
     if isinstance(validated_vars, list):
         # Multiple variables - items must be a list of iterables (zipped iteration)
@@ -411,7 +418,7 @@ def for_(
             # A single iterable provided for multiple variables is broadcast, so that
             # for_(["i", "j"], range(10)) iterates the same range for both. Wrapping it
             # in a one-element list instead would fail the model's length check.
-            validated_items = [_convert_range_to_model(items)] * len(validated_vars)
+            validated_items = [_validate_iteration_item(items)] * len(validated_vars)
         else:
             if len(items) != len(validated_vars):
                 names = [ref.var for ref in cast("list[VariableRef]", validated_vars)]
@@ -420,15 +427,19 @@ def for_(
                     f"variable(s) {names} but {len(items)} iterable(s)."
                 )
             # Convert any range objects in the list
-            validated_items = [_convert_range_to_model(item) for item in items]
+            validated_items = [_validate_iteration_item(item) for item in items]
     else:
         # Single variable - items can be single iterable
-        validated_items = _convert_range_to_model(items)
+        validated_items = _validate_iteration_item(items)
 
     parent = _current_context("for_()")
 
     if not _in_sequence(parent):
         raise _not_a_sequence_context("for_()")
+
+    # A loop takes its position in the nesting order from the sweeps it iterates, so each of
+    # them may be iterated by exactly one loop (parameter sweeps plan, section 7).
+    _consume_sweeps(validated_items, _loop_description(validated_vars))
 
     iter_obj = Iteration(var=validated_vars, items=validated_items, body=OpSequence([]))
     _add_to_sequence(parent, iter_obj)

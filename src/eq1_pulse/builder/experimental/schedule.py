@@ -31,7 +31,7 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, Literal, Unpack, cast
 
-from ...models.basic_types import LinSpace, Range
+from ...models.basic_types import Range
 from ...models.channel_ops import (
     DemodIntegration,
     FullIntegration,
@@ -56,7 +56,7 @@ from ...models.reference_types import PulseRef, VariableRef
 from .._coerce import as_channel_ref, as_duration, as_frequency, as_phase, as_pulse_ref, as_threshold
 from .._factories import _coerce_or_ref as _coerce_or_ref
 from .._factories import (
-    _convert_range_to_model,
+    _validate_iteration_item,
     _validate_variable_ref,
     arbitrary_pulse,
     channel,
@@ -83,12 +83,13 @@ from .._state import _get_state as _get_state
 from .utils import OperationToken, ScheduleParams, resolve_schedule_params
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Iterator
+    from collections.abc import Iterator
 
     from ...models.basic_types import AmplitudeLike, DurationLike, FrequencyLike, PhaseLike, ThresholdLike
     from ...models.data_ops import ComparisonModeLike, ComplexToRealProjectionModeLike
     from ...models.reference_types import ChannelRefLike, PulseRefLike, SymbolRefLike, VariableRefLike
     from .._expressions import ExprLike
+    from .._factories import IterableLike
 
 __all__ = (
     "ScheduleBlock",
@@ -370,7 +371,7 @@ def repeat(count: int, **schedule_params: Unpack[ScheduleParams]) -> Iterator[Sc
 @contextmanager
 def for_(
     var: str | VariableRefLike | list[str | VariableRefLike],
-    items: Iterable[Any] | Range | LinSpace | list[Iterable[Any] | Range | LinSpace],
+    items: IterableLike | list[IterableLike],
     **schedule_params: Unpack[ScheduleParams],
 ) -> Iterator[SchedIteration]:
     """Context manager for building a schedule iteration (for loop).
@@ -415,10 +416,10 @@ def for_(
 
     # Handle both single and zipped iteration items
     # For zipped iteration, items should be a list; convert single iterable to list
-    # `_convert_range_to_model` converts a Python `range` and passes everything else through
-    # unchanged, so this matches its own return type rather than restating `for_()`'s -- an item
-    # may be an `Expression` (a sweep or a transform of one) or `Indices`, neither of which is an
-    # `Iterable[Any]`.
+    # `_validate_iteration_item` unwraps an `Expr` and passes everything but a Python `range`
+    # through unchanged, so this matches its own return type rather than restating `for_()`'s --
+    # an item may be an `Expression` (a sweep or a transform of one) or `Indices`, neither of
+    # which is an `Iterable[Any]`.
     validated_items: list[Range | list[Any] | Any] | Range | list[Any] | Any
     if isinstance(validated_vars, list):
         # Multiple variables - items must be a list of iterables (zipped iteration)
@@ -426,7 +427,7 @@ def for_(
             # A single iterable provided for multiple variables is broadcast, so that
             # for_(["i", "j"], range(10)) iterates the same range for both. Wrapping it
             # in a one-element list instead would fail the model's length check.
-            validated_items = [_convert_range_to_model(items)] * len(validated_vars)
+            validated_items = [_validate_iteration_item(items)] * len(validated_vars)
         else:
             if len(items) != len(validated_vars):
                 names = [ref.var for ref in cast("list[VariableRef]", validated_vars)]
@@ -435,10 +436,10 @@ def for_(
                     f"variable(s) {names} but {len(items)} iterable(s)."
                 )
             # Convert any range objects in the list
-            validated_items = [_convert_range_to_model(item) for item in items]
+            validated_items = [_validate_iteration_item(item) for item in items]
     else:
         # Single variable - items can be single iterable
-        validated_items = _convert_range_to_model(items)
+        validated_items = _validate_iteration_item(items)
 
     parent = _current_context("for_()")
     if not _in_schedule(parent):
