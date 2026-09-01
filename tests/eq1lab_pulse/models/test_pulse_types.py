@@ -9,9 +9,12 @@ from eq1_pulse.models.expressions import (
     BinaryExpr,
     CallExpr,
     CompareExpr,
+    IndexExpr,
+    LenExpr,
     LiteralExpr,
     LogicalExpr,
     NotExpr,
+    SweepExpr,
     SymbolExpr,
     UnaryExpr,
 )
@@ -810,3 +813,60 @@ def test_external_pulse_params_widened_types():
     assert isinstance(pulse.params["threshold"], Magnitude)
     assert isinstance(pulse.params["pulse_ref"], PulseRef)
     assert pulse.params["label"] == "foo"
+
+
+@pytest.mark.parametrize(
+    "expr_mapping",
+    [
+        pytest.param({"sweep": "vg"}, id="bare"),
+        pytest.param(
+            {"binary_op": {"op": "*", "lhs": {"sweep": "vg"}, "rhs": {"value": 2}}},
+            id="nested",
+        ),
+    ],
+)
+def test_external_param_value_rejects_a_sweep(expr_mapping: dict[str, Any]):
+    """A parameter is one value, so ``ExternalParamValue``'s expression member is rank-0.
+
+    This union is the one value site in the IR that does not go through
+    :data:`~.expressions.ValueRef`, so it carries the narrowing itself; without it the rank rule has
+    a hole no other test would find.
+    """
+    adapter: TypeAdapter[Any] = TypeAdapter(ExternalParamValue)
+    with pytest.raises(ValidationError, match="vg"):
+        adapter.validate_python(expr_mapping)
+
+
+@pytest.mark.parametrize(
+    ("expr_mapping", "expr_type"),
+    [
+        pytest.param(
+            {"index_op": {"operand": {"sweep": "vg"}, "indices": [{"symbol": {"var": "i"}}]}},
+            IndexExpr,
+            id="index",
+        ),
+        pytest.param({"len_op": {"operand": {"sweep": "vg"}}}, LenExpr, id="len"),
+    ],
+)
+def test_external_param_value_accepts_a_scalar_over_a_sweep(expr_mapping: dict[str, Any], expr_type: type):
+    """An indexed or measured sweep is a scalar, so it passes where the sweep itself does not."""
+    adapter: TypeAdapter[Any] = TypeAdapter(ExternalParamValue)
+    value = adapter.validate_python(expr_mapping)
+    assert isinstance(value, expr_type)
+    assert adapter.dump_python(value) == expr_mapping
+
+
+def test_external_pulse_params_reject_a_sweep():
+    """The narrowing reaches the field, not just the alias.
+
+    Built from a :class:`SweepExpr` instance rather than its wire form, because
+    ``ExternalParamValueLike`` hints the authoring side and still admits any ``Expression`` -- as
+    ``ValueRefLike`` does. The field's own type is what rejects it, which is the whole arrangement.
+    """
+    with pytest.raises(ValidationError, match="vg"):
+        ExternalPulse(
+            function="gate",
+            duration=Duration(s=1e-6),
+            amplitude=Amplitude(V=1.0),
+            params={"detuning": SweepExpr(sweep="vg")},
+        )

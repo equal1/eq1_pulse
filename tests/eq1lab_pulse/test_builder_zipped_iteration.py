@@ -5,6 +5,7 @@ import pytest
 from eq1_pulse.builder import (
     build_sequence,
     for_,
+    indices,
     play,
     square_pulse,
     var,
@@ -167,6 +168,28 @@ class TestZippedIterationBasics:
                 # 2 variables but 3 iterables
                 with for_(["i", "j"], [range(5), range(5), range(5)]):
                     play("ch1", square_pulse(duration="100ns", amplitude="50mV"))
+
+    def test_literal_indices_count_is_compared_against_the_other_lengths(self):
+        """``indices(5)`` is not ``Sized``, but a literal count is a length like any other."""
+        with pytest.raises(ValueError, match="same length"):
+            with build_sequence():
+                var_decl("i", "int")
+                var_decl("j", "int")
+
+                with for_(["i", "j"], [indices(5), range(3)]):
+                    play("ch1", square_pulse(duration="100ns", amplitude="50mV"))
+
+    def test_matching_indices_count_is_accepted(self):
+        """The same comparison the other way: agreeing lengths build."""
+        with build_sequence() as seq:
+            var_decl("i", "int")
+            var_decl("j", "int")
+
+            with for_(["i", "j"], [indices(3), range(3)]):
+                play("ch1", square_pulse(duration="100ns", amplitude="50mV"))
+
+        iter_obj = seq.items[2]
+        assert isinstance(iter_obj, Iteration)
 
     def test_single_iterable_is_broadcast_over_variables(self):
         """Test that one iterable given for several variables is used for each of them."""

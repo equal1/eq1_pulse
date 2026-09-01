@@ -349,7 +349,7 @@ type ExternalParamValue = Annotated[
     | Annotated[PulseRef, Tag("pulse_name")]
     | Annotated[ExternalRef, Tag("ext")]
     | Annotated[PulseType, Tag(_EXTERNAL_PARAM_PULSE_TAG)]
-    | Annotated[Expression, Tag(_EXTERNAL_PARAM_EXPR_TAG)]
+    | Annotated[ScalarExpression, Tag(_EXTERNAL_PARAM_EXPR_TAG)]
     | Annotated[bool, Tag("bool")]
     | Annotated[int, Tag("int")]
     | Annotated[float, Tag("float")]
@@ -370,9 +370,16 @@ unit keys and are told apart by the shape of the value, exactly as in
 
 Every reference here is its own tagged object -- ``{"var": name}``, ``{"pulse_name": name}``,
 ``{"ext": name}`` -- so each round-trips through JSON as its own type with nothing in this module
-to tag it. :class:`~.expressions.Expression` is tagged the same way, on its own node key, because a
-variable or an external constant resolved out of band is already the same obligation an expression
-tree over them is one level up.
+to tag it. An expression is tagged the same way, on its own node key, because a variable or an
+external constant resolved out of band is already the same obligation an expression tree over them
+is one level up.
+
+The expression member is :data:`~.expressions.ScalarExpression`, not
+:data:`~.expressions.Expression`: a parameter is one value, so the rank rule applies here exactly as
+it does at a :data:`~.expressions.ValueRef` field. This union and ``ValueRef`` are the only two
+places that guard it -- the two value sites in the IR that are not the same alias. A sweep reaches
+an external program by being indexed (``{"index_op": ...}``) or measured (``{"len_op": ...}``),
+both of which are scalars; a bare ``{"sweep": "vg"}`` is rejected.
 
 Unlike :data:`~.data_ops.SymbolValue`, this union keeps a plain :obj:`str` member: a bare string is
 now *only* ever a string, since it is opaque data passed to an external program rather than an
@@ -415,7 +422,7 @@ type PulseParamValueLike = ExternalParamValueLike
 # back through that edge before `PulseType` exists to satisfy it. By the time this runs, `PulseType`
 # and `ExternalParamValue` are already defined, so `data_ops`'s import of them (if it is the one
 # still waiting on this module) succeeds regardless of which of the three modules went first.
-from .expressions import ExprBase, Expression, ValueRef, expression_tag_of  # noqa: E402
+from .expressions import ExprBase, Expression, ScalarExpression, ValueRef, expression_tag_of  # noqa: E402
 
 PulseBase.model_rebuild()
 SquarePulse.model_rebuild()

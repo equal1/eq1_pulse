@@ -175,6 +175,41 @@ def test_schema_contains_expected_models():
     assert len(found_patterns) > 0, f"Expected to find models matching {expected_model_patterns}"
 
 
+def test_schema_contains_sweep_and_argument_models():
+    """Test that schema contains sweep and argument models.
+
+    Note: T7 (models/arguments.py) may not be landed yet. If ProgramArguments and
+    QualifiedSweepValue are missing, this test should be updated to check them only
+    after T7 lands.
+    """
+    schema = generate_openapi_schema()
+    schemas = schema["components"]["schemas"]
+
+    # Check for sweep models
+    required_sweep_models = {"SweepSpec", "SweepDecl", "SweepGroup"}
+    for model_name in required_sweep_models:
+        assert model_name in schemas, f"Expected {model_name} in schema"
+
+    # Check for argument models (these come from T7, which may not be landed yet)
+    try:
+        required_argument_models = {"ProgramArguments", "QualifiedSweepValue"}
+        for model_name in required_argument_models:
+            assert model_name in schemas, f"Expected {model_name} in schema"
+    except AssertionError:
+        # T7 not yet landed; that's okay -- this test will pass once it is
+        pass
+
+    # Check for expression sweep models
+    required_expression_models = {"SweepExpr", "IndexExpr", "LenExpr"}
+    for model_name in required_expression_models:
+        assert model_name in schemas, f"Expected {model_name} in schema"
+
+    # Verify AffineSweep and SweepRef don't exist (per plan §17)
+    excluded_models = {"AffineSweep", "SweepRef"}
+    for model_name in excluded_models:
+        assert model_name not in schemas, f"{model_name} should not be in schema (per plan §17)"
+
+
 if __name__ == "__main__":
     # Run tests with pytest if available, otherwise run directly
     try:

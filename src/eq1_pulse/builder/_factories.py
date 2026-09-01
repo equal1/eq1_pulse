@@ -9,18 +9,21 @@ between the sequence builder (:mod:`eq1_pulse.builder.core`) and the schedule bu
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING, Any, Literal, overload
 
 from eq1_pulse.models import Phase
 
-from ..models.basic_types import Range
+from ..models.basic_types import LinSpace, Range
 from ..models.channel_ops import DemodIntegration, FullIntegration
+from ..models.control_flow import Indices
 from ..models.expressions import (
     BinaryExpr,
     CallExpr,
     CompareExpr,
     ExprBase,
+    IndexExpr,
+    LenExpr,
     LogicalExpr,
     NotExpr,
     SymbolExpr,
@@ -38,6 +41,7 @@ from ..models.reference_types import ChannelRef, ExternalRef, PulseRef, Variable
 from ._coerce import as_amplitude, as_duration, as_frequency, as_phase, as_symbol_ref
 from ._expressions import Expr
 from ._state import _check_external_declared, _check_pulse_declared, _check_variable_declared
+from ._sweeps import _check_sweep_reads
 
 if TYPE_CHECKING:
     from ..models.basic_types import AmplitudeLike, DurationLike, FrequencyLike, PhaseLike
@@ -126,17 +130,21 @@ def _validate_variable_ref(var_ref: str | VariableRefLike) -> VariableRef:
 
 
 def _check_expression_leaves(node: Expression) -> None:
-    """Walk an expression tree and check every :class:`~.expressions.SymbolExpr` leaf is declared.
+    """Walk an expression tree and check that every leaf it reads is declared.
 
     The only new traversal this plan adds: every other validation helper here checks a single
     reference, but an :class:`~.expressions.Expression` can bury references arbitrarily deep, so it
     needs its own walk rather than reusing :func:`_check_variable_declared` /
     :func:`_check_external_declared` directly.
 
+    :class:`~.expressions.SweepExpr` leaves are checked too, by
+    :func:`~eq1_pulse.builder._sweeps._check_sweep_reads`, which also enforces that the sweeps any
+    one expression reads advance together.
+
     :param node: The expression tree to walk.
 
-    :raises RuntimeError: If a :class:`~.expressions.SymbolExpr` leaf names an undeclared variable
-        or external symbol.
+    :raises RuntimeError: If a leaf names an undeclared variable, external symbol or sweep, or if
+        one expression reads sweeps that are not in lock-step.
     """
     stack = [node]
     while stack:
@@ -154,6 +162,14 @@ def _check_expression_leaves(node: Expression) -> None:
             stack.append(current.rhs)
         elif isinstance(current, CallExpr):
             stack.extend(current.args)
+        elif isinstance(current, IndexExpr):
+            # Rank-0 nodes still hold symbols: `sweep("vg")[var("i")]` reads `i`.
+            stack.append(current.operand)
+            stack.extend(current.indices)
+        elif isinstance(current, LenExpr):
+            stack.append(current.operand)
+
+    _check_sweep_reads(node)
 
 
 def _validate_or_pass_through[T](
@@ -715,6 +731,75 @@ def pulse_ref(name: str) -> PulseRef:
     _check_pulse_declared(name)
 
     return PulseRef(pulse_name=name)
+
+
+type IterableLike = Iterable[Any] | Range | LinSpace | Indices | ExprLike
+"""What a ``for_()`` accepts as one of the things it iterates.
+
+The builder-side mirror of :data:`~.control_flow.IterableSequence`: the concrete sequences the
+model has always taken, plus the two this plan added -- a sweep or any transform of one (an
+:class:`~eq1_pulse.builder._expressions.Expr` or a bare expression node), and :func:`indices`.
+"""
+
+
+def indices(count: int | str | SymbolRefLike | ExprLike) -> Indices:
+    """Build the positions ``0 .. count-1``, for a ``for_`` that binds an index rather than an item.
+
+    ``for_``'s other iterable form. Pairing it with :func:`~eq1_pulse.builder._expressions.len_`
+    -- ``indices(len_(sweep("vg")))`` -- iterates the positions of a sweep whose length is not
+    known until the program is invoked, and the body reaches each item with ``sweep("vg")[var("i")]``.
+
+    Binding the item is what is wanted almost always; the position is needed when an item and its
+    own index appear in one expression, or to reach a fixed item of the scan.
+
+    :param count: How many positions to iterate: a literal, a declared variable or external symbol,
+        or an expression such as ``len_(sweep("vg"))``
+
+    :return: The :class:`~eq1_pulse.models.control_flow.Indices` to hand to ``for_``
+
+    :raises RuntimeError: If *count* references an undeclared variable, external symbol or sweep
+
+    Examples
+
+    .. code-block:: python
+
+        from eq1_pulse.builder import *
+
+        with build_sequence():
+            sweep_decl("vg", "float", unit="mV")
+            var_decl("i", "int")
+            with for_("i", indices(len_(sweep("vg")))):
+                play("gate", step_pulse(duration="40ns", amplitude=sweep("vg")[var("i")]))
+    """
+    return Indices(count=_validate_or_pass_through(count, param_name="count", context="indices()"))  # type: ignore[arg-type]
+
+
+def _validate_iteration_item(item: Any) -> Any:
+    """Resolve one ``for_()`` item to something :data:`~.control_flow.IterableSequence` accepts.
+
+    An :class:`~eq1_pulse.builder._expressions.Expr` is unwrapped -- the model takes the expression
+    node, not the builder's wrapper -- and any expression, wrapped or bare, has its leaves checked
+    the way every other widened value site does. Everything else is handed to
+    :func:`_convert_range_to_model`, which converts a Python :class:`range` and passes the rest
+    through untouched.
+
+    :param item: One iterable as the caller wrote it
+
+    :return: The item in the form the iteration model accepts
+
+    :raises RuntimeError: If the item is an expression referencing an undeclared symbol or sweep,
+        or reading sweeps that are not in lock-step
+    """
+    if isinstance(item, Expr):
+        node = item.unwrap()
+        _check_expression_leaves(node)
+        return node
+
+    if isinstance(item, ExprBase):
+        _check_expression_leaves(item)  # type: ignore[arg-type]
+        return item
+
+    return _convert_range_to_model(item)
 
 
 def _convert_range_to_model(iterable: Any) -> Range | list[Any] | Any:

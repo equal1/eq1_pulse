@@ -954,6 +954,169 @@ symbol and a voltage literal. ``LiteralExpr`` and ``SymbolExpr`` stay flat (``{"
 No discriminator field is needed -- the presence of ``binary_op``, ``compare_op``, ``logical_op``,
 ``not_op``, ``unary_op``, ``symbol``, ``value``, or ``function`` is itself the discriminator.
 
+Sweeps
+------
+
+A **sweep** is a multi-valued parameter that is supplied at invocation time, not baked into the
+compiled program. The same program IR runs with different sweep ranges without recompilation.
+
+A sweep is a list, not an axis: items may repeat, need not be ordered, and no assumptions are made
+about monotonicity. An interleaved calibration scan is ``[100, 0, 100, 50, 100, 25]``.
+
+Declaring and Using Sweeps
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A sweep is declared once at the top level of the program, then referenced in one or more ``for_``
+loops:
+
+.. code-block:: python
+
+    with build_sequence() as seq:
+        # Declare a sweep without a default (always supplied at invocation)
+        sweep_decl("detuning", "float", unit="mV")
+
+        # Reference it in a loop
+        with for_("v", sweep("detuning")):
+            play("qubit", square_pulse(duration="50ns", amplitude=var("v")))
+
+You can also supply a default for convenience:
+
+.. code-block:: python
+
+    sweep_decl("delay", "float", unit="ns", default=LinSpace(start=0, stop=500, num=51))
+
+Three Sweep Operations
+~~~~~~~~~~~~~~~~~~~~~~~
+
+Each declared sweep supports three operations:
+
+1. **Reference**: Read the entire sweep with ``sweep(name)``. It is rank-1 (contains values from
+   the sweep).
+
+2. **Index**: Extract one item with ``sweep(name)[index]``. It is rank-0 (a scalar for each index).
+
+3. **Length**: Get the sweep length with ``len_(sweep(name))``. It returns a scalar.
+
+Example:
+
+.. code-block:: python
+
+    with for_("i", indices(len_(sweep("delay")))):
+        # Index into the sweep to get one element
+        play("qubit", square_pulse(
+            duration=sweep("delay")[var("i")],
+            amplitude="50mV"
+        ))
+
+Arithmetic on Sweeps
+~~~~~~~~~~~~~~~~~~~~
+
+Arithmetic over sweeps applies elementwise. All operands of an expression must be in lock-step
+(the same sweep or members of the same lock-step group), and elementwise operations run on the host:
+
+.. code-block:: python
+
+    with for_("p1", sweep("vg") * ext("scale") + ext("offset")):
+        play("gate", step_pulse(duration="100ns", amplitude=var("p1")))
+
+In this example:
+
+* ``sweep("vg")`` is rank-1 (many values)
+* ``ext("scale")`` is rank-0 (one value, resolved at invocation)
+* ``ext("offset")`` is rank-0
+* The result is rank-1 (elementwise: ``[v*scale + offset for v in vg]``)
+* The backend materializes this list; a consumer calling :func:`~eq1_pulse.utilities.affine_form`
+  can check whether it is affine (can be stored as three numbers) first
+
+Inline Transforms
+~~~~~~~~~~~~~~~~~
+
+A transform is an expression over one or more sweeps, computed before the loop. It has no name:
+
+.. code-block:: python
+
+    with for_(["p1", "p2"], [
+        sweep("detuning") * ext("vg.m11") + ext("vg.o1"),
+        sweep("detuning") * ext("vg.m21") + ext("vg.o2"),
+    ]):
+        play("gate_1", step_pulse(duration="100ns", amplitude=var("p1")))
+        play("gate_2", step_pulse(duration="100ns", amplitude=var("p2")))
+
+This loop reads one sweep (``detuning``) and produces two derived sweeps (the two transforms).
+Both transforms are computed once, and both run lock-step with the base sweep.
+
+Lock-Step Rule
+~~~~~~~~~~~~~~
+
+Every sweep read in one expression must be the same sweep or a member of one ``SweepGroup``:
+
+.. code-block:: python
+
+    # OK: both from the same group
+    with sweep_group():
+        sweep_decl("a", "float")
+        sweep_decl("b", "float")
+
+    with for_("v", sweep("a") + sweep("b")):
+        play("qubit", square_pulse(duration="50ns", amplitude=var("v")))
+
+    # NOT OK: mixing independent sweeps
+    sweep_decl("x", "float")
+    sweep_decl("y", "float")
+    with for_("v", sweep("x") + sweep("y")):  # ERROR: x and y are not lock-step
+        ...
+
+    # Workaround: declare them as a group
+    with sweep_group():
+        sweep_decl("x", "float")
+        sweep_decl("y", "float")
+    with for_("v", sweep("x") + sweep("y")):  # OK
+        play("qubit", square_pulse(duration="50ns", amplitude=var("v")))
+
+Sweep Dimensions
+~~~~~~~~~~~~~~~~
+
+The result shape depends on how many sweeps are consumed by loops:
+
+* **Undeclared or unconsumed** → outer dimension (host-driven)
+* **Consumed by a loop** → that loop's dimension
+
+Example:
+
+.. code-block:: python
+
+    sweep_decl("outer", "float")  # No for_ consumes it
+    sweep_decl("inner", "float")
+
+    with for_("i", sweep("inner")):
+        play("qubit", square_pulse(duration="50ns", amplitude="100mV"))
+
+Result shape: ``(len(outer), len(inner))``. The ``outer`` sweep is the responsibility of the
+calling code; ``inner`` is produced by the loop.
+
+Affine Transforms and Materialisation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+When a sweep is transformed linearly (scale + offset), the backend can store it compactly as three
+numbers instead of materializing the full array. To check whether an expression is affine:
+
+.. code-block:: python
+
+    from eq1_pulse.utilities.affine_form import affine_form
+
+    expr_tree = sweep("vg") * ext("scale") + ext("offset")
+    form = affine_form(expr_tree)
+
+    if form is not None:
+        # Affine: upload terms (one per sweep) and offset
+        upload_affine(form)
+    else:
+        # Not affine: materialize the full array
+        materialize(expr_tree)
+
+This is optional — a generator calling neither function works fine, but the affine check is where
+the difference between three numbers and ten thousand floats comes from.
+
 Control Flow
 ------------
 

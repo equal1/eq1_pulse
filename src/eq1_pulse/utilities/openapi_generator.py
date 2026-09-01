@@ -70,6 +70,7 @@ def get_all_pydantic_models() -> list[type[BaseModel]]:
     """
     # List of modules to import from the models package
     model_modules = [
+        "arguments",
         "arithmetic",
         "base_models",
         "basic_types",
@@ -84,6 +85,7 @@ def get_all_pydantic_models() -> list[type[BaseModel]]:
         "reference_types",
         "experimental.schedule",
         "sequence",
+        "sweeps",
         "units",
     ]
 
@@ -230,6 +232,7 @@ def generate_openapi_schema(
     # Add tags if requested
     if include_tags:
         tags = [
+            {"name": "arguments", "description": "Program invocation arguments (parameters and sweep values)"},
             {"name": "basic-types", "description": "Basic types like Amplitude, Duration, Frequency, etc."},
             {"name": "expressions", "description": "Expression nodes for building computed values"},
             {"name": "pulse-types", "description": "Pulse type definitions (Square, Sine, Arbitrary, etc.)"},
@@ -238,6 +241,7 @@ def generate_openapi_schema(
             {"name": "data-ops", "description": "Data operations (Assignment, Arithmetic, etc.)"},
             {"name": "sequences", "description": "Operation sequences"},
             {"name": "reference-types", "description": "Reference types for variables and parameters"},
+            {"name": "sweeps", "description": "Sweep declarations and sweep operations"},
             {"name": "units", "description": "Unit types (Seconds, Volts, Hertz, etc.)"},
             {"name": "experimental", "description": "Unused / experimental models, subject to removal"},
         ]

@@ -1,4 +1,5 @@
 # sudo apt install fonts-lmodern fonts-cmu fonts-lato
+# brew install mactex font-lato font-dejavu
 latex_engine = "xelatex"
 latex_elements = {
     # Clean out the legacy font encoding completely
