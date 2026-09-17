@@ -47,7 +47,13 @@ def np_complex_1d_array_validate(value: object) -> np.ndarray:
     if value.ndim == 1:
         if issubclass(value.dtype.type, complex):
             return value
-        return value.astype(complex)
+        # `value` may hold non-numeric items -- an expression node from IterableSequence's smart
+        # union arbitration, tried here before list[Expression] -- and `astype` raises `TypeError`
+        # for those, which pydantic does not read as "this union member failed".
+        try:
+            return value.astype(complex)
+        except TypeError as exc:
+            raise ValueError(f"array items are not numeric: {exc}") from exc
     if value.ndim != 2 or value.shape[1] != 2:
         raise ValueError("Array must be 2-dimensional with shape (N, 2)")
 
@@ -86,8 +92,12 @@ def np_float_1d_array_validate(value: object) -> np.ndarray:
         raise ValueError("Array must be 1-dimensional")
     if issubclass(value.dtype.type, float):
         return value
-    else:
+    # See np_complex_1d_array_validate's comment: `astype` raises `TypeError`, not `ValueError`,
+    # for non-numeric items, which pydantic would otherwise let escape the union arbitration.
+    try:
         return value.astype(float)
+    except TypeError as exc:
+        raise ValueError(f"array items are not numeric: {exc}") from exc
 
 
 def np_float_1d_array_serialize(value: np.ndarray) -> list[float]:
@@ -109,14 +119,21 @@ def np_int_1d_array_validate(value: object) -> np.ndarray:
     value = np.asanyarray(value)
     if np.iscomplexobj(value):
         raise ValueError("Array must be of integer type, not complex")
-    if issubclass(value.dtype.type, float | np.floating):
-        return value
+    # Checked before the float pass-through below, so that a 2-D real array -- the ``(N, 2)``
+    # authoring form of a 1-D complex one -- is rejected here rather than handed on unconverted and
+    # then selected as the integer member of a union that also offers the complex one.
     if value.ndim != 1:
         raise ValueError("Array must be 1-dimensional")
+    if issubclass(value.dtype.type, float | np.floating):
+        return value
     if issubclass(value.dtype.type, int):
         return value
-    else:
+    # See np_complex_1d_array_validate's comment: `astype` raises `TypeError`, not `ValueError`,
+    # for non-numeric items, which pydantic would otherwise let escape the union arbitration.
+    try:
         return value.astype(int)
+    except TypeError as exc:
+        raise ValueError(f"array items are not numeric: {exc}") from exc
 
 
 def np_int_1d_array_serialize(value: np.ndarray) -> list[int]:
@@ -131,6 +148,14 @@ type NumpyIntArray1D = Annotated[
     WithJsonSchema({"type": "array", "items": {"type": "integer"}}),
 ]
 """1D integer NumPy array type with serialization to/from list."""
+
+type NumpyIterableArray = NumpyIntArray1D | NumpyFloatArray1D | NumpyComplexArray1D
+"""The three 1D array dtypes an iteration or a sweep may carry, as one union.
+
+Lives here rather than beside its one-time sole consumer, :mod:`~.control_flow`, so
+:mod:`~.sweeps` can import it too without taking an import from an operation module -- the
+constraint that keeps :mod:`~.sweeps` a leaf.
+"""
 
 
 def _detect_optimal_float_to_complex_type(array: np.ndarray[Any, np.dtype[np.floating[Any]]]) -> tuple[type, type]:
@@ -154,4 +179,4 @@ def _detect_optimal_float_to_complex_type(array: np.ndarray[Any, np.dtype[np.flo
     return float_type, complex_type
 
 
-__all__ = ("NumpyArray", "NumpyComplexArray1D", "NumpyFloatArray1D", "NumpyIntArray1D")
+__all__ = ("NumpyArray", "NumpyComplexArray1D", "NumpyFloatArray1D", "NumpyIntArray1D", "NumpyIterableArray")

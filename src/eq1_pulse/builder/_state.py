@@ -9,8 +9,9 @@ Context-kind detection uses each context model's ``_context_kind`` marker rather
 ``isinstance`` against the concrete schedule classes: importing those unconditionally
 would give the production, sequence-only builder a runtime dependency on the
 experimental schedule model tree (and its deprecation warnings) merely from being
-imported. The concrete classes are only needed here for type annotations, so they are
-imported under ``TYPE_CHECKING``.
+imported. The schedule classes are only needed here for type annotations, so they are
+imported under ``TYPE_CHECKING``; the sequence classes are the production tree and are
+imported normally, since :func:`_add_to_sequence` dispatches on them.
 """
 
 from __future__ import annotations
@@ -19,9 +20,11 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypeGuard
 
+from ..models.sequence import Conditional, Iteration, OpSequence, Repetition
+
 if TYPE_CHECKING:
     from ..models.experimental.schedule import SchedConditional, SchedIteration, SchedRepetition, Schedule
-    from ..models.sequence import Conditional, Iteration, OpSequence, Repetition
+    from ..models.sweeps import SweepSpec
 
 type SequenceContext = OpSequence | Repetition | Iteration | Conditional
 """Contexts in which operations are ordered implicitly (sequence semantics)."""
@@ -85,6 +88,22 @@ class BuilderState:
     declared_externals: list[set[str]] = field(default_factory=list)
     # Declared pulse names, one set per entry of context_stack.
     declared_pulses: list[set[str]] = field(default_factory=list)
+    # Declared sweeps, one mapping per entry of context_stack: the sweep's name against the
+    # id of the sweep_group() declaring it, or None when it was declared on its own. The
+    # group id is what the lock-step check compares; nothing else reads it.
+    declared_sweeps: list[dict[str, int | None]] = field(default_factory=list)
+    # The for_ consuming each sweep: its name against a description of the loop, recorded in
+    # the frame where the sweep is *declared* rather than the innermost one, so that it lives
+    # exactly as long as the declaration it qualifies.
+    sweep_consumers: list[dict[str, str]] = field(default_factory=list)
+    # Specifications collected by an open sweep_group(), and that group's id; None when no
+    # group is open. A group is not a scope -- its members are declared in the surrounding
+    # context -- so this is a single slot rather than a parallel stack.
+    open_sweep_group: list[SweepSpec] | None = None
+    open_sweep_group_id: int = 0
+    # Source of the ids above. Never reset: two groups in one build must not collide, and the
+    # ids are compared for equality only.
+    sweep_group_counter: int = 0
 
 
 _state: ContextVar[BuilderState | None] = ContextVar("builder_state", default=None)
@@ -131,6 +150,8 @@ def _push_context(context: BuilderContext) -> None:
     state.declared_variables.append(set())
     state.declared_externals.append(set())
     state.declared_pulses.append(set())
+    state.declared_sweeps.append({})
+    state.sweep_consumers.append({})
 
 
 def _pop_context() -> None:
@@ -141,6 +162,8 @@ def _pop_context() -> None:
     state.declared_variables.pop()
     state.declared_externals.pop()
     state.declared_pulses.pop()
+    state.declared_sweeps.pop()
+    state.sweep_consumers.pop()
 
 
 def _current_context(operation_name: str = "") -> Any:
@@ -318,3 +341,153 @@ def _check_pulse_declared(name: str) -> None:
         raise RuntimeError(
             f"Pulse '{name}' has not been declared. Use pulse_decl('{name}', ...) before referencing this pulse."
         )
+
+
+def _register_sweep(name: str, group: int | None) -> None:
+    """Register a sweep as declared in the current context.
+
+    Sweeps have their own namespace, as external symbols do: they are read with ``sweep()``
+    rather than ``var()``, so a variable of the same name is a different thing and not a clash.
+
+    :param name: Sweep name to register
+    :param group: Id of the ``sweep_group()`` declaring it, or :obj:`None` if declared on its own
+
+    :raises RuntimeError: If the sweep is already declared in the current context
+    """
+    state = _get_state()
+    if not state.context_stack:
+        return  # No context active, skip registration
+
+    # Check if already declared in current context (not parent contexts)
+    current = state.declared_sweeps[-1]
+    if name in current:
+        raise RuntimeError(
+            f"Sweep '{name}' is already declared in the current context. "
+            f"Each sweep can only be declared once per context."
+        )
+
+    # Register in current context
+    current[name] = group
+
+
+def _unregister_sweep(name: str, group: int) -> None:
+    """Undo the registration of a sweep whose ``sweep_group()`` never reached the sequence.
+
+    A group that raises -- from its body, or because it collected fewer than two members -- emits no
+    declaration, so leaving its members registered would let a later ``sweep("x")`` validate against
+    a sweep the program does not declare. Matched on *group* rather than name alone, so a member
+    declared in a nested context that has already been popped, or a name since re-registered by
+    something else, is left alone.
+
+    :param name: Sweep name to unregister
+    :param group: Id of the group that registered it
+    """
+    state = _get_state()
+    if not state.context_stack:
+        return
+
+    if state.declared_sweeps[-1].get(name) == group:
+        del state.declared_sweeps[-1][name]
+        state.sweep_consumers[-1].pop(name, None)
+
+
+def _is_sweep_declared(name: str) -> bool:
+    """Check if a sweep has been declared in the current or parent contexts.
+
+    Sweeps are scoped to the context where they are declared and all nested contexts.
+
+    :param name: Sweep name to check
+
+    :return: :obj:`True` if the sweep is declared, :obj:`False` otherwise
+    """
+    state = _get_state()
+
+    # Check from innermost to outermost context
+    return any(name in declared for declared in reversed(state.declared_sweeps))
+
+
+def _check_sweep_declared(name: str) -> None:
+    """Check if a sweep has been declared and raise an error if not.
+
+    :param name: Sweep name to check
+
+    :raises RuntimeError: If the sweep has not been declared in current or parent contexts
+    """
+    if not _is_sweep_declared(name):
+        raise RuntimeError(
+            f"Sweep '{name}' has not been declared. Use sweep_decl('{name}', dtype, ...) before referencing this sweep."
+        )
+
+
+def _sweep_group_of(name: str) -> int | None:
+    """Return the id of the ``sweep_group()`` a declared sweep belongs to.
+
+    :param name: Sweep name to look up; must already be declared
+
+    :return: The group's id, or :obj:`None` if the sweep was declared on its own or is unknown
+    """
+    state = _get_state()
+
+    # Innermost declaration wins, matching `_is_sweep_declared`'s search order
+    for declared in reversed(state.declared_sweeps):
+        if name in declared:
+            return declared[name]
+    return None
+
+
+def _consume_sweep(name: str, consumer: str) -> None:
+    """Record that *consumer* is the loop iterating a sweep, rejecting a second one.
+
+    A sweep takes its position in the nesting order from the single ``for_`` that consumes it,
+    so a second consumer leaves that position undefined. The record is kept in the frame where
+    the sweep is declared rather than the innermost one, so that two sibling loops at different
+    depths still see each other.
+
+    :param name: Name of the sweep being consumed; must already be declared
+    :param consumer: Description of the consuming loop, for the error message
+
+    :raises RuntimeError: If another loop already consumes this sweep
+    """
+    state = _get_state()
+
+    for index in range(len(state.declared_sweeps) - 1, -1, -1):
+        if name not in state.declared_sweeps[index]:
+            continue
+        consumers = state.sweep_consumers[index]
+        if name in consumers:
+            raise RuntimeError(
+                f"Sweep '{name}' is already iterated by {consumers[name]}, so a second loop over "
+                f"it has no defined position in the nesting order. Iterate it once and reuse the "
+                f"loop variable, or declare a second sweep."
+            )
+        consumers[name] = consumer
+        return
+
+
+def _not_a_sequence_context(operation_name: str) -> RuntimeError:
+    """Build the reciprocal-rejection error for an operation called outside a sequence.
+
+    :param operation_name: Name of the operation for the error message, e.g. ``"play()"``
+
+    :return: The error to raise
+    """
+    return RuntimeError(
+        f"{operation_name} requires a build_sequence() context. Schedules are built with "
+        "eq1_pulse.builder.experimental and cannot contain sequence operations."
+    )
+
+
+def _add_to_sequence(context: Any, operation: Any) -> None:
+    """Add an operation to a sequence context.
+
+    :param context: The sequence context to add to; anything else raises
+    :param operation: The operation to add
+
+    :raises RuntimeError: If context is not a sequence
+    """
+    if isinstance(context, Repetition | Iteration | Conditional):
+        context.body.items.append(operation)
+    elif isinstance(context, OpSequence):
+        context.items.append(operation)
+    else:
+        raise RuntimeError(f"Cannot add sequence operation to {type(context).__name__} context")

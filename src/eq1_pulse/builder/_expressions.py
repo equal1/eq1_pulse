@@ -7,18 +7,22 @@ authoring grammars again -- the raw-value branch of :class:`Expr`'s constructor 
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Never
 
 from ..models.expressions import (
     BinaryExpr,
     CallExpr,
     CompareExpr,
     ExprBase,
+    IndexExpr,
+    LenExpr,
     LiteralExpr,
     LogicalExpr,
     NotExpr,
     SymbolExpr,
     UnaryExpr,
+    expression_tag_of,
+    sweep_names_in,
 )
 from ..models.reference_types import ExternalRef, VariableRef
 from ._coerce import as_symbol_value
@@ -33,6 +37,7 @@ __all__ = (
     "ExprLike",
     "call_expr_",
     "expr",
+    "len_",
 )
 
 
@@ -93,6 +98,49 @@ class Expr:
         :return: The :data:`~.expressions.Expression` this :class:`Expr` wraps.
         """
         return self._node
+
+    def __getitem__(self, index: _ExprOperand | tuple[_ExprOperand, ...]) -> Expr:
+        """Build an :class:`~.expressions.IndexExpr` reading one item of this sweep.
+
+        A tuple index becomes one entry of :attr:`~.expressions.IndexExpr.indices` per dimension,
+        so ``s[i, j]`` needs no second node.
+
+        ``__len__`` has deliberately **no** counterpart here: :func:`len` runs ``__index__`` on
+        whatever it is given and rejects anything that is not a non-negative :class:`int`, which an
+        expression tree can never be. :func:`len_` is the whole story.
+
+        :param index: The position(s) of the wanted item, each passed through :func:`expr`.
+        :return: An :class:`Expr` wrapping the indexing.
+        :raises TypeError: If this expression reads no sweep, and so has no items to index.
+        """
+        node = self.unwrap()
+        if not sweep_names_in(node):
+            raise TypeError(
+                f"cannot index this {expression_tag_of(node) or 'expression'} tree: it reads no sweep, "
+                "and only a sweep has items to index"
+            )
+        positions = index if isinstance(index, tuple) else (index,)
+        return Expr(IndexExpr(index_op="[]", operand=node, indices=[expr(p).unwrap() for p in positions]))
+
+    def __iter__(self) -> Never:
+        """Refuse iteration, which :meth:`__getitem__` would otherwise make silently infinite.
+
+        Python falls back to the legacy sequence protocol for a class that defines
+        ``__getitem__`` and no ``__iter__``: it calls ``self[0]``, ``self[1]``, ... and stops at
+        :exc:`IndexError`. Every index here *succeeds*, building one more
+        :class:`~.expressions.IndexExpr`, so ``list(sweep("vg"))``, ``for v in sweep("vg")`` and
+        ``[*sweep("vg")]`` would each run until memory ran out. A sweep has no length at authoring
+        time (:func:`len_` is a node, not a number), so there is nothing to iterate here even in
+        principle -- iteration over a sweep is what :func:`~eq1_pulse.builder.core.for_` is.
+
+        :return: Never returns.
+        :raises TypeError: Always.
+        """
+        raise TypeError(
+            "an expression cannot be iterated in Python: it has no length until the program is "
+            "invoked. Iterate a sweep with for_(v, sweep(name)), its positions with "
+            "for_(i, indices(len_(sweep(name)))), or index one item with sweep(name)[i]."
+        )
 
     def __add__(self, other: _ExprOperand) -> Expr:
         return Expr(BinaryExpr(binary_op="+", lhs=self.unwrap(), rhs=expr(other).unwrap()))
@@ -222,3 +270,23 @@ def call_expr_(function: ExpressionFunction, *operands: _ExprOperand) -> Expr:
         take 2 or more).
     """
     return Expr(CallExpr(function=function, args=[expr(operand).unwrap() for operand in operands]))
+
+
+def len_(value: _ExprOperand) -> Expr:
+    """Build a :class:`~.expressions.LenExpr` reading the number of items in a sweep.
+
+    A free function rather than ``__len__``: see :meth:`Expr.__getitem__`. It is spelled with the
+    trailing underscore the rest of the builder uses for a name Python already owns, matching
+    :meth:`~Expr.and_`/:meth:`~Expr.or_`/:meth:`~Expr.not_`.
+
+    :param value: The sweep-valued expression to measure, passed through :func:`expr`.
+    :return: An :class:`Expr` wrapping the length.
+    :raises TypeError: If *value* reads no sweep, and so has no length.
+    """
+    node = expr(value).unwrap()
+    if not sweep_names_in(node):
+        raise TypeError(
+            f"cannot take the length of this {expression_tag_of(node) or 'expression'} tree: it reads "
+            "no sweep, and only a sweep has a length"
+        )
+    return Expr(LenExpr(len_op="len", operand=node))

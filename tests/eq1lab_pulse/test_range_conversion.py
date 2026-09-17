@@ -67,7 +67,7 @@ class TestRangeConversion:
         iter_obj = seq.items[1]
         assert isinstance(iter_obj, Iteration)
         # Model converts lists to numpy arrays
-        assert len(iter_obj.items) == 1
+        assert len(iter_obj.items) == 1  # type: ignore[arg-type]
 
     def test_range_in_zipped_iteration(self):
         """Test that ranges in zipped iteration are converted."""
@@ -144,7 +144,7 @@ class TestRangeConversion:
         assert len(iter_obj.items[0]) == 5
 
         # Second item is stored (model converts list to numpy array internally)
-        assert len(iter_obj.items[1]) == 5
+        assert len(iter_obj.items[1]) == 5  # type: ignore[arg-type]
 
     def test_range_serialization(self):
         """Test that converted Range serializes correctly."""
@@ -174,4 +174,4 @@ class TestRangeConversion:
         assert isinstance(iter_obj, Iteration)
         # Model may convert list to numpy array, but should not be Range
         assert not isinstance(iter_obj.items, Range)
-        assert len(iter_obj.items) == 5
+        assert len(iter_obj.items) == 5  # type: ignore[arg-type]

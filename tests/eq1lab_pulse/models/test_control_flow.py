@@ -5,9 +5,19 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from eq1_pulse.models.expressions import BinaryExpr, CompareExpr, LiteralExpr, LogicalExpr, NotExpr, SymbolExpr
+from eq1_pulse.models.control_flow import Indices
+from eq1_pulse.models.expressions import (
+    BinaryExpr,
+    CompareExpr,
+    LenExpr,
+    LiteralExpr,
+    LogicalExpr,
+    NotExpr,
+    SweepExpr,
+    SymbolExpr,
+)
 from eq1_pulse.models.reference_types import ExternalRef, VariableRef
-from eq1_pulse.models.sequence import Conditional, OpSequence, Repetition
+from eq1_pulse.models.sequence import Conditional, Iteration, OpSequence, Repetition
 
 
 def test_repetition_count_accepts_expression():
@@ -64,3 +74,39 @@ def test_conditional_rejects_arithmetic_expressions(node: Any):
     """``ConditionalBase.var`` rejects an arithmetic node, naming what was passed."""
     with pytest.raises(ValidationError, match="is not a predicate"):
         Conditional(var=node, body=OpSequence([]))
+
+
+def test_iteration_accepts_bare_sweep_reference():
+    """``IterationBase.items`` accepts a bare ``SweepExpr``, the identity case of ``SweepSource``."""
+    it = Iteration(var=VariableRef("v"), items=SweepExpr(sweep="vg"), body=OpSequence([]))
+    assert isinstance(it.items, SweepExpr)
+
+
+def test_iteration_accepts_a_transform_of_a_sweep():
+    """``IterationBase.items`` accepts a tree reading a sweep, not just a bare reference."""
+    transform = BinaryExpr(binary_op="*", lhs=SweepExpr(sweep="vg"), rhs=LiteralExpr(value=2))
+    it = Iteration(var=VariableRef("p"), items=transform, body=OpSequence([]))
+    assert isinstance(it.items, BinaryExpr)
+
+
+def test_iteration_accepts_indices():
+    """``IterationBase.items`` accepts ``Indices``, binding the position rather than an item."""
+    it = Iteration(
+        var=VariableRef("i"),
+        items=Indices(count=LenExpr(len_op="len", operand=SweepExpr(sweep="vg"))),
+        body=OpSequence([]),
+    )
+    assert isinstance(it.items, Indices)
+    assert isinstance(it.items.count, LenExpr)
+
+
+def test_iteration_rejects_a_rank_0_tree_as_items():
+    """``IterationBase.items`` is a ``SweepSource``: a tree reading no sweep is rejected."""
+    with pytest.raises(ValidationError):
+        Iteration(var=VariableRef("i"), items=LiteralExpr(value=1), body=OpSequence([]))
+
+
+def test_iteration_rejects_list_of_str():
+    """``list[str]`` is removed from ``IterableSequence`` -- nothing could consume it, and never will."""
+    with pytest.raises(ValidationError):
+        Iteration(var=VariableRef("s"), items=["a", "b", "c"], body=OpSequence([]))
