@@ -240,7 +240,7 @@ def test_iteration_multiple_variables_validation():
                     [0, 1, 2],
                     {"start": 3, "stop": 5, "step": 1},
                     {"start": 10, "stop": 20, "num": 3},
-                    {"sweep": "s"},
+                    ["sweep", "s"],
                 ],
                 "body": [],
             }
@@ -265,7 +265,7 @@ def test_iteration_multiple_variables_validate_json():
                     [0, 1, 2],
                     {"start": 3, "stop": 5, "step": 1},
                     {"start": 10, "stop": 20, "num": 3},
-                    {"sweep": "s"}
+                    ["sweep", "s"]
                 ],
                 "body": []
             }
@@ -295,7 +295,7 @@ def test_iteration_multiple_variables_serialize_json():
         + '"items":['
         + '[0,1,2],{"start":3,"stop":5,"step":1},'
         + '{"start":10,"stop":20,"num":3},'
-        + '{"sweep":"s"}'
+        + '["sweep","s"]'
         + '],"body":[]}}'
     )
 
@@ -305,7 +305,7 @@ def test_sequence_with_sweep_operations_round_trips_through_json():
 
     Matches plan section 15's declaration and loop wire forms literally: no ``sweep_decl:`` key repeated
     inside the group, ``LeanModel`` elision leaving out unset ``shape``/``limits``, and a bare
-    ``{"sweep": ...}`` for both the single-var and the zipped-over-a-group loop.
+    ``["sweep", ...]`` for both the single-var and the zipped-over-a-group loop.
     """
     sequence = OpSequence(
         [
@@ -329,8 +329,8 @@ def test_sequence_with_sweep_operations_round_trips_through_json():
         '[{"sweep_decl":{"name":"vg","dtype":"float","unit":"mV"}},'
         '{"sweep_group":{"sweeps":[{"name":"i_amp","dtype":"float","unit":"mV"},'
         '{"name":"drive_freq","dtype":"float","unit":"MHz"}]}},'
-        '{"for":{"var":"v","items":{"sweep":"vg"},"body":[]}},'
-        '{"for":{"var":["a","f"],"items":[{"sweep":"i_amp"},{"sweep":"drive_freq"}],"body":[]}}]'
+        '{"for":{"var":"v","items":["sweep","vg"],"body":[]}},'
+        '{"for":{"var":["a","f"],"items":[["sweep","i_amp"],["sweep","drive_freq"]],"body":[]}}]'
     )
     round_tripped = OpSequence.model_validate_json(serialized)
     assert round_tripped == sequence

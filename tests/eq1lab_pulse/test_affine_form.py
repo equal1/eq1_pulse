@@ -7,7 +7,7 @@ decomposes, with its exact terms and offset asserted, and once in the shape that
 affine transforms of one supplied sweep, which a generator uploads as three numbers per gate rather
 than one float per item.
 
-Expressions are built through the builder and compared as dumped wire objects: the same spelling
+Expressions are built through the builder and compared as dumped wire arrays: the same spelling
 :file:`test_builder_sweeps.py` uses, and readable in a failure.
 """
 
@@ -60,7 +60,7 @@ def _form(expression: Expr) -> AffineForm:
 
 
 def _terms(form: AffineForm) -> dict[str, object]:
-    """Dump a decomposition's scales to wire objects.
+    """Dump a decomposition's scales to wire arrays.
 
     :param form: The decomposition
     :return: Sweep name -> the scale as plain data
@@ -69,7 +69,7 @@ def _terms(form: AffineForm) -> dict[str, object]:
 
 
 def _offset(form: AffineForm) -> object:
-    """Dump a decomposition's offset to a wire object.
+    """Dump a decomposition's offset to a wire array.
 
     :param form: The decomposition
     :return: The offset as plain data
@@ -83,96 +83,94 @@ class TestRecognised:
     def test_bare_sweep(self):
         """A bare sweep is one term of scale one, offset zero -- the implicit values, spelled out."""
         form = _form(sweep("a"))
-        assert _terms(form) == {"a": {"value": 1}}
-        assert _offset(form) == {"value": 0}
+        assert _terms(form) == {"a": ["value", 1]}
+        assert _offset(form) == ["value", 0]
 
     def test_sweep_times_literal(self):
         """``s * 2``: the literal is the scale, not a factor of one."""
         form = _form(sweep("a") * 2)
-        assert _terms(form) == {"a": {"value": 2}}
-        assert _offset(form) == {"value": 0}
+        assert _terms(form) == {"a": ["value", 2]}
+        assert _offset(form) == ["value", 0]
 
     def test_literal_times_sweep(self):
         """``2 * s``: a scale on the left is recognised the same way."""
         form = _form(2 * sweep("a"))
-        assert _terms(form) == {"a": {"value": 2}}
-        assert _offset(form) == {"value": 0}
+        assert _terms(form) == {"a": ["value", 2]}
+        assert _offset(form) == ["value", 0]
 
     def test_sweep_over_literal(self):
         """``s / 2``: the scale is the quotient, left as a tree rather than folded to ``0.5``."""
         form = _form(sweep("a") / 2)
-        assert _terms(form) == {"a": {"binary_op": {"op": "/", "lhs": {"value": 1}, "rhs": {"value": 2}}}}
-        assert _offset(form) == {"value": 0}
+        assert _terms(form) == {"a": ["/", ["value", 1], ["value", 2]]}
+        assert _offset(form) == ["value", 0]
 
     def test_negated_sweep(self):
         """``-s``: the scale is negated as a tree, for the reason ``s / 2``'s is left as one."""
         form = _form(-sweep("a"))
-        assert _terms(form) == {"a": {"unary_op": {"op": "-", "rhs": {"value": 1}}}}
-        assert _offset(form) == {"value": 0}
+        assert _terms(form) == {"a": ["-", ["value", 1]]}
+        assert _offset(form) == ["value", 0]
 
     def test_sweep_plus_scalar(self):
         """``s + 5``: the rank-0 side is the offset."""
         form = _form(sweep("a") + 5)
-        assert _terms(form) == {"a": {"value": 1}}
-        assert _offset(form) == {"value": 5}
+        assert _terms(form) == {"a": ["value", 1]}
+        assert _offset(form) == ["value", 5]
 
     def test_scalar_minus_sweep(self):
         """``5 - s``: the sweep side is negated, the scalar side is the offset."""
         form = _form(5 - sweep("a"))
-        assert _terms(form) == {"a": {"unary_op": {"op": "-", "rhs": {"value": 1}}}}
-        assert _offset(form) == {"value": 5}
+        assert _terms(form) == {"a": ["-", ["value", 1]]}
+        assert _offset(form) == ["value", 5]
 
     def test_difference_of_two_sweeps(self):
         """``s1 - s2``: two terms over one sweep group, the second negated (plan §13 example G)."""
         form = _form(sweep("d1") - sweep("d2"))
         assert _terms(form) == {
-            "d1": {"value": 1},
-            "d2": {"unary_op": {"op": "-", "rhs": {"value": 1}}},
+            "d1": ["value", 1],
+            "d2": ["-", ["value", 1]],
         }
-        assert _offset(form) == {"value": 0}
+        assert _offset(form) == ["value", 0]
 
     def test_scale_and_offset_over_externals(self, context):
         """``s * m11 + o1``: the affine transform the whole utility exists for."""
         form = _form(sweep("a") * ext("vg.m11") + ext("vg.o1"))
-        assert _terms(form) == {"a": {"symbol": {"ext": "vg.m11"}}}
-        assert _offset(form) == {"symbol": {"ext": "vg.o1"}}
+        assert _terms(form) == {"a": ["symbol", {"ext": "vg.m11"}]}
+        assert _offset(form) == ["symbol", {"ext": "vg.o1"}]
 
     def test_scalar_tree_is_all_offset(self, context):
         """A tree reading no sweep has no terms and is entirely offset -- an honest decomposition."""
         form = _form(expr(2) * ext("vg.m11"))
         assert form.terms == {}
-        assert _offset(form) == {"binary_op": {"op": "*", "lhs": {"value": 2}, "rhs": {"symbol": {"ext": "vg.m11"}}}}
+        assert _offset(form) == ["*", ["value", 2], ["symbol", {"ext": "vg.m11"}]]
 
     def test_index_and_length_land_in_the_offset(self, context):
         """``len_(s1) + s2``: both scalar-from-sweep nodes are offset, sweep and all."""
         form = _form(len_(sweep("a")) + sweep("b"))
-        assert _terms(form) == {"b": {"value": 1}}
-        assert _offset(form) == {"len_op": {"operand": {"sweep": "a"}}}
+        assert _terms(form) == {"b": ["value", 1]}
+        assert _offset(form) == ["len", ["sweep", "a"]]
 
         indexed = _form(expr(sweep("a")[var("i")]) * 2)
         assert indexed.terms == {}
-        assert _offset(indexed) == {
-            "binary_op": {
-                "op": "*",
-                "lhs": {"index_op": {"operand": {"sweep": "a"}, "indices": [{"symbol": {"var": "i"}}]}},
-                "rhs": {"value": 2},
-            }
-        }
+        assert _offset(indexed) == [
+            "*",
+            ["[]", ["sweep", "a"], [["symbol", {"var": "i"}]]],
+            ["value", 2],
+        ]
 
     def test_scale_distributes_over_a_sum(self, context):
         """``(s1 + s2) * m11``: a scale applied to a two-term decomposition reaches both terms."""
         form = _form((sweep("d1") + sweep("d2")) * ext("vg.m11"))
         assert _terms(form) == {
-            "d1": {"symbol": {"ext": "vg.m11"}},
-            "d2": {"symbol": {"ext": "vg.m11"}},
+            "d1": ["symbol", {"ext": "vg.m11"}],
+            "d2": ["symbol", {"ext": "vg.m11"}],
         }
-        assert _offset(form) == {"value": 0}
+        assert _offset(form) == ["value", 0]
 
     def test_negation_reaches_scale_and_offset(self, context):
         """``-(s * m11 + o1)``: unary minus negates every scale and the offset."""
         form = _form(-(sweep("a") * ext("vg.m11") + ext("vg.o1")))
-        assert _terms(form) == {"a": {"unary_op": {"op": "-", "rhs": {"symbol": {"ext": "vg.m11"}}}}}
-        assert _offset(form) == {"unary_op": {"op": "-", "rhs": {"symbol": {"ext": "vg.o1"}}}}
+        assert _terms(form) == {"a": ["-", ["symbol", {"ext": "vg.m11"}]]}
+        assert _offset(form) == ["-", ["symbol", {"ext": "vg.o1"}]]
 
 
 class TestCanonicalisation:
@@ -182,24 +180,20 @@ class TestCanonicalisation:
         """``s + s`` is **one** term whose scale is ``1 + 1`` -- summed, and left unfolded."""
         form = _form(sweep("a") + sweep("a"))
         assert list(form.terms) == ["a"]
-        assert _terms(form) == {"a": {"binary_op": {"op": "+", "lhs": {"value": 1}, "rhs": {"value": 1}}}}
-        assert _offset(form) == {"value": 0}
+        assert _terms(form) == {"a": ["+", ["value", 1], ["value", 1]]}
+        assert _offset(form) == ["value", 0]
 
     def test_scaled_reads_of_one_sweep_sum(self, context):
         """``s * m11 + s * m21`` is one term whose scale is the sum of the two."""
         form = _form(sweep("a") * ext("vg.m11") + sweep("a") * ext("vg.m21"))
         assert list(form.terms) == ["a"]
-        assert _terms(form) == {
-            "a": {"binary_op": {"op": "+", "lhs": {"symbol": {"ext": "vg.m11"}}, "rhs": {"symbol": {"ext": "vg.m21"}}}}
-        }
+        assert _terms(form) == {"a": ["+", ["symbol", {"ext": "vg.m11"}], ["symbol", {"ext": "vg.m21"}]]}
 
     def test_offsets_on_both_sides_are_summed(self, context):
         """``(s + o1) + (s + o2)`` keeps one term and one offset tree."""
         form = _form((sweep("a") + ext("vg.o1")) + (sweep("a") + ext("vg.o2")))
         assert list(form.terms) == ["a"]
-        assert _offset(form) == {
-            "binary_op": {"op": "+", "lhs": {"symbol": {"ext": "vg.o1"}}, "rhs": {"symbol": {"ext": "vg.o2"}}}
-        }
+        assert _offset(form) == ["+", ["symbol", {"ext": "vg.o1"}], ["symbol", {"ext": "vg.o2"}]]
 
 
 class TestNotAffine:
@@ -244,14 +238,12 @@ class TestNothingIsEvaluated:
     def test_a_scale_over_externals_survives_as_a_tree(self, context):
         """``s * (m11 + m21)``: the scale is the tree the author wrote, unevaluated."""
         form = _form(sweep("a") * (expr(ext("vg.m11")) + ext("vg.m21")))
-        assert _terms(form) == {
-            "a": {"binary_op": {"op": "+", "lhs": {"symbol": {"ext": "vg.m11"}}, "rhs": {"symbol": {"ext": "vg.m21"}}}}
-        }
+        assert _terms(form) == {"a": ["+", ["symbol", {"ext": "vg.m11"}], ["symbol", {"ext": "vg.m21"}]]}
 
     def test_literal_arithmetic_is_not_folded(self):
         """``s * 2 * 3``: the scale is ``2 * 3``, not ``6``. A consumer that wants numbers evaluates."""
         form = _form(sweep("a") * 2 * 3)
-        assert _terms(form) == {"a": {"binary_op": {"op": "*", "lhs": {"value": 2}, "rhs": {"value": 3}}}}
+        assert _terms(form) == {"a": ["*", ["value", 2], ["value", 3]]}
 
 
 class TestWorkedExampleC:
@@ -265,7 +257,7 @@ class TestWorkedExampleC:
         ]
         forms = [_form(transform) for transform in transforms]
 
-        assert _terms(forms[0]) == {"detuning": {"symbol": {"ext": "vg.m11"}}}
-        assert _offset(forms[0]) == {"symbol": {"ext": "vg.o1"}}
-        assert _terms(forms[1]) == {"detuning": {"symbol": {"ext": "vg.m21"}}}
-        assert _offset(forms[1]) == {"symbol": {"ext": "vg.o2"}}
+        assert _terms(forms[0]) == {"detuning": ["symbol", {"ext": "vg.m11"}]}
+        assert _offset(forms[0]) == ["symbol", {"ext": "vg.o1"}]
+        assert _terms(forms[1]) == {"detuning": ["symbol", {"ext": "vg.m21"}]}
+        assert _offset(forms[1]) == ["symbol", {"ext": "vg.o2"}]

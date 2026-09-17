@@ -21,8 +21,8 @@ from eq1_pulse.models.sweeps import SweepDecl, SweepGroup
 
 
 def test_iteration_items_rebuild_sweep_bare_reference():
-    """``Iteration.items`` accepts a bare ``{"sweep": ...}``, not a dict standing in for one."""
-    op: Any = TypeAdapter(OpSequenceItem).validate_python({"for": {"var": "v", "items": {"sweep": "vg"}, "body": []}})
+    """``Iteration.items`` accepts a bare ``["sweep", ...]``, not a dict standing in for one."""
+    op: Any = TypeAdapter(OpSequenceItem).validate_python({"for": {"var": "v", "items": ["sweep", "vg"], "body": []}})
     assert isinstance(op, Iteration)
     assert isinstance(op.items, SweepExpr)
 
@@ -34,7 +34,7 @@ def test_iteration_items_rebuild_sweep_indices():
     sweep reference.
     """
     op: Any = TypeAdapter(OpSequenceItem).validate_python(
-        {"for": {"var": "i", "items": {"count": {"len_op": {"operand": {"sweep": "vg"}}}}, "body": []}}
+        {"for": {"var": "i", "items": {"count": ["len", ["sweep", "vg"]]}, "body": []}}
     )
     assert isinstance(op, Iteration)
     assert isinstance(op.items, Indices)
@@ -47,7 +47,7 @@ def test_iteration_items_rebuild_sweep_transform():
         {
             "for": {
                 "var": "p",
-                "items": {"binary_op": {"op": "*", "lhs": {"sweep": "vg"}, "rhs": {"value": 2}}},
+                "items": ["*", ["sweep", "vg"], ["value", 2]],
                 "body": [],
             }
         }

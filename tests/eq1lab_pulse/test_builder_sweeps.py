@@ -67,10 +67,12 @@ class TestWorkedExamples:
 
         ops = _ops(seq)
         assert ops[0] == {"sweep_decl": {"name": "vg", "dtype": "float", "unit": "mV"}}
-        assert ops[-1]["for"]["items"] == {"sweep": "vg"}
-        assert ops[-1]["for"]["body"][0]["play"]["pulse"]["amplitude"] == {
-            "binary_op": {"op": "*", "lhs": {"symbol": {"var": "v"}}, "rhs": {"symbol": {"ext": "gate.gain"}}}
-        }
+        assert ops[-1]["for"]["items"] == ["sweep", "vg"]
+        assert ops[-1]["for"]["body"][0]["play"]["pulse"]["amplitude"] == [
+            "*",
+            ["symbol", {"var": "v"}],
+            ["symbol", {"ext": "gate.gain"}],
+        ]
 
     def test_example_b_rabi_indexed_by_position(self):
         """B: a default, iterated by position -- §15's ``{count: {len_op: ...}}`` loop."""
@@ -96,10 +98,12 @@ class TestWorkedExamples:
                 "default": {"start": 0, "stop": 200, "num": 101},
             }
         }
-        assert ops[-1]["for"]["items"] == {"count": {"len_op": {"operand": {"sweep": "t_pi"}}}}
-        assert ops[-1]["for"]["body"][0]["play"]["pulse"]["duration"] == {
-            "index_op": {"operand": {"sweep": "t_pi"}, "indices": [{"symbol": {"var": "i"}}]}
-        }
+        assert ops[-1]["for"]["items"] == {"count": ["len", ["sweep", "t_pi"]]}
+        assert ops[-1]["for"]["body"][0]["play"]["pulse"]["duration"] == [
+            "[]",
+            ["sweep", "t_pi"],
+            [["symbol", {"var": "i"}]],
+        ]
 
     def test_example_c_virtual_gates(self):
         """C: one supplied sweep and two anonymous transforms of it, §15's complete experiment."""
@@ -123,13 +127,11 @@ class TestWorkedExamples:
                 play("gate_2", step_pulse(duration="40ns", amplitude=var("p2")))
 
         items = _ops(seq)[-1]["for"]["items"]
-        assert items[0] == {
-            "binary_op": {
-                "op": "+",
-                "lhs": {"binary_op": {"op": "*", "lhs": {"sweep": "detuning"}, "rhs": {"symbol": {"ext": "vg.m11"}}}},
-                "rhs": {"symbol": {"ext": "vg.o1"}},
-            }
-        }
+        assert items[0] == [
+            "+",
+            ["*", ["sweep", "detuning"], ["symbol", {"ext": "vg.m11"}]],
+            ["symbol", {"ext": "vg.o1"}],
+        ]
         # One sweep declaration and no transform declaration: a transform is a value, not a name.
         assert [key for op in _ops(seq) for key in op].count("sweep_decl") == 1
 
@@ -155,7 +157,7 @@ class TestWorkedExamples:
                 ]
             }
         }
-        assert ops[-1]["for"]["items"] == [{"sweep": "i_amp"}, {"sweep": "drive_freq"}]
+        assert ops[-1]["for"]["items"] == [["sweep", "i_amp"], ["sweep", "drive_freq"]]
 
     def test_example_e_outer_and_inner(self):
         """E: an unconsumed sweep alongside a consumed one; both are ordinary declarations."""
@@ -169,7 +171,7 @@ class TestWorkedExamples:
 
         ops = _ops(seq)
         assert ops[0] == {"sweep_decl": {"name": "b_field", "dtype": "float", "unit": "mT"}}
-        assert ops[-1]["for"]["items"] == {"sweep": "tau"}
+        assert ops[-1]["for"]["items"] == ["sweep", "tau"]
 
     def test_example_f_repeating_items(self):
         """F: a list default is the JSON array itself -- a list of items, not an axis."""
@@ -203,8 +205,8 @@ class TestWorkedExamples:
                 play("gate_e", step_pulse(duration="40ns", amplitude=var("e")))
 
         assert _ops(seq)[-1]["for"]["items"] == [
-            {"binary_op": {"op": "+", "lhs": {"sweep": "d1"}, "rhs": {"sweep": "d2"}}},
-            {"binary_op": {"op": "-", "lhs": {"sweep": "d1"}, "rhs": {"sweep": "d2"}}},
+            ["+", ["sweep", "d1"], ["sweep", "d2"]],
+            ["-", ["sweep", "d1"], ["sweep", "d2"]],
         ]
 
     def test_example_h_product_of_two_lock_step_sweeps(self):
@@ -223,9 +225,7 @@ class TestWorkedExamples:
             with for_("a", sweep("amp") * sweep("scale")):
                 play("q0_drive", square_pulse(duration="40ns", amplitude=var("a")))
 
-        assert _ops(seq)[-1]["for"]["items"] == {
-            "binary_op": {"op": "*", "lhs": {"sweep": "amp"}, "rhs": {"sweep": "scale"}}
-        }
+        assert _ops(seq)[-1]["for"]["items"] == ["*", ["sweep", "amp"], ["sweep", "scale"]]
 
     def test_example_h_builds_a_binary_expr_outside_a_loop(self):
         """The same product, read as a tree: no fold, no curated operator list."""
@@ -251,7 +251,7 @@ class TestSweepReference:
             with for_("v", sweep("vg")):
                 pass
 
-        assert _ops(seq)[-1]["for"]["items"] == {"sweep": "vg"}
+        assert _ops(seq)[-1]["for"]["items"] == ["sweep", "vg"]
 
     def test_an_inline_transform_dumps_as_the_expression_tree(self):
         with build_sequence() as seq:
@@ -261,9 +261,7 @@ class TestSweepReference:
             with for_("p", sweep("vg") * ext("gate.gain")):
                 pass
 
-        assert _ops(seq)[-1]["for"]["items"] == {
-            "binary_op": {"op": "*", "lhs": {"sweep": "vg"}, "rhs": {"symbol": {"ext": "gate.gain"}}}
-        }
+        assert _ops(seq)[-1]["for"]["items"] == ["*", ["sweep", "vg"], ["symbol", {"ext": "gate.gain"}]]
 
     def test_a_bare_expression_node_is_accepted_as_items(self):
         with build_sequence() as seq:
@@ -272,7 +270,7 @@ class TestSweepReference:
             with for_("v", sweep("vg").unwrap()):
                 pass
 
-        assert _ops(seq)[-1]["for"]["items"] == {"sweep": "vg"}
+        assert _ops(seq)[-1]["for"]["items"] == ["sweep", "vg"]
 
 
 class TestDeclarations:
@@ -455,13 +453,11 @@ class TestIndexingAndLength:
             with for_("i", indices(len_(sweep("vg")))):
                 play("gate", step_pulse(duration="40ns", amplitude=sweep("vg")[var("i")] * ext("gate.gain")))
 
-        assert _ops(seq)[-1]["for"]["body"][0]["play"]["pulse"]["amplitude"] == {
-            "binary_op": {
-                "op": "*",
-                "lhs": {"index_op": {"operand": {"sweep": "vg"}, "indices": [{"symbol": {"var": "i"}}]}},
-                "rhs": {"symbol": {"ext": "gate.gain"}},
-            }
-        }
+        assert _ops(seq)[-1]["for"]["body"][0]["play"]["pulse"]["amplitude"] == [
+            "*",
+            ["[]", ["sweep", "vg"], [["symbol", {"var": "i"}]]],
+            ["symbol", {"ext": "gate.gain"}],
+        ]
 
     def test_repeat_accepts_a_length(self):
         """``Repetition.count`` is already ``int | ValueRef``, so ``LenExpr`` alone suffices."""
@@ -470,7 +466,7 @@ class TestIndexingAndLength:
             with repeat(len_(sweep("vg"))):
                 pass
 
-        assert _ops(seq)[-1] == {"repeat": {"count": {"len_op": {"operand": {"sweep": "vg"}}}, "body": []}}
+        assert _ops(seq)[-1] == {"repeat": {"count": ["len", ["sweep", "vg"]], "body": []}}
 
 
 class TestChecks:
@@ -608,7 +604,7 @@ class TestChecks:
             with for_("i", indices(3)):
                 play("gate", step_pulse(duration="40ns", amplitude=sweep("d1")[var("i")] + sweep("d2")[var("i")]))
 
-        assert _ops(seq)[-1]["for"]["body"][0]["play"]["pulse"]["amplitude"]["binary_op"]["op"] == "+"
+        assert _ops(seq)[-1]["for"]["body"][0]["play"]["pulse"]["amplitude"][0] == "+"
 
     def test_lock_step_is_checked_inside_an_index_operand(self):
         """The operand of an ``index_op`` is a lock-step scope of its own."""

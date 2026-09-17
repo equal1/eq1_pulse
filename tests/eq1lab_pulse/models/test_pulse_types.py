@@ -742,51 +742,27 @@ def test_external_param_value_complex_round_trips_through_json():
 
 
 @pytest.mark.parametrize(
-    ("expr_mapping", "expr_type"),
+    ("expr_wire", "expr_type"),
     [
-        pytest.param({"value": 1}, LiteralExpr, id="literal"),
-        pytest.param({"symbol": {"var": "x"}}, SymbolExpr, id="symbol"),
-        pytest.param(
-            {"unary_op": {"op": "-", "rhs": {"value": 1}}},
-            UnaryExpr,
-            id="unary",
-        ),
-        pytest.param(
-            {"binary_op": {"op": "+", "lhs": {"value": 1}, "rhs": {"value": 2}}},
-            BinaryExpr,
-            id="binary",
-        ),
-        pytest.param(
-            {"compare_op": {"op": "<", "lhs": {"value": 1}, "rhs": {"value": 2}}},
-            CompareExpr,
-            id="compare",
-        ),
-        pytest.param(
-            {"logical_op": {"op": "and", "lhs": {"value": 1}, "rhs": {"value": 2}}},
-            LogicalExpr,
-            id="logical",
-        ),
-        pytest.param(
-            {"not_op": {"rhs": {"value": 1}}},
-            NotExpr,
-            id="not",
-        ),
-        pytest.param(
-            {"function": {"name": "abs", "args": [{"value": 1}]}},
-            CallExpr,
-            id="call",
-        ),
+        pytest.param(["value", 1], LiteralExpr, id="literal"),
+        pytest.param(["symbol", {"var": "x"}], SymbolExpr, id="symbol"),
+        pytest.param(["-", ["value", 1]], UnaryExpr, id="unary"),
+        pytest.param(["+", ["value", 1], ["value", 2]], BinaryExpr, id="binary"),
+        pytest.param(["<", ["value", 1], ["value", 2]], CompareExpr, id="compare"),
+        pytest.param(["and", ["value", 1], ["value", 2]], LogicalExpr, id="logical"),
+        pytest.param(["not", ["value", 1]], NotExpr, id="not"),
+        pytest.param(["abs", ["value", 1]], CallExpr, id="call"),
     ],
 )
-def test_external_param_value_expression(expr_mapping: dict[str, Any], expr_type: type):
-    """An Expression is tagged on its own node key and survives round-tripping from a mapping.
+def test_external_param_value_expression(expr_wire: list[Any], expr_type: type):
+    """An Expression is tagged on its own wire-array tag and survives round-tripping from a list.
 
-    Its dict shape (a single key naming the node type) is what the ``_external_param_value_tag``
-    branch has to recognize -- via :func:`~.expressions.expression_tag_of` -- before falling
-    through to the single-key-mapping checks the rest of the union relies on.
+    Its array shape -- a leading operator or field-name string, never a plain number -- is what the
+    ``_external_param_value_tag`` branch has to recognize before falling through to the ``complex``
+    branch the rest of the union relies on for a plain ``(real, imag)`` pair.
     """
     adapter: TypeAdapter[Any] = TypeAdapter(ExternalParamValue)
-    value = adapter.validate_python(expr_mapping)
+    value = adapter.validate_python(expr_wire)
     assert isinstance(value, expr_type)
 
     dumped = adapter.dump_python(value)
@@ -816,16 +792,13 @@ def test_external_pulse_params_widened_types():
 
 
 @pytest.mark.parametrize(
-    "expr_mapping",
+    "expr_wire",
     [
-        pytest.param({"sweep": "vg"}, id="bare"),
-        pytest.param(
-            {"binary_op": {"op": "*", "lhs": {"sweep": "vg"}, "rhs": {"value": 2}}},
-            id="nested",
-        ),
+        pytest.param(["sweep", "vg"], id="bare"),
+        pytest.param(["*", ["sweep", "vg"], ["value", 2]], id="nested"),
     ],
 )
-def test_external_param_value_rejects_a_sweep(expr_mapping: dict[str, Any]):
+def test_external_param_value_rejects_a_sweep(expr_wire: list[Any]):
     """A parameter is one value, so ``ExternalParamValue``'s expression member is rank-0.
 
     This union is the one value site in the IR that does not go through
@@ -834,26 +807,22 @@ def test_external_param_value_rejects_a_sweep(expr_mapping: dict[str, Any]):
     """
     adapter: TypeAdapter[Any] = TypeAdapter(ExternalParamValue)
     with pytest.raises(ValidationError, match="vg"):
-        adapter.validate_python(expr_mapping)
+        adapter.validate_python(expr_wire)
 
 
 @pytest.mark.parametrize(
-    ("expr_mapping", "expr_type"),
+    ("expr_wire", "expr_type"),
     [
-        pytest.param(
-            {"index_op": {"operand": {"sweep": "vg"}, "indices": [{"symbol": {"var": "i"}}]}},
-            IndexExpr,
-            id="index",
-        ),
-        pytest.param({"len_op": {"operand": {"sweep": "vg"}}}, LenExpr, id="len"),
+        pytest.param(["[]", ["sweep", "vg"], [["symbol", {"var": "i"}]]], IndexExpr, id="index"),
+        pytest.param(["len", ["sweep", "vg"]], LenExpr, id="len"),
     ],
 )
-def test_external_param_value_accepts_a_scalar_over_a_sweep(expr_mapping: dict[str, Any], expr_type: type):
+def test_external_param_value_accepts_a_scalar_over_a_sweep(expr_wire: list[Any], expr_type: type):
     """An indexed or measured sweep is a scalar, so it passes where the sweep itself does not."""
     adapter: TypeAdapter[Any] = TypeAdapter(ExternalParamValue)
-    value = adapter.validate_python(expr_mapping)
+    value = adapter.validate_python(expr_wire)
     assert isinstance(value, expr_type)
-    assert adapter.dump_python(value) == expr_mapping
+    assert adapter.dump_python(value) == expr_wire
 
 
 def test_external_pulse_params_reject_a_sweep():
