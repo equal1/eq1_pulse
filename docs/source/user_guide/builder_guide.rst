@@ -974,6 +974,7 @@ loops:
     with build_sequence() as seq:
         # Declare a sweep without a default (always supplied at invocation)
         sweep_decl("detuning", "float", unit="mV")
+        var_decl("v", "float", unit="mV")
 
         # Reference it in a loop
         with for_("v", sweep("detuning")):
@@ -1116,6 +1117,146 @@ numbers instead of materializing the full array. To check whether an expression 
 
 This is optional — a generator calling neither function works fine, but the affine check is where
 the difference between three numbers and ten thousand floats comes from.
+
+Sweep Declaration Models and Program Invocation
+-----------------------------------------------
+
+The *Sweeps* section above shows how to declare and consume sweeps through the builder. This
+section describes the model layer that sits underneath: the pydantic models that make up a sweep
+declaration, their wire forms, and the payload a caller supplies when it invokes a stored program.
+
+Models
+~~~~~~
+
+The model layer behind the builder lives in :mod:`eq1_pulse.models.sweeps`. Its central type is
+:class:`~eq1_pulse.models.sweeps.SweepSpec`, the body of a sweep declaration: ``name`` and
+``dtype`` plus the optional ``shape``, ``unit``, ``default`` and ``limits``.
+
+Two operations carry that body:
+
+* :class:`~eq1_pulse.models.sweeps.SweepDecl` -- the top-level form, a
+  :class:`~eq1_pulse.models.sweeps.SweepSpec` plus the ``op_type`` discriminator
+  ``"sweep_decl"``.
+* :class:`~eq1_pulse.models.sweeps.SweepGroup` -- two or more
+  :class:`~eq1_pulse.models.sweeps.SweepSpec` bodies advanced in lock-step, flattened onto one
+  declaration. A group occupies exactly one level of nesting, and its members keep their own
+  ``dtype``, ``unit`` and ``limits``.
+
+The values a sweep takes are :data:`~eq1_pulse.models.sweeps.SweepValue`: a
+:class:`~eq1_pulse.models.basic_types.LinSpace`, a :class:`~eq1_pulse.models.basic_types.Range`,
+or a JSON array. :data:`~eq1_pulse.models.sweeps.SweepOp` is the discriminated union of the two
+operations, selected by the sole key their wire object carries.
+
+Wire Forms
+~~~~~~~~~~
+
+As with other operations, a sweep declaration serializes as a single-key object whose key names the
+operation:
+
+.. code-block:: json
+
+    {"sweep_decl": {"name": "vg", "dtype": "float", "unit": "mV"}}
+
+A compact default stays compact:
+
+.. code-block:: json
+
+    {"sweep_decl": {
+      "name": "t_pi",
+      "dtype": "float",
+      "unit": "ns",
+      "default": {"start": 0, "stop": 200, "num": 101}
+    }}
+
+An array default is the JSON array itself:
+
+.. code-block:: json
+
+    {"sweep_decl": {
+      "name": "amp_seq",
+      "dtype": "float",
+      "unit": "mV",
+      "default": [100, 0, 100, 50, 100, 25]
+    }}
+
+A group carries its members as a list of flat :class:`~eq1_pulse.models.sweeps.SweepSpec` bodies.
+The ``sweep_group`` key appears once, on the container; the members are bare bodies, not wrapped in
+``sweep_decl`` each:
+
+.. code-block:: json
+
+    {"sweep_group": {
+      "sweeps": [
+        {"name": "i_amp", "dtype": "float", "unit": "mV"},
+        {"name": "drive_freq", "dtype": "float", "unit": "MHz"}
+      ]
+    }}
+
+The :data:`~eq1_pulse.models.sweeps.SweepOp` union is selected by that sole key, so
+``{"sweep_decl": {...}}`` and ``{"sweep_group": {...}}`` are the only two shapes a caller needs to
+recognize. A flat object such as ``{"op_type": "sweep_decl", "name": "vg", "dtype": "float"}``
+carries no sole key and is rejected.
+
+Program Invocation
+~~~~~~~~~~~~~~~~~~
+
+A stored program is invoked by a :class:`~eq1_pulse.models.arguments.ProgramArguments` payload: a
+scalar per declared parameter in ``parameters``, and a list of sweep levels in ``sweeps``,
+outermost first.
+
+.. code-block:: json
+
+    {
+      "parameters": {"n_shots": 1000},
+      "sweeps": [
+        {"detuning": {"mV": {"start": -20, "stop": 20, "num": 81}}},
+        {
+          "i_amp": {"mV": {"start": -1, "stop": 1, "num": 20}},
+          "drive_freq": {"MHz": {"start": 4900, "stop": 5100, "num": 20}}
+        },
+        {"vg": {"start": -400, "stop": 400, "num": 20001}}
+      ]
+    }
+
+Each element of ``sweeps`` is a *level*. A level with one entry supplies a single sweep; a level
+with several supplies a :class:`~eq1_pulse.models.sweeps.SweepGroup`. The nesting the caller
+believes in is therefore visible in the shape of the document.
+
+A supplied sweep value is either a bare :data:`~eq1_pulse.models.sweeps.SweepValue`, taken to be in
+the declared unit, or a :class:`~eq1_pulse.models.arguments.QualifiedSweepValue` that states its
+unit explicitly:
+
+.. code-block:: json
+
+    {"vg": {"mV": {"start": 0, "stop": 100, "num": 11}}}
+
+Matching a payload against a particular program is the job of
+:func:`~eq1_pulse.utilities.check_arguments.check_arguments`. It is advisory -- nothing calls it
+automatically -- and it returns a list of
+:class:`~eq1_pulse.utilities.check_arguments.Finding` objects rather than raising on the first
+problem. The checks, in order, are name coverage, unit agreement, nesting agreement, group
+agreement, and shape and limits. Units are compared as strings and never converted: supplying
+``"V"`` for a ``"mV"`` declaration is a finding, but a value that states no unit is accepted as
+being in the declared one.
+
+.. code-block:: python
+
+    from eq1_pulse.builder import *
+    from eq1_pulse.models.arguments import ProgramArguments
+    from eq1_pulse.utilities.check_arguments import check_arguments
+
+    with build_sequence() as program:
+        sweep_decl("detuning", "float", unit="mV")
+        var_decl("v", "float", unit="mV")
+        with for_("v", sweep("detuning")):
+            play("qubit", square_pulse(duration="50ns", amplitude=var("v")))
+
+    arguments = ProgramArguments.model_validate({
+        "sweeps": [{"detuning": {"mV": {"start": -20, "stop": 20, "num": 81}}}]
+    })
+
+    findings = check_arguments(program, arguments)
+    # [] when the payload fits; one Finding per problem otherwise.
 
 Control Flow
 ------------
